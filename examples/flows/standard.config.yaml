@@ -1,0 +1,7 @@
+# Copy into L1 config.yaml; not a third runtime layer.
+# The standard flow and its full wiring are already in base.yaml.
+tasks:
+  config:
+    defaultFlow:
+      id: standard
+      version: "1"

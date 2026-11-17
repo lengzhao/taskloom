@@ -1,0 +1,422 @@
+# L0: complete default plugin graph, maintained with the application.
+# Design only: plugins/loader are not implemented. L1 config.yaml supplies deployment values.
+# Default delivery reuses a versioned Agent result reply; no separate result body.
+server:
+  use: server
+  config:
+    shutdownTimeout: 20s
+  deps:
+    resources:
+    - sql
+    - objects
+    components:
+    - http
+    - notification-worker
+    - artifact-maintenance
+    - flow-worker
+credentials:
+  use: credentials/env
+  config:
+    allowedRefs:
+    - env:TASKLOOM_SQL_DSN
+    - env:TASKLOOM_S3_CREDENTIAL
+    - env:TASKLOOM_IDENTITY_CREDENTIAL
+sql:
+  use: storage/sql
+  config:
+    driver: postgres
+    dsnRef: env:TASKLOOM_SQL_DSN
+  deps:
+    credentials: credentials
+objects:
+  use: storage/s3
+  config:
+    prefix: artifacts/
+    credentialRef: env:TASKLOOM_S3_CREDENTIAL
+  deps:
+    credentials: credentials
+identity:
+  use: identity/existing
+  config:
+    credentialRef: env:TASKLOOM_IDENTITY_CREDENTIAL
+  deps:
+    credentials: credentials
+revisions:
+  use: revision/default
+  config:
+    snapshotEvery: 100
+  deps:
+    store: sql
+audit:
+  use: audit/sql
+  deps:
+    store: sql
+events:
+  use: event/sql
+  config:
+    retention: 720h
+    maxBatchSize: 100
+  deps:
+    outbox: sql
+    cursors: sql
+    tx: sql
+permissions:
+  use: authorization/default
+  deps:
+    identity: identity
+    store: sql
+    taskStore: sql
+    planStore: sql
+    tx: sql
+    changes: revisions
+    audit: audit
+    events: events
+confirmation:
+  use: confirmation/default
+  config:
+    ttl: 30m
+  deps:
+    store: sql
+    authz: permissions
+    tx: sql
+    audit: audit
+    events: events
+tasks:
+  use: task/default
+  config:
+    defaultFlow:
+      id: standard
+      version: '1'
+  deps:
+    authz: permissions
+    confirmation: confirmation
+    tx: sql
+    changes: revisions
+    audit: audit
+    events: events
+    store: sql
+    identity: identity
+artifacts:
+  use: artifact/default
+  config:
+    maxUploadBytes: 104857600
+    pendingTTL: 24h
+    orphanGrace: 168h
+  deps:
+    authz: permissions
+    confirmation: confirmation
+    tx: sql
+    changes: revisions
+    audit: audit
+    events: events
+    store: sql
+    objects: objects
+    tasks: tasks
+conversations:
+  use: conversation/default
+  config:
+    maxMessageBytes: 65536
+    editWindow: 15m
+  deps:
+    authz: permissions
+    confirmation: confirmation
+    tx: sql
+    changes: revisions
+    audit: audit
+    events: events
+    store: sql
+    tasks: tasks
+    artifacts: artifacts
+    artifactRefs: artifacts
+decisions:
+  use: decision/default
+  config:
+    defaultTimeout: 24h
+  deps:
+    authz: permissions
+    confirmation: confirmation
+    tx: sql
+    changes: revisions
+    audit: audit
+    events: events
+    store: sql
+    tasks: tasks
+plan:
+  use: plan/default
+  config:
+    allowCrossTreeDependencies: false
+    maxChangeSetNodes: 100
+  deps:
+    authz: permissions
+    confirmation: confirmation
+    tx: sql
+    changes: revisions
+    audit: audit
+    events: events
+    store: sql
+    tasks: tasks
+    taskWriter: tasks
+execution:
+  use: execution/default
+  config:
+    offlineGrace: 5m
+  deps:
+    authz: permissions
+    confirmation: confirmation
+    tx: sql
+    changes: revisions
+    audit: audit
+    events: events
+    store: sql
+    tasks: tasks
+    plan: plan
+    identity: identity
+acceptance:
+  use: acceptance/default
+  config:
+    defaultMode: manual
+    separationOfDuties: false
+  deps:
+    authz: permissions
+    confirmation: confirmation
+    tx: sql
+    changes: revisions
+    audit: audit
+    events: events
+    store: sql
+    submissionStore: sql
+    tasks: tasks
+    identity: identity
+delivery:
+  use: delivery/reply
+  deps:
+    authz: permissions
+    confirmation: confirmation
+    tx: sql
+    changes: revisions
+    audit: audit
+    events: events
+    store: sql
+    tasks: tasks
+    executions: execution
+    replies: conversations
+    requests: sql
+query:
+  use: query/default
+  config:
+    defaultPageSize: 20
+    maxPageSize: 100
+  deps:
+    taskStore: sql
+    decisionStore: sql
+    executionStore: sql
+    acceptanceStore: sql
+    messageStore: sql
+    deliveryStore: sql
+    revisions: revisions
+    audit: audit
+    events: events
+    authz: permissions
+notifications:
+  use: notification/default
+  config:
+    enabledTopics:
+    - task.owner-assigned
+    - decision.opened
+    - delivery.submitted
+    - acceptance.verdict-recorded
+  deps:
+    store: sql
+    authz: permissions
+    tx: sql
+    events: events
+notification-worker:
+  use: event/worker
+  config:
+    consumerID: notification-inbox
+  deps:
+    events: events
+    cursors: events
+    handler: notifications
+artifact-maintenance:
+  use: artifact/maintenance
+  config:
+    interval: 1h
+  deps:
+    artifacts: artifacts
+http:
+  use: transport/http
+  config:
+    listen: ":8080"
+    apiPrefix: "/v1"
+  deps:
+    identity: identity
+    modules:
+    - api.tasks
+    - api.conversations
+    - api.decisions
+    - api.plan
+    - api.execution
+    - api.deliveries
+    - api.acceptance
+    - api.artifacts
+    - api.flow
+    - api.access
+    - api.query
+    - api.notifications
+    - api.changes
+    - websocket
+state.ready:
+  use: task/state-ready
+  config:
+    key: ready
+  deps:
+    tasks: tasks
+    identity: identity
+    plan: plan
+    decisions: decisions
+state.executing:
+  use: task/state-executing
+  config:
+    key: executing
+  deps:
+    tasks: tasks
+    plan: plan
+    decisions: decisions
+    executions: execution
+    deliveries: delivery
+state.accepting:
+  use: task/state-accepting
+  config:
+    key: accepting
+  deps:
+    tasks: tasks
+    deliveries: delivery
+    acceptance: acceptance
+completion.standard:
+  use: task/completion-check
+  config:
+    requireAcceptance: true
+    requireChildrenComplete: true
+  deps:
+    tasks: tasks
+    deliveries: delivery
+    acceptance: acceptance
+    plan: plan
+    decisions: decisions
+state.completed.standard:
+  use: task/state-completed
+  config:
+    key: completed
+  deps:
+    completion: completion.standard
+flow.standard:
+  use: task/flow
+  config:
+    id: standard
+    version: '1'
+    terminalState: completed
+    maxAutoAdvances: 4
+    returnTargets:
+      accepting: executing
+    reopenState: ready
+  deps:
+    states:
+    - state.ready
+    - state.executing
+    - state.accepting
+    - state.completed.standard
+    store: sql
+    tasks: tasks
+    authz: permissions
+    confirmation: confirmation
+    tx: sql
+    requests: sql
+    changes: revisions
+    audit: audit
+    events: events
+hook.flow:
+  use: task/hook-flow
+  deps:
+    flows:
+    - flow.standard
+    tasks: tasks
+    plan: plan
+    authz: permissions
+flow-worker:
+  use: event/worker
+  config:
+    consumerID: task-flow
+  deps:
+    events: events
+    cursors: events
+    handler: hook.flow
+feed:
+  use: task/feed
+  config:
+    maxBatchSize: 100
+    pollInterval: 1s
+    maxReplayAge: 24h
+  deps:
+    events: events
+    cursors: events
+    tasks: tasks
+    authz: permissions
+websocket:
+  use: transport/websocket
+  deps:
+    feed: feed
+api.tasks:
+  use: api/tasks
+  deps:
+    tasks: tasks
+api.conversations:
+  use: api/conversations
+  deps:
+    conversations: conversations
+api.decisions:
+  use: api/decisions
+  deps:
+    decisions: decisions
+api.plan:
+  use: api/plan
+  deps:
+    plan: plan
+api.execution:
+  use: api/execution
+  deps:
+    execution: execution
+api.deliveries:
+  use: api/deliveries
+  deps:
+    delivery: delivery
+api.acceptance:
+  use: api/acceptance
+  deps:
+    acceptance: acceptance
+api.artifacts:
+  use: api/artifacts
+  deps:
+    artifacts: artifacts
+api.flow:
+  use: api/flow
+  deps:
+    flows:
+    - flow.standard
+api.access:
+  use: api/access
+  deps:
+    grants: permissions
+    confirmation: confirmation
+api.query:
+  use: api/query
+  deps:
+    query: query
+api.notifications:
+  use: api/notifications
+  deps:
+    notifications: notifications
+api.changes:
+  use: api/changes
+  deps:
+    feed: feed

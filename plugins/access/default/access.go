@@ -27,7 +27,7 @@ func New(d Deps) (*Service, error) {
 	return &Service{d}, nil
 }
 func (s *Service) Check(ctx context.Context, p identity.Principal, op, resource string) error {
-	if p.Tenant == "" || p.ID == "" || p.CredentialPurpose == "runtime" {
+	if p.Tenant == "" || p.ID == "" {
 		return az.ErrForbidden
 	}
 	m, e := s.d.Store.GetMember(ctx, p.Tenant, p.ID)
@@ -40,6 +40,15 @@ func (s *Service) Check(ctx context.Context, p identity.Principal, op, resource 
 	if !m.Active || (m.Role != "admin" && m.Role != "member") {
 		return az.ErrForbidden
 	}
+	if p.CredentialPurpose == "runtime" {
+		if op != "execution.prove" || p.Kind != "agent" {
+			return az.ErrForbidden
+		}
+		if _, e := s.d.Tasks.GetTask(ctx, p.Tenant, resource); e != nil {
+			return az.ErrForbidden
+		}
+		return nil
+	}
 	switch op {
 	case "identity.create", "identity.issue", "identity.revoke", "member.set":
 		if resource == p.Tenant && m.Role == "admin" && p.Kind == "human" {
@@ -51,7 +60,7 @@ func (s *Service) Check(ctx context.Context, p identity.Principal, op, resource 
 			return nil
 		}
 		return az.ErrForbidden
-	case "task.read", "task.edit", "commit.append", "participant.set":
+	case "task.read", "task.edit", "commit.append", "participant.set", "execution.open", "execution.renew", "execution.end", "execution.assign", "execution.isolate", "result.submit", "result.review", "result.withdraw", "task.cancel", "task.return", "task.reopen":
 		t, e := s.d.Tasks.GetTask(ctx, p.Tenant, resource)
 		if errors.Is(e, fault.ErrNotFound) {
 			return az.ErrForbidden
@@ -59,12 +68,29 @@ func (s *Service) Check(ctx context.Context, p identity.Principal, op, resource 
 		if e != nil {
 			return e
 		}
+		if op == "execution.isolate" {
+			if p.Kind == "human" && m.Role == "admin" {
+				return nil
+			}
+			return az.ErrForbidden
+		}
+		if op == "result.review" {
+			if p.Kind == "human" && p.ID == t.Owner {
+				return nil
+			}
+			return az.ErrForbidden
+		}
+		if (op == "execution.open" || op == "execution.renew" || op == "execution.end" || op == "result.submit") && p.Kind != "agent" {
+			return az.ErrForbidden
+		}
 		if p.Kind == "human" && (m.Role == "admin" || t.Owner == p.ID) {
 			return nil
 		}
-		if op == "task.edit" || op == "participant.set" {
+		if op == "task.edit" || op == "participant.set" || op == "execution.assign" || op == "task.cancel" || op == "task.return" || op == "task.reopen" {
 			return az.ErrForbidden
 		}
+		// Execution commands recheck explicit assignment and instance/generation in
+		// their own domain. Read access still requires task participation.
 		// Agents require explicit task participation; owner attribution grants nothing.
 		ok, e := s.d.Store.HasParticipant(ctx, az.Participant{Tenant: p.Tenant, TaskID: t.ID, Subject: p.ID})
 		if e != nil {

@@ -94,7 +94,7 @@ func (s *Service) Create(ctx context.Context, token, key string, in api.Create) 
 		if p.Kind != "human" || !valid(in.Title, in.Goal, in.Criteria) {
 			return nil, fault.ErrInput
 		}
-		t := task.Task{Tenant: p.Tenant, ID: id(), Title: in.Title, Goal: in.Goal, Criteria: in.Criteria, Owner: p.ID, Version: 1, BasisVersion: 1}
+		t := task.Task{Tenant: p.Tenant, ID: id(), Title: in.Title, Goal: in.Goal, Criteria: in.Criteria, Owner: p.ID, Version: 1, BasisVersion: 1, PolicyVersion: 1}
 		if e := s.d.Tasks.CreateTask(tx, t); e != nil {
 			return nil, e
 		}
@@ -130,6 +130,9 @@ func (s *Service) Edit(ctx context.Context, token, key string, in api.Edit) (api
 		}
 		if !valid(in.Title, in.Goal, in.Criteria) {
 			return nil, fault.ErrInput
+		}
+		if e = s.d.Flow.CheckEdit(tx, t); e != nil {
+			return nil, e
 		}
 		t, e = s.d.Tasks.UpdateBasis(tx, task.BasisChange{Tenant: p.Tenant, TaskID: in.TaskID, Title: in.Title, Goal: in.Goal, Criteria: in.Criteria, ExpectedVersion: in.ExpectedVersion})
 		if e != nil {

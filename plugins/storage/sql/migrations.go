@@ -25,6 +25,8 @@ var migrations = []migration{
 	{"task/001", "task-facts-and-immutable-commits-v1", []any{&taskRow{}, &commitRow{}, &positionRow{}}},
 	{"flow/001", "immutable-flow-definition-v1", []any{&flowDefinitionRow{}}},
 	{"membership/001", "tenant-members-and-task-participants-v1", []any{&memberRow{}, &participantRow{}}},
+	{"workflow/001", "execution-submission-and-state-owned-review-v1", []any{&stopEvidenceRow{}, &assignmentRow{}, &executionRow{}, &submissionRow{}, &reviewRow{}, &verdictRow{}, &positionHistoryRow{}}},
+	{"checkpoint/001", "state-owned-checkpoint-records-v1", []any{&checkpointRow{}}},
 }
 
 func migrate(ctx context.Context, db *gorm.DB, driver string) error {

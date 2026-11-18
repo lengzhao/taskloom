@@ -18,7 +18,7 @@ type testState struct {
 	result capflow.Check
 }
 
-func (s testState) CheckComplete(context.Context, task.Task) (capflow.Check, error) {
+func (s testState) CheckComplete(context.Context, capflow.Context) (capflow.Check, error) {
 	return s.result, nil
 }
 func TestTypedCompletionAndDefinitionFence(t *testing.T) {
@@ -32,7 +32,7 @@ func TestTypedCompletionAndDefinitionFence(t *testing.T) {
 	}
 	defer db.Close(ctx)
 	state := &ready.State{}
-	controller, e := flow.New(flow.Config{ID: "preparation", Version: "1"}, flow.Deps{Definitions: db, Positions: db, State: state})
+	controller, e := flow.New(flow.Config{ID: "preparation", Version: "1"}, flow.Deps{Definitions: db, Positions: db, States: []capflow.State{state}})
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -73,7 +73,7 @@ func TestTypedCompletionAndDefinitionFence(t *testing.T) {
 	}); !errors.Is(e, fault.ErrConflict) {
 		t.Fatal("definition fence", e)
 	}
-	invalid, _ := flow.New(flow.Config{ID: "bad", Version: "1"}, flow.Deps{Definitions: db, Positions: db, State: testState{state, capflow.Check{Status: "unknown"}}})
+	invalid, _ := flow.New(flow.Config{ID: "bad", Version: "1"}, flow.Deps{Definitions: db, Positions: db, States: []capflow.State{testState{state, capflow.Check{Status: "unknown"}}}})
 	if e = db.Do(ctx, func(tx context.Context) error {
 		_, e := invalid.Initialize(tx, task.Task{Tenant: "t", ID: "b"})
 		return e

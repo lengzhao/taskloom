@@ -1,4 +1,4 @@
-# Implemented M04 graph: SQLite task/commit workspace; no Agent execution.
+# Implemented M05 graph: SQLite workspace and execution/result/acceptance protocol; no Agent runtime.
 server:
   use: server
   config:
@@ -12,7 +12,7 @@ http:
     listen: 127.0.0.1:8080
     apiPrefix: /v1
   deps:
-    modules: [health, workspace-api]
+    modules: [health, workspace-api, workflow-api]
 health:
   use: api/health
 
@@ -34,6 +34,14 @@ access:
 ready:
   use: state/ready
 flow:
+  use: flow/directory
+  config:
+    defaultID: standard
+    defaultVersion: '1'
+  deps:
+    positions: sql
+    flows: [flow-preparation, flow-standard]
+flow-preparation:
   use: task/flow
   config:
     id: preparation
@@ -41,7 +49,31 @@ flow:
   deps:
     definitions: sql
     positions: sql
-    state: ready
+    states: [ready]
+flow-standard:
+  use: task/flow
+  config:
+    id: standard
+    version: '1'
+  deps:
+    definitions: sql
+    positions: sql
+    executions: sql
+    states: [ready, executing, accepting, completed]
+executing:
+  use: state/executing
+  deps:
+    results: sql
+accepting:
+  use: state/accepting
+  deps:
+    results: sql
+    reviews: sql
+    members: sql
+completed:
+  use: state/completed
+  deps:
+    results: sql
 command-runtime:
   use: commands/runtime
   deps:
@@ -86,3 +118,58 @@ workspace-api:
     changes: workspace
     identity: identity
     security: security
+
+workflow-query:
+  use: query/workflow
+  deps:
+    commits: sql
+    transactions: sql
+    tasks: sql
+    flow: flow
+    executions: sql
+    results: sql
+    reviews: sql
+    identity: identity
+    authorization: access
+execution-commands:
+  use: commands/execution
+  deps:
+    participants: sql
+    principals: sql
+    members: sql
+    commands: command-runtime
+    tasks: sql
+    flow: flow
+    executions: sql
+    snapshots: workflow-query
+    events: sql
+result-commands:
+  use: commands/result
+  deps:
+    commands: command-runtime
+    tasks: sql
+    flow: flow
+    executions: sql
+    results: sql
+    commits: sql
+    accepting: accepting
+    snapshots: workflow-query
+    events: sql
+flow-commands:
+  use: commands/flow
+  deps:
+    commands: command-runtime
+    tasks: sql
+    flow: flow
+    executions: sql
+    snapshots: workflow-query
+    events: sql
+
+workflow-api:
+  use: api/workflow
+  deps:
+    executions: execution-commands
+    results: result-commands
+    controls: flow-commands
+    workflow: workflow-query
+    security: workspace-api

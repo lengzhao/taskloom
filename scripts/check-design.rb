@@ -90,12 +90,21 @@ def check_graph(graph, label, quiet: false)
     expected << 'storage/sql'
     if nodes.key?('workspace-api')
       expected += %w[identity/local access/default state/ready task/flow commands/runtime commands/security workspace/tasks api/workspace]
+      if nodes.key?('execution-commands')
+        expected += %w[task/flow flow/directory state/executing state/accepting state/completed query/workflow commands/execution commands/result commands/flow api/workflow]
+      end
+      if nodes.key?('flow-automatic')
+        expected << 'task/flow'
+      end
+      if nodes.key?('checkpoint-api')
+        expected += %w[task/flow state/checkpoint api/checkpoint]
+      end
     end
   else
     assert(resources == [], "#{label}: unexpected resource")
   end
   assert(nodes.values.map { |n| n['use'] }.sort == expected.sort, "#{label}: default graph contains unexpected capabilities")
-  assert(graph.fetch('http').fetch('deps').fetch('modules') == (nodes.key?('workspace-api') ? ['health','workspace-api'] : ['health']), "#{label}: health module owner missing")
+  assert(graph.fetch('http').fetch('deps').fetch('modules') == (nodes.key?('checkpoint-api') ? ['health','workspace-api','workflow-api','checkpoint-api'] : (nodes.key?('workflow-api') ? ['health','workspace-api','workflow-api'] : (nodes.key?('workspace-api') ? ['health','workspace-api'] : ['health']))), "#{label}: health module owner missing")
   puts "PASS #{label}: references, acyclic/reachable graph and current owners" unless quiet
 end
 
@@ -106,7 +115,9 @@ check_graph(valid, 'root base + config')
 check_graph(merge_instances(YAML.load_file('examples/minimal/base.yaml'), YAML.load_file('examples/minimal/config.yaml')), 'minimal example')
 Dir['examples/flows/*.config.yaml'].each do |path|
   snippet = YAML.load_file(path)
-  assert(snippet == {}, "retired flow snippet must not enable capabilities: #{path}")
+  if snippet != {}
+    check_graph(merge_instances(base, snippet), path)
+  end
 end
 [
   ['missing reference', lambda { |g| g['http']['deps']['modules'] = ['missing'] }],

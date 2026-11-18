@@ -299,3 +299,26 @@ func TestOutboxFailureRollsBackFactsAndReceipt(t *testing.T) {
 func insertTask(s *store.Store, ctx context.Context, tenant, id string) (int64, error) {
 	return 1, s.CreateTask(ctx, task.Task{Tenant: tenant, ID: id, Version: 1, BasisVersion: 1})
 }
+
+func TestExtensionUseCaseCheckRunsBeforeReceiptReplay(t *testing.T) {
+	_, r, _, token := fixture(t)
+	ctx := context.Background()
+	allowed := true
+	request := capcommand.Request{Token: token, Operation: "plugin.confirm", Key: "confirm", Resource: "task", Authorize: func(context.Context, identity.Principal) error {
+		if !allowed {
+			return authorization.ErrForbidden
+		}
+		return nil
+	}}
+	first, e := command.Run(ctx, r, request, 1, func(context.Context, identity.Principal) ([]byte, error) { return []byte("private result"), nil })
+	if e != nil || string(first) != "private result" {
+		t.Fatal(e)
+	}
+	allowed = false
+	if _, e = command.Run(ctx, r, request, 1, func(context.Context, identity.Principal) ([]byte, error) {
+		t.Fatal("revoked extension ran")
+		return nil, nil
+	}); !errors.Is(e, authorization.ErrForbidden) {
+		t.Fatal("extension replay bypassed current check", e)
+	}
+}

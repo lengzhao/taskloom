@@ -35,8 +35,11 @@ type CredentialLookup interface {
 }
 
 // Principals is the cohesive directory and registration capability used by administration.
-type Principals interface {
+type PrincipalReader interface {
 	Resolve(ctx context.Context, tenant, subject string) (Principal, error)
+}
+type Principals interface {
+	PrincipalReader
 	CreatePrincipal(ctx context.Context, value Principal) error
 }
 type Credentials interface {

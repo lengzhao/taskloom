@@ -7,8 +7,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-
 	"github.com/lengzhao/pluginkit"
+	"github.com/lengzhao/taskloom/cap/execution"
+	"github.com/lengzhao/taskloom/cap/fault"
 	capflow "github.com/lengzhao/taskloom/cap/flow"
 	"github.com/lengzhao/taskloom/cap/task"
 )
@@ -20,23 +21,50 @@ type Config struct {
 type Deps struct {
 	Definitions capflow.DefinitionStore `json:"definitions"`
 	Positions   capflow.PositionStore   `json:"positions"`
-	State       capflow.State           `json:"state"`
+	States      []capflow.State         `json:"states"`
+	Executions  execution.Reader        `json:"executions,omitempty"`
 }
 type Controller struct {
-	c Config
-	d Deps
+	c   Config
+	d   Deps
+	ref capflow.DefinitionRef
 }
 
-func init() { pluginkit.Register("task/flow", New) }
+func init() { pluginkit.Register("task/flow", New); pluginkit.Register("flow/directory", NewDirectory) }
 func New(c Config, d Deps) (*Controller, error) {
-	if c.ID == "" || c.Version == "" || d.Definitions == nil || d.Positions == nil || d.State == nil {
-		return nil, errors.New("flow definition and dependencies required")
+	if c.ID == "" || c.Version == "" || d.Definitions == nil || d.Positions == nil || len(d.States) == 0 {
+		return nil, errors.New("flow definition, states and persistence required")
 	}
-	description := d.State.Describe()
-	if description.Key == "" || description.Version == "" {
-		return nil, errors.New("state description requires key and version")
+	seen := map[string]bool{}
+	descs := []capflow.Description{}
+	terminal := false
+	for i, s := range d.States {
+		if s == nil {
+			return nil, fault.ErrInput
+		}
+		v := s.Describe()
+		if v.Key == "" || v.Version == "" || seen[v.Key] {
+			return nil, errors.New("invalid state descriptions")
+		}
+		seen[v.Key] = true
+		if v.Role == "completed" {
+			if i != len(d.States)-1 {
+				return nil, errors.New("completed state must be last")
+			}
+			terminal = true
+		}
+		descs = append(descs, v)
 	}
-	return &Controller{c, d}, nil
+	if len(d.States) > 1 && (descs[0].Role != "ready" || !terminal || d.Executions == nil) {
+		return nil, errors.New("workflow requires ready, terminal and execution safety")
+	}
+	var b []byte
+	if len(descs) == 1 {
+		b, _ = json.Marshal(struct{ Key, Version string }{descs[0].Key, descs[0].Version})
+	} else {
+		b, _ = json.Marshal(descs)
+	}
+	return &Controller{c: c, d: d, ref: capflow.DefinitionRef{ID: c.ID, Version: c.Version, Digest: fmt.Sprintf("%x", sha256.Sum256(b))}}, nil
 }
 func id() string {
 	var b [16]byte
@@ -45,77 +73,370 @@ func id() string {
 	}
 	return fmt.Sprintf("%x", b)
 }
+func (c *Controller) Reference() capflow.DefinitionRef { return c.ref }
+func (c *Controller) stateContext(t task.Task, p capflow.Position, i int) capflow.Context {
+	p.EntryID = p.Entries[i].ID
+	p.State = p.Entries[i].Key
+	return capflow.Context{Task: t, Position: p}
+}
+func (c *Controller) safe(ctx context.Context, t task.Task) (bool, error) {
+	if c.d.Executions == nil {
+		return true, nil
+	}
+	return c.d.Executions.SafeToExit(ctx, t.Tenant, t.ID)
+}
 func (c *Controller) Initialize(ctx context.Context, t task.Task) (capflow.Position, error) {
-	p := capflow.Position{Tenant: t.Tenant, TaskID: t.ID, RoundID: id(), EntryID: id(), State: c.d.State.Describe().Key, Flow: capflow.DefinitionRef{ID: c.c.ID, Version: c.c.Version, Digest: fmt.Sprintf("%x", sha256.Sum256(descriptionBytes(c.d.State.Describe())))}}
-	if e := c.d.Definitions.EnsureDefinition(ctx, p.Flow); e != nil {
+	p := capflow.Position{Tenant: t.Tenant, TaskID: t.ID, RoundID: id(), EntryID: id(), State: c.d.States[0].Describe().Key, Flow: c.ref, Status: "active"}
+	p.Entries = []capflow.Entry{{Key: p.State, ID: p.EntryID}}
+	if e := c.d.Definitions.EnsureDefinition(ctx, c.ref); e != nil {
 		return p, e
 	}
-	entry, e := c.d.State.CheckEnter(ctx, t)
+	entry, e := c.d.States[0].CheckEnter(ctx, c.stateContext(t, p, 0))
 	if e != nil {
 		return p, e
 	}
 	if entry.Status != capflow.Allow {
-		return p, errors.New("state entry not allowed")
+		return p, fault.ErrConflict
 	}
-	if e := c.d.State.Enter(ctx, t); e != nil {
+	if e = c.d.Positions.CreatePosition(ctx, p); e != nil {
 		return p, e
 	}
-	why, e := c.d.State.CheckComplete(ctx, t)
-	if e != nil {
-		return p, e
-	}
-	if e = applyCheck(&p, why); e != nil {
-		return p, e
-	}
-	return p, c.d.Positions.CreatePosition(ctx, p)
+	return c.Refresh(ctx, t)
 }
-func (c *Controller) Refresh(ctx context.Context, t task.Task) (capflow.Position, error) {
-	p, e := c.d.Positions.GetPosition(ctx, t.Tenant, t.ID)
+func (c *Controller) Read(ctx context.Context, tenant, taskID string) (capflow.Position, error) {
+	p, e := c.d.Positions.GetPosition(ctx, tenant, taskID)
 	if e != nil {
 		return p, e
 	}
-	digest := fmt.Sprintf("%x", sha256.Sum256(descriptionBytes(c.d.State.Describe())))
-	if p.Flow.ID != c.c.ID || p.Flow.Version != c.c.Version || p.Flow.Digest != digest {
-		return p, errors.New("unsupported flow definition")
+	if p.Flow != c.ref {
+		return p, fault.ErrConflict
 	}
-	if e = c.d.State.Enter(ctx, t); e != nil {
-		return p, e
+	if len(p.Entries) == 0 {
+		p.Entries = []capflow.Entry{{Key: p.State, ID: p.EntryID}}
 	}
-	check, e := c.d.State.CheckComplete(ctx, t)
-	if e != nil {
-		return p, e
+	if p.Status == "" {
+		p.Status = "active"
 	}
-	if e = applyCheck(&p, check); e != nil {
-		return p, e
-	}
-	return p, c.d.Positions.SavePosition(ctx, p)
-}
-func (c *Controller) Read(ctx context.Context, tenant, id string) (capflow.Position, error) {
-	p, e := c.d.Positions.GetPosition(ctx, tenant, id)
-	if e != nil {
-		return p, e
-	}
-	digest := fmt.Sprintf("%x", sha256.Sum256(descriptionBytes(c.d.State.Describe())))
-	if p.Flow.ID != c.c.ID || p.Flow.Version != c.c.Version || p.Flow.Digest != digest {
-		return p, errors.New("unsupported flow definition")
+	if p.Index < 0 || p.Index >= len(c.d.States) || len(p.Entries) != p.Index+1 {
+		return p, fault.ErrConflict
 	}
 	return p, nil
 }
-
-func descriptionBytes(d capflow.Description) []byte { b, _ := json.Marshal(d); return b }
-func applyCheck(p *capflow.Position, c capflow.Check) error {
-	switch c.Status {
+func validate(check capflow.Check) error {
+	switch check.Status {
 	case capflow.Allow:
+		return nil
+	case capflow.Wait, capflow.Reject:
+		if check.Reason != "" {
+			return nil
+		}
+	}
+	return errors.New("invalid state check result")
+}
+func (c *Controller) Refresh(ctx context.Context, t task.Task) (capflow.Position, error) {
+	p, e := c.Read(ctx, t.Tenant, t.ID)
+	if e != nil {
+		return p, e
+	}
+	if p.Status == "completed" {
+		return p, nil
+	}
+	p.Revision++
+	if p.Status == "cancelled" {
+		safe, e := c.safe(ctx, t)
+		if e != nil {
+			return p, e
+		}
+		p.Waiting = "任务已取消"
+		if !safe {
+			p.Waiting = "已取消；外部工作停止待确认"
+		}
+		return p, c.d.Positions.SavePosition(ctx, p)
+	}
+	for iteration := 0; iteration < len(c.d.States)+1; iteration++ {
+		// Synchronize every reached step before judging any of them, so a new
+		// candidate cannot retain an old approval while an earlier audit is waiting.
+		for i := 0; i <= p.Index; i++ {
+			if e = c.d.States[i].Enter(ctx, c.stateContext(t, p, i)); e != nil {
+				return p, e
+			}
+		}
 		p.Complete = true
 		p.Waiting = ""
-	case capflow.Wait, capflow.Reject:
-		if c.Reason == "" {
-			return errors.New("blocked state requires a reason")
+		for i := 0; i <= p.Index; i++ {
+			check, e := c.d.States[i].CheckComplete(ctx, c.stateContext(t, p, i))
+			if e != nil {
+				return p, e
+			}
+			if e = validate(check); e != nil {
+				return p, e
+			}
+			if check.Status != capflow.Allow {
+				p.Complete = false
+				p.Waiting = check.Reason
+				if i < p.Index {
+					p.Waiting = c.d.States[i].Describe().Key + ": " + check.Reason
+				}
+				break
+			}
 		}
-		p.Complete = false
-		p.Waiting = c.Reason
-	default:
-		return errors.New("invalid state check status")
+		if !p.Complete {
+			break
+		}
+		if p.Index == len(c.d.States)-1 {
+			if c.d.States[p.Index].Describe().Role == "completed" {
+				safe, e := c.safe(ctx, t)
+				if e != nil {
+					return p, e
+				}
+				if !safe {
+					p.Complete = false
+					p.Waiting = "等待全部执行安全停止"
+					break
+				}
+				p.Status = "completed"
+			}
+			break
+		}
+		next := p.Index + 1
+		proposed := p
+		proposed.Entries = append(append([]capflow.Entry{}, p.Entries...), capflow.Entry{Key: c.d.States[next].Describe().Key, ID: id()})
+		check, e := c.d.States[next].CheckEnter(ctx, c.stateContext(t, proposed, next))
+		if e != nil {
+			return p, e
+		}
+		if e = validate(check); e != nil {
+			return p, e
+		}
+		if check.Status != capflow.Allow {
+			p.Waiting = check.Reason
+			break
+		}
+		if c.d.States[next].Describe().Role == "completed" {
+			safe, e := c.safe(ctx, t)
+			if e != nil {
+				return p, e
+			}
+			if !safe {
+				p.Waiting = "等待全部执行安全停止"
+				break
+			}
+		}
+		p.Entries = proposed.Entries
+		p.Index = next
+		p.State = p.Entries[next].Key
+		p.EntryID = p.Entries[next].ID
 	}
-	return nil
+	return p, c.d.Positions.SavePosition(ctx, p)
+}
+func (c *Controller) CheckOpen(ctx context.Context, t task.Task) (capflow.Position, error) {
+	p, e := c.Read(ctx, t.Tenant, t.ID)
+	if e != nil {
+		return p, e
+	}
+	if p.Status != "active" || c.d.States[p.Index].Describe().Role != "executing" {
+		return p, fault.ErrConflict
+	}
+	for i := 0; i < p.Index; i++ {
+		check, e := c.d.States[i].CheckComplete(ctx, c.stateContext(t, p, i))
+		if e != nil {
+			return p, e
+		}
+		if check.Status != capflow.Allow {
+			return p, fault.ErrConflict
+		}
+	}
+	check, e := c.d.States[p.Index].CheckEnter(ctx, c.stateContext(t, p, p.Index))
+	if e != nil {
+		return p, e
+	}
+	if check.Status != capflow.Allow {
+		return p, fault.ErrConflict
+	}
+	return p, nil
+}
+func (c *Controller) CheckEdit(ctx context.Context, t task.Task) error {
+	p, e := c.Read(ctx, t.Tenant, t.ID)
+	if e != nil {
+		return e
+	}
+	if p.Status != "active" {
+		return fault.ErrConflict
+	}
+	role := c.d.States[p.Index].Describe().Role
+	if role == "ready" {
+		safe, e := c.safe(ctx, t)
+		if e != nil {
+			return e
+		}
+		if safe {
+			return nil
+		}
+	}
+	if role == "executing" && c.d.Executions != nil {
+		previous, readErr := c.d.Executions.Current(ctx, t.Tenant, t.ID)
+		e = readErr
+		if e == nil && previous.RoundID != p.RoundID && previous.Safe {
+			return nil
+		}
+		if errors.Is(e, fault.ErrNotFound) {
+			return nil
+		}
+		if e != nil {
+			return e
+		}
+	}
+	return fault.ErrConflict
+}
+func (c *Controller) Cancel(ctx context.Context, t task.Task) (capflow.Position, error) {
+	p, e := c.Read(ctx, t.Tenant, t.ID)
+	if e != nil {
+		return p, e
+	}
+	if p.Status != "active" {
+		return p, fault.ErrConflict
+	}
+	p.Status = "cancelled"
+	p.Complete = false
+	p.Revision++
+	p.Waiting = "已取消；外部工作停止待确认"
+	return p, c.d.Positions.SavePosition(ctx, p)
+}
+func (c *Controller) restart(ctx context.Context, t task.Task, reopen bool) (capflow.Position, error) {
+	p, e := c.Read(ctx, t.Tenant, t.ID)
+	if e != nil {
+		return p, e
+	}
+	if reopen == (p.Status == "active") {
+		return p, fault.ErrConflict
+	}
+	safe, e := c.safe(ctx, t)
+	if e != nil {
+		return p, e
+	}
+	if !safe {
+		return p, fault.ErrConflict
+	}
+	p.RoundID = id()
+	p.EntryID = id()
+	p.State = c.d.States[0].Describe().Key
+	p.Index = 0
+	p.Entries = []capflow.Entry{{Key: p.State, ID: p.EntryID}}
+	p.Status = "active"
+	p.Complete = false
+	p.Waiting = ""
+	p.Revision++
+	if e = c.d.Positions.SavePosition(ctx, p); e != nil {
+		return p, e
+	}
+	return c.Refresh(ctx, t)
+}
+func (c *Controller) Return(ctx context.Context, t task.Task) (capflow.Position, error) {
+	return c.restart(ctx, t, false)
+}
+func (c *Controller) Reopen(ctx context.Context, t task.Task) (capflow.Position, error) {
+	return c.restart(ctx, t, true)
+}
+
+type DirectoryConfig struct {
+	DefaultID      string `json:"defaultID"`
+	DefaultVersion string `json:"defaultVersion"`
+}
+type DirectoryDeps struct {
+	Positions capflow.PositionReader `json:"positions"`
+	Flows     []capflow.Definition   `json:"flows"`
+}
+type Directory struct {
+	c  DirectoryConfig
+	d  DirectoryDeps
+	by map[string]capflow.Definition
+}
+
+func NewDirectory(c DirectoryConfig, d DirectoryDeps) (*Directory, error) {
+	v := &Directory{c: c, d: d, by: map[string]capflow.Definition{}}
+	if d.Positions == nil {
+		return nil, fault.ErrInput
+	}
+	for _, f := range d.Flows {
+		r := f.Reference()
+		key := r.ID + "/" + r.Version
+		if v.by[key] != nil {
+			return nil, fault.ErrConflict
+		}
+		v.by[key] = f
+	}
+	if v.by[c.DefaultID+"/"+c.DefaultVersion] == nil {
+		return nil, fault.ErrNotFound
+	}
+	return v, nil
+}
+func (d *Directory) bound(ctx context.Context, t task.Task) (capflow.Definition, error) {
+	p, e := d.d.Positions.GetPosition(ctx, t.Tenant, t.ID)
+	if e != nil {
+		return nil, e
+	}
+	f := d.by[p.Flow.ID+"/"+p.Flow.Version]
+	if f == nil || f.Reference() != p.Flow {
+		return nil, fault.ErrConflict
+	}
+	return f, nil
+}
+func (d *Directory) Initialize(ctx context.Context, t task.Task) (capflow.Position, error) {
+	return d.by[d.c.DefaultID+"/"+d.c.DefaultVersion].Initialize(ctx, t)
+}
+func (d *Directory) Read(ctx context.Context, tenant, id string) (capflow.Position, error) {
+	t := task.Task{Tenant: tenant, ID: id}
+	f, e := d.bound(ctx, t)
+	if e != nil {
+		return capflow.Position{}, e
+	}
+	return f.Read(ctx, tenant, id)
+}
+
+func (d *Directory) Refresh(ctx context.Context, t task.Task) (capflow.Position, error) {
+	f, e := d.bound(ctx, t)
+	if e != nil {
+		return capflow.Position{}, e
+	}
+	return f.Refresh(ctx, t)
+}
+
+func (d *Directory) CheckOpen(ctx context.Context, t task.Task) (capflow.Position, error) {
+	f, e := d.bound(ctx, t)
+	if e != nil {
+		return capflow.Position{}, e
+	}
+	return f.CheckOpen(ctx, t)
+}
+
+func (d *Directory) Cancel(ctx context.Context, t task.Task) (capflow.Position, error) {
+	f, e := d.bound(ctx, t)
+	if e != nil {
+		return capflow.Position{}, e
+	}
+	return f.Cancel(ctx, t)
+}
+
+func (d *Directory) Return(ctx context.Context, t task.Task) (capflow.Position, error) {
+	f, e := d.bound(ctx, t)
+	if e != nil {
+		return capflow.Position{}, e
+	}
+	return f.Return(ctx, t)
+}
+
+func (d *Directory) Reopen(ctx context.Context, t task.Task) (capflow.Position, error) {
+	f, e := d.bound(ctx, t)
+	if e != nil {
+		return capflow.Position{}, e
+	}
+	return f.Reopen(ctx, t)
+}
+
+func (d *Directory) CheckEdit(ctx context.Context, t task.Task) error {
+	f, e := d.bound(ctx, t)
+	if e != nil {
+		return e
+	}
+	return f.CheckEdit(ctx, t)
 }

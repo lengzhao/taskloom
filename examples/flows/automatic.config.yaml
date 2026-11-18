@@ -1,0 +1,17 @@
+# Optional new definition; keep old definitions referenced by existing tasks.
+flow:
+  config:
+    defaultID: automatic
+    defaultVersion: '1'
+  deps:
+    flows: [flow-preparation, flow-standard, flow-automatic]
+flow-automatic:
+  use: task/flow
+  config:
+    id: automatic
+    version: '1'
+  deps:
+    definitions: sql
+    positions: sql
+    executions: sql
+    states: [ready, executing, completed]

@@ -7,7 +7,7 @@
 - 本项目只建设任务系统；软件分发、管理平台、Agent 运行时复用已有能力，不重新建设模型推理、工具执行、远端派发或上下文组装。
 - 人是默认负责人，Agent（Buddy）是执行者；任务、commit 时间线、执行记录、实例及执行代次分别表达，更换 Buddy/实例不自动更换负责人。
 - 先读 [README](README.md)；涉及能力边界读 [模块化单体](docs/architecture.md)及[插件边界](docs/plugin-contracts.md)；流转读 [状态模块与流程控制](docs/task-flow-plugins.md)；交付读 [结果回复契约](docs/reply-delivery.md)；API/推送读 [通信契约](docs/shared-api-and-realtime.md)；配置读 [两层配置](docs/configuration.md)。
-- 已初始化 go.mod，核心行为以 [核心契约](docs/core-contracts.md)及[阶段覆盖表](docs/requirements-coverage.md)为准；已实现 M03 的 GORM/SQLite 存储与身份/安全命令基础，见 [M03 实现](docs/m03-storage.md)，M04 已有本地任务/commit/准备流程闭环，见 [M04 实现](docs/m04-workspace.md)，尚无执行/结果/验收闭环；工作前检查实际文件，不把文档中的 kind、接口或默认值视为已经实现。待决策项和已确认约束分开，发现冲突先指出，不自行扩大范围。
+- 已初始化 go.mod，核心行为以 [核心契约](docs/core-contracts.md)及[阶段覆盖表](docs/requirements-coverage.md)为准；已实现 M03 的 GORM/SQLite 存储与身份/安全命令基础，见 [M03 实现](docs/m03-storage.md)，M04 已有本地任务/commit/准备流程闭环，见 [M04 实现](docs/m04-workspace.md)，M05 已有本地执行/结果/验收/取消闭环，见 [M05 实现](docs/m05-workflow.md)，真实运行时验证仍属 M06；工作前检查实际文件，不把文档中的 kind、接口或默认值视为已经实现。待决策项和已确认约束分开，发现冲突先指出，不自行扩大范围。
 
 ## 插件与接口
 
@@ -57,3 +57,5 @@
 当前权限基线见[成员与任务关系](docs/permissions.md)：移除通用 Scope/Grant 和逐动作授权配置，以有效租户成员、固定角色、负责人及参与关系判断业务资格；保持租户隔离、即时撤销和幂等重放前重新鉴权。不兼容旧权限数据库格式。
 
 公共能力以 [cap 消费者清单](docs/cap-interfaces.md) 为当前实现基线：只读消费者不获得写接口；无消费者不预建能力；接口分拆不自动新增插件，Deps 按真实字段计数。
+
+M05 已提供本地执行/结果/验收/取消闭环及安全退回/重开，实际接口、配置、证明边界与验证见[M05 说明](docs/m05-workflow.md)。本地测试不代表真实 Agent/进程清理或生产数据库验收，Harness 未在本轮实现。

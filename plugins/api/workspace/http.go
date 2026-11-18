@@ -9,7 +9,8 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"io"
+	"github.com/lengzhao/taskloom/cap/fault"
+	"github.com/lengzhao/taskloom/runtime/httpx"
 	"net/http"
 	"strconv"
 	"strings"
@@ -18,7 +19,6 @@ import (
 
 	"github.com/lengzhao/pluginkit"
 	"github.com/lengzhao/taskloom/cap/authorization"
-	"github.com/lengzhao/taskloom/cap/fault"
 	"github.com/lengzhao/taskloom/cap/httpapi"
 	"github.com/lengzhao/taskloom/cap/identity"
 	"github.com/lengzhao/taskloom/cap/security"
@@ -112,11 +112,8 @@ func (m *Module) token(r *http.Request) string {
 	return s.Token
 }
 func (m *Module) serve(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set("X-Content-Type-Options", "nosniff")
-	w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; frame-ancestors 'none'")
-	if origin := r.Header.Get("Origin"); origin != "" && origin != m.c.Origin {
-		http.Error(w, "origin rejected", 403)
+	token, ok := m.Credential(w, r)
+	if !ok {
 		return
 	}
 	path := r.URL.Path
@@ -126,11 +123,6 @@ func (m *Module) serve(w http.ResponseWriter, r *http.Request) {
 		w.Write(b)
 		return
 	}
-	if r.Method != "GET" && r.Header.Get("Authorization") == "" && r.Header.Get("X-Taskloom-Request") != "1" {
-		http.Error(w, "request header required", 403)
-		return
-	}
-	token := m.token(r)
 	if strings.HasSuffix(path, "/session") {
 		if r.Method == "DELETE" {
 			if cookie, e := r.Cookie("taskloom_session"); e == nil {
@@ -139,17 +131,17 @@ func (m *Module) serve(w http.ResponseWriter, r *http.Request) {
 				m.mu.Unlock()
 			}
 			http.SetCookie(w, &http.Cookie{Name: "taskloom_session", Value: "", Path: "/", HttpOnly: true, Secure: !m.c.LocalHTTP, SameSite: http.SameSiteStrictMode, MaxAge: -1})
-			write(w, map[string]bool{"ok": true})
+			httpx.Write(w, map[string]bool{"ok": true})
 			return
 		}
 		if _, e := m.d.Identity.Authenticate(r.Context(), token); e != nil {
-			fail(w, e)
+			httpx.Fail(w, e)
 			return
 		}
 		plain, _ := json.Marshal(session{token, time.Now().Add(time.Hour).Unix()})
 		nonce := make([]byte, m.aead.NonceSize())
 		if _, e := rand.Read(nonce); e != nil {
-			fail(w, e)
+			httpx.Fail(w, e)
 			return
 		}
 		sealed := m.aead.Seal(nonce, nonce, plain, nil)
@@ -162,13 +154,13 @@ func (m *Module) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		if len(m.sessions) >= 10000 {
 			m.mu.Unlock()
-			fail(w, errors.New("session capacity reached"))
+			httpx.Fail(w, errors.New("session capacity reached"))
 			return
 		}
 		m.sessions[value] = time.Now().Add(time.Hour).Unix()
 		m.mu.Unlock()
 		http.SetCookie(w, &http.Cookie{Name: "taskloom_session", Value: value, Path: "/", HttpOnly: true, Secure: !m.c.LocalHTTP, SameSite: http.SameSiteStrictMode, MaxAge: 3600})
-		write(w, map[string]bool{"ok": true})
+		httpx.Write(w, map[string]bool{"ok": true})
 		return
 	}
 	ctx := r.Context()
@@ -181,7 +173,7 @@ func (m *Module) serve(w http.ResponseWriter, r *http.Request) {
 		result, err = m.d.Changes.Changes(ctx, token, r.URL.Query().Get("cursor"))
 	case strings.HasSuffix(path, "/members"):
 		var in authorization.Member
-		if !decode(w, r, &in) {
+		if !httpx.Decode(w, r, &in) {
 			return
 		}
 		if r.Method == "DELETE" {
@@ -191,7 +183,7 @@ func (m *Module) serve(w http.ResponseWriter, r *http.Request) {
 		result = map[string]bool{"ok": err == nil}
 	case strings.HasSuffix(path, "/participants"):
 		var in api.Participation
-		if !decode(w, r, &in) {
+		if !httpx.Decode(w, r, &in) {
 			return
 		}
 		in.TaskID = taskID
@@ -199,7 +191,7 @@ func (m *Module) serve(w http.ResponseWriter, r *http.Request) {
 		result = map[string]bool{"ok": err == nil}
 	case strings.HasSuffix(path, "/commits"):
 		var in api.Comment
-		if !decode(w, r, &in) {
+		if !httpx.Decode(w, r, &in) {
 			return
 		}
 		in.TaskID = taskID
@@ -209,14 +201,14 @@ func (m *Module) serve(w http.ResponseWriter, r *http.Request) {
 		if raw := r.URL.Query().Get("after"); raw != "" {
 			after, err = strconv.ParseInt(raw, 10, 64)
 			if err != nil || after < 0 {
-				fail(w, fault.ErrInput)
+				httpx.Fail(w, fault.ErrInput)
 				return
 			}
 		}
 		result, err = m.d.Queries.Get(ctx, token, taskID, after)
 	case taskID != "" && r.Method == "PATCH":
 		var in api.Edit
-		if !decode(w, r, &in) {
+		if !httpx.Decode(w, r, &in) {
 			return
 		}
 		in.TaskID = taskID
@@ -225,62 +217,36 @@ func (m *Module) serve(w http.ResponseWriter, r *http.Request) {
 		result, err = m.d.Queries.List(ctx, token)
 	case r.Method == "POST":
 		var in api.Create
-		if !decode(w, r, &in) {
+		if !httpx.Decode(w, r, &in) {
 			return
 		}
 		result, err = m.d.Commands.Create(ctx, token, key, in)
 	}
 	if err != nil {
-		fail(w, err)
+		httpx.Fail(w, err)
 		return
 	}
-	write(w, result)
+	httpx.Write(w, result)
 }
-func decode(w http.ResponseWriter, r *http.Request, v any) bool {
-	d := json.NewDecoder(http.MaxBytesReader(w, r.Body, 65536))
-	d.DisallowUnknownFields()
-	if d.Decode(v) != nil {
-		fail(w, fault.ErrInput)
-		return false
-	}
-	var extra any
-	if d.Decode(&extra) != io.EOF {
-		fail(w, fault.ErrInput)
-		return false
-	}
-	return true
-}
-func write(w http.ResponseWriter, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(v)
-}
-func fail(w http.ResponseWriter, e error) {
-	status := 500
-	msg := "service unavailable"
-	switch {
-	case errors.Is(e, identity.ErrUnauthenticated):
-		status = 401
-		msg = "请重新登录"
-	case errors.Is(e, authorization.ErrForbidden):
-		status = 403
-		msg = "无权执行此操作"
-	case errors.Is(e, fault.ErrNotFound):
-		status = 404
-		msg = "记录不存在"
-	case errors.Is(e, fault.ErrConflict):
-		status = 409
-		msg = "版本或请求冲突，请刷新"
-	case errors.Is(e, fault.ErrInput):
-		status = 400
-		msg = "输入或游标无效，请刷新同步"
-	}
-	http.Error(w, msg, status)
-}
-
 func (m *Module) Open(context.Context) error { return nil }
 func (m *Module) Close(context.Context) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	clear(m.sessions)
 	return nil
+}
+
+func (m *Module) Credential(w http.ResponseWriter, r *http.Request) (string, bool) {
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; frame-ancestors 'none'")
+	if origin := r.Header.Get("Origin"); origin != "" && origin != m.c.Origin {
+		http.Error(w, "origin rejected", 403)
+		return "", false
+	}
+	if r.Method != "GET" && r.Header.Get("Authorization") == "" && r.Header.Get("X-Taskloom-Request") != "1" {
+		http.Error(w, "request header required", 403)
+		return "", false
+	}
+	return m.token(r), true
 }

@@ -9,6 +9,10 @@ import (
 	"gorm.io/gorm"
 )
 
+type positionHistoryRow struct {
+	Key  string `gorm:"primaryKey;size:64;column:row_key"`
+	Data []byte
+}
 type positionRow struct {
 	Key  string `gorm:"primaryKey;size:64;column:row_key"`
 	Data []byte
@@ -36,6 +40,13 @@ func (s *Store) GetPosition(ctx context.Context, tenant, id string) (flow.Positi
 }
 func (s *Store) SavePosition(ctx context.Context, p flow.Position) error {
 	return s.use(ctx, true, func(db *gorm.DB) error {
+		var old positionRow
+		if e := db.First(&old, "row_key = ?", key(p.Tenant, p.TaskID)).Error; e != nil {
+			return e
+		}
+		if e := db.Create(&positionHistoryRow{Key: randomID(), Data: old.Data}).Error; e != nil {
+			return e
+		}
 		b, e := json.Marshal(p)
 		if e != nil {
 			return e

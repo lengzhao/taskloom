@@ -69,7 +69,12 @@ func (r *Runner) Do(ctx context.Context, req capcommand.Request, digest string, 
 		if err != nil {
 			return err
 		}
-		if err = r.d.Authorization.Check(tx, actor, req.Operation, req.Resource); err != nil {
+		if req.Authorize != nil {
+			err = req.Authorize(tx, actor)
+		} else {
+			err = r.d.Authorization.Check(tx, actor, req.Operation, req.Resource)
+		}
+		if err != nil {
 			return err
 		}
 		if req.ReadOperation != "" {

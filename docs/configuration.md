@@ -33,3 +33,5 @@ M02 补充：[独立接入与剩余契约](integration-contract.md)明确本地�
 M04 根图已挂载 workspace/tasks、preparation/1 + ready、身份授权、命令包装及 api/workspace，共 12 实例。origin/localHTTP、Cookie 与生产 HTTPS 配置见[M04 说明](m04-workspace.md)。examples/minimal 仍是三实例 health。
 
 当前权限基线见[成员与任务关系](permissions.md)：移除通用 Scope/Grant 和逐动作授权配置，以有效租户成员、固定角色、负责人及参与关系判断业务资格；保持租户隔离、即时撤销和幂等重放前重新鉴权。不兼容旧权限数据库格式。
+
+M05 已提供本地执行/结果/验收/取消闭环及安全退回/重开，实际接口、配置、证明边界与验证见[M05 说明](m05-workflow.md)。本地测试不代表真实 Agent/进程清理或生产数据库验收，Harness 未在本轮实现。

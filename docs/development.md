@@ -1,6 +1,6 @@
 # Go 工程与真实装配
 
-更新：2026 年 11 月 18 日。M03 已落地 SQL/身份/安全命令基础，业务闭环尚未实现；历史记录仅描述各次提交当时状态。
+更新：2026 年 11 月 18 日。M03—M05 已落地 SQL/身份基础和本地任务、执行、交付、验收闭环，真实运行时接入尚未验收；历史记录仅描述各次提交当时状态。
 
 ## 目录与版本
 
@@ -22,7 +22,7 @@
 
 ## M01 业务方向
 
-采用[模块化单体](architecture.md)，M03 基础模块见[存储与安全命令](m03-storage.md)。已有 HTTP Module、生命周期及两层加载保留。根 base/config 已挂载 SQL + health，examples/minimal 保留纯 health；未来适配包装随用例实现，不注册空业务 kind。
+采用[模块化单体](architecture.md)，M03 基础模块见[存储与安全命令](m03-storage.md)。已有 HTTP Module、生命周期及两层加载保留。根 base/config 已挂载 SQL、工作台与 M05 流程模块，examples/minimal 保留纯 health；未来适配包装随用例实现，不注册空业务 kind。
 
 M02 已删除 runtime/config 对旧 task/catalog.defaultFlow 的专用检查。通用加载器不解释业务配置；未来由已挂载的流程目录验证定义、内联状态及默认 FlowRef，失败不得启动业务服务。
 
@@ -92,3 +92,5 @@ all 中 Go 尝试写模块 stat cache 时出现沙箱 `operation not permitted` 
 ## M04 工作台
 
 [工作台说明](m04-workspace.md)记录实际接口、12 实例根图、准备流程、授权 API、内嵌 HTML/CSS/JS 及 SQLite/HTTP/浏览器验证。HTTP 变化轮询已接通；执行、结构化问答、WS 和 Harness 仍留后续阶段。
+
+M05 已提供本地执行/结果/验收/取消闭环及安全退回/重开，实际接口、配置、证明边界与验证见[M05 说明](m05-workflow.md)。本地测试不代表真实 Agent/进程清理或生产数据库验收，Harness 未在本轮实现。

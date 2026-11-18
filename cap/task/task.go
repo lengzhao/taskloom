@@ -6,6 +6,7 @@ import "context"
 type Task struct {
 	Tenant, ID, Title, Goal, Criteria, Owner string
 	Version, BasisVersion                    int64
+	PolicyVersion                            int64
 }
 
 // BasisChange contains only fields the named basis update may change.

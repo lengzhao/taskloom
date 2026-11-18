@@ -249,3 +249,64 @@ func (s *Service) Recover(ctx context.Context, in BootstrapInput) (Issued, error
 	}
 	return issued, nil
 }
+
+// EnrollAgent is an explicitly invoked offline operator capability. It binds a
+// service credential to one runtime incarnation and never exposes a model/tool
+// credential as runtime stop-proof authority.
+type AgentEnrollment struct {
+	BootstrapInput
+	Owner, InstanceID, Incarnation, Purpose string
+}
+
+func (s *Service) EnrollAgent(ctx context.Context, in AgentEnrollment) (Issued, error) {
+	if !valid(in.Tenant) || !valid(in.Subject) || !valid(in.Owner) || !valid(in.Operator) || !valid(in.Reason) || !valid(in.InstanceID) || !valid(in.Incarnation) || (in.Purpose != "business" && in.Purpose != "runtime") {
+		return Issued{}, fault.ErrInput
+	}
+	var issued Issued
+	e := s.d.Transactions.Do(ctx, func(tx context.Context) error {
+		owner, e := s.d.Principals.Resolve(tx, in.Tenant, in.Owner)
+		if e != nil {
+			return e
+		}
+		if owner.Kind != "human" {
+			return authorization.ErrForbidden
+		}
+		p, e := s.d.Principals.Resolve(tx, in.Tenant, in.Subject)
+		if errors.Is(e, fault.ErrNotFound) {
+			p = identity.Principal{Tenant: in.Tenant, ID: in.Subject, Kind: "agent", OwnerID: in.Owner}
+			if e = s.d.Principals.CreatePrincipal(tx, p); e != nil {
+				return e
+			}
+		} else if e != nil {
+			return e
+		}
+		if p.Kind != "agent" || p.OwnerID != in.Owner {
+			return authorization.ErrForbidden
+		}
+		if e = s.d.Members.SetMember(tx, authorization.Member{Tenant: p.Tenant, Subject: p.ID, Role: "member", Active: true}); e != nil {
+			return e
+		}
+		p.InstanceID = in.InstanceID
+		p.Incarnation = in.Incarnation
+		p.CredentialPurpose = in.Purpose
+		c, out, e := credential(p, in.ExpiresAt)
+		if e != nil {
+			return e
+		}
+		if e = s.d.Credentials.SaveCredential(tx, c); e != nil {
+			return e
+		}
+		if e = s.d.Audit.AppendAudit(tx, record.Audit{Tenant: p.Tenant, Subject: in.Operator, Operation: "identity.enroll-agent", Resource: p.ID, Outcome: "committed", Reason: in.Reason, OwnerID: p.OwnerID, InstanceID: p.InstanceID, Incarnation: p.Incarnation}); e != nil {
+			return e
+		}
+		if e = s.d.Events.AppendEvent(tx, record.Event{Tenant: p.Tenant, Resource: p.ID, Kind: "identity.enrolled"}); e != nil {
+			return e
+		}
+		issued = out
+		return nil
+	})
+	if e != nil {
+		return Issued{}, e
+	}
+	return issued, nil
+}

@@ -7,7 +7,12 @@ import (
 	"github.com/lengzhao/taskloom/cap/identity"
 )
 
-type Request struct{ Token, Operation, Key, Resource, ReadOperation string }
+type Request struct {
+	Token, Operation, Key, Resource, ReadOperation string
+	// Authorize is a server-supplied named-use-case check, never parsed from HTTP.
+	// It is run before both new writes and receipt replay. Nil uses fixed rules.
+	Authorize func(context.Context, identity.Principal) error
+}
 
 // Handler checks current identity/relationships before replay, then atomically
 // commits the explicit callback and required receipt/audit/events. Digest is

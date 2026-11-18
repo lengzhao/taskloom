@@ -29,12 +29,16 @@ func run(ctx context.Context, args []string, out, errout io.Writer) int {
 	base := f.String("base", "base.yaml", "base configuration")
 	overlay := f.String("config", "config.yaml", "deployment override")
 	id := f.String("storage", "sql", "SQL resource instance ID")
-	mode := f.String("mode", "", "bootstrap or recover (requires local operator access)")
+	mode := f.String("mode", "", "bootstrap, recover or enroll-agent (local operator access)")
 	tenant := f.String("tenant", "", "tenant ID")
-	subject := f.String("subject", "", "human administrator ID")
+	subject := f.String("subject", "", "administrator or Agent ID")
 	operator := f.String("operator", "", "audited local operator")
 	reason := f.String("reason", "", "audited reason")
 	path := f.String("credential-file", "", "new private credential output file")
+	owner := f.String("owner", "", "human owner ID for Agent enrollment")
+	instance := f.String("instance", "", "runtime instance ID")
+	incarnation := f.String("incarnation", "", "runtime boot/incarnation ID")
+	purpose := f.String("purpose", "business", "business or runtime credential")
 	ttl := f.Duration("ttl", 24*time.Hour, "credential lifetime (maximum 90 days)")
 	if err := f.Parse(args); err != nil {
 		if err == flag.ErrHelp {
@@ -42,7 +46,7 @@ func run(ctx context.Context, args []string, out, errout io.Writer) int {
 		}
 		return 2
 	}
-	if f.NArg() != 0 || (*mode != "bootstrap" && *mode != "recover") || *path == "" || *tenant == "" || *subject == "" || *operator == "" || *reason == "" || *ttl <= 0 || *ttl > 90*24*time.Hour {
+	if f.NArg() != 0 || (*mode != "bootstrap" && *mode != "recover" && *mode != "enroll-agent") || *path == "" || *tenant == "" || *subject == "" || *operator == "" || *reason == "" || *ttl <= 0 || *ttl > 90*24*time.Hour {
 		fmt.Fprintln(errout, "explicit mode, tenant, subject, operator, reason and credential-file required; ttl must be within 90 days")
 		return 2
 	}
@@ -88,7 +92,9 @@ func run(ctx context.Context, args []string, out, errout io.Writer) int {
 	svc := security.New(security.Deps{Transactions: tx, Principals: identities, Credentials: credentials, Bootstrap: bootstrap, Members: members, Audit: audit, Events: events})
 	in := security.BootstrapInput{Tenant: *tenant, Subject: *subject, Operator: *operator, Reason: *reason, ExpiresAt: time.Now().Add(*ttl)}
 	var issued security.Issued
-	if *mode == "bootstrap" {
+	if *mode == "enroll-agent" {
+		issued, err = svc.EnrollAgent(ctx, security.AgentEnrollment{BootstrapInput: in, Owner: *owner, InstanceID: *instance, Incarnation: *incarnation, Purpose: *purpose})
+	} else if *mode == "bootstrap" {
 		issued, err = svc.Bootstrap(ctx, in)
 	} else {
 		issued, err = svc.Recover(ctx, in)

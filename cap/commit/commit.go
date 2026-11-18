@@ -16,8 +16,11 @@ type Commit struct {
 
 // Append is internal: named domain commands authorize and validate kind/refs.
 // There is intentionally no update, edit, delete or arbitrary Execute method.
-type Log interface {
-	Append(ctx context.Context, value Commit) error
+type Lookup interface {
 	Get(ctx context.Context, tenant, taskID, commitID string) (Commit, error)
+}
+type Log interface {
+	Lookup
+	Append(ctx context.Context, value Commit) error
 	List(ctx context.Context, tenant, taskID string, after int64, limit int) ([]Commit, error)
 }

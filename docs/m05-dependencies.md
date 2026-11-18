@@ -1,0 +1,149 @@
+# M05 实际默认依赖图
+
+由当前 base.yaml 的已实现实例整理；22 个实例。跨阶段的 52 节点规划不等于此运行图。字段与接口职责见 [M05](m05-workflow.md)。
+
+```mermaid
+flowchart TD
+  n0["server<br/>server"]
+  n1["http<br/>transport/http"]
+  n2["health<br/>api/health"]
+  n3["sql<br/>storage/sql"]
+  n4["identity<br/>identity/local"]
+  n5["access<br/>access/default"]
+  n6["ready<br/>state/ready"]
+  n7["flow<br/>flow/directory"]
+  n8["flow-preparation<br/>task/flow"]
+  n9["flow-standard<br/>task/flow"]
+  n10["executing<br/>state/executing"]
+  n11["accepting<br/>state/accepting"]
+  n12["completed<br/>state/completed"]
+  n13["command-runtime<br/>commands/runtime"]
+  n14["security<br/>commands/security"]
+  n15["workspace<br/>workspace/tasks"]
+  n16["workspace-api<br/>api/workspace"]
+  n17["workflow-query<br/>query/workflow"]
+  n18["execution-commands<br/>commands/execution"]
+  n19["result-commands<br/>commands/result"]
+  n20["flow-commands<br/>commands/flow"]
+  n21["workflow-api<br/>api/workflow"]
+  n0 -->|resources| n3
+  n0 -->|components| n1
+  n1 -->|modules| n2
+  n1 -->|modules| n16
+  n1 -->|modules| n21
+  n4 -->|store| n3
+  n5 -->|store| n3
+  n5 -->|tasks| n3
+  n7 -->|positions| n3
+  n7 -->|flows| n8
+  n7 -->|flows| n9
+  n8 -->|definitions| n3
+  n8 -->|positions| n3
+  n8 -->|states| n6
+  n9 -->|definitions| n3
+  n9 -->|positions| n3
+  n9 -->|executions| n3
+  n9 -->|states| n6
+  n9 -->|states| n10
+  n9 -->|states| n11
+  n9 -->|states| n12
+  n10 -->|results| n3
+  n11 -->|results| n3
+  n11 -->|reviews| n3
+  n11 -->|members| n3
+  n12 -->|results| n3
+  n13 -->|transactions| n3
+  n13 -->|requests| n3
+  n13 -->|identity| n4
+  n13 -->|authorization| n5
+  n13 -->|audit| n3
+  n13 -->|events| n3
+  n14 -->|commands| n13
+  n14 -->|transactions| n3
+  n14 -->|principals| n3
+  n14 -->|credentials| n3
+  n14 -->|bootstrap| n3
+  n14 -->|members| n3
+  n14 -->|audit| n3
+  n14 -->|events| n3
+  n15 -->|members| n3
+  n15 -->|participants| n3
+  n15 -->|transactions| n3
+  n15 -->|tasks| n3
+  n15 -->|commits| n3
+  n15 -->|flow| n7
+  n15 -->|identity| n4
+  n15 -->|authorization| n5
+  n15 -->|commands| n13
+  n15 -->|events| n3
+  n16 -->|commands| n15
+  n16 -->|queries| n15
+  n16 -->|changes| n15
+  n16 -->|identity| n4
+  n16 -->|security| n14
+  n17 -->|commits| n3
+  n17 -->|transactions| n3
+  n17 -->|tasks| n3
+  n17 -->|flow| n7
+  n17 -->|executions| n3
+  n17 -->|results| n3
+  n17 -->|reviews| n3
+  n17 -->|identity| n4
+  n17 -->|authorization| n5
+  n18 -->|participants| n3
+  n18 -->|principals| n3
+  n18 -->|members| n3
+  n18 -->|commands| n13
+  n18 -->|tasks| n3
+  n18 -->|flow| n7
+  n18 -->|executions| n3
+  n18 -->|snapshots| n17
+  n18 -->|events| n3
+  n19 -->|commands| n13
+  n19 -->|tasks| n3
+  n19 -->|flow| n7
+  n19 -->|executions| n3
+  n19 -->|results| n3
+  n19 -->|commits| n3
+  n19 -->|accepting| n11
+  n19 -->|snapshots| n17
+  n19 -->|events| n3
+  n20 -->|commands| n13
+  n20 -->|tasks| n3
+  n20 -->|flow| n7
+  n20 -->|executions| n3
+  n20 -->|snapshots| n17
+  n20 -->|events| n3
+  n21 -->|executions| n18
+  n21 -->|results| n19
+  n21 -->|controls| n20
+  n21 -->|workflow| n17
+  n21 -->|security| n16
+```
+
+全部引用存在，无循环，全部实例由 server 可达。SQL 提供多个内聚能力；指向同一 sql 不意味着消费者拥有全部写权限，方法集由 typed Deps 限定。
+
+| 实例 | kind | 声明 Deps |
+| --- | --- | --- |
+| server | server | resources、components |
+| http | transport/http | modules |
+| health | api/health | 无 |
+| sql | storage/sql | 无 |
+| identity | identity/local | store |
+| access | access/default | store、tasks |
+| ready | state/ready | 无 |
+| flow | flow/directory | positions、flows |
+| flow-preparation | task/flow | definitions、positions、states |
+| flow-standard | task/flow | definitions、positions、executions、states |
+| executing | state/executing | results |
+| accepting | state/accepting | results、reviews、members |
+| completed | state/completed | results |
+| command-runtime | commands/runtime | transactions、requests、identity、authorization、audit、events |
+| security | commands/security | commands、transactions、principals、credentials、bootstrap、members、audit、events |
+| workspace | workspace/tasks | members、participants、transactions、tasks、commits、flow、identity、authorization、commands、events |
+| workspace-api | api/workspace | commands、queries、changes、identity、security |
+| workflow-query | query/workflow | commits、transactions、tasks、flow、executions、results、reviews、identity、authorization |
+| execution-commands | commands/execution | participants、principals、members、commands、tasks、flow、executions、snapshots、events |
+| result-commands | commands/result | commands、tasks、flow、executions、results、commits、accepting、snapshots、events |
+| flow-commands | commands/flow | commands、tasks、flow、executions、snapshots、events |
+| workflow-api | api/workflow | executions、results、controls、workflow、security |

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	capflow "github.com/lengzhao/taskloom/cap/flow"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -41,7 +42,7 @@ func fixture(t *testing.T) (*workspace.Service, *security.Service, string) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	f, e := flow.New(flow.Config{ID: "preparation", Version: "1"}, flow.Deps{Definitions: s, Positions: s, State: &ready.State{}})
+	f, e := flow.New(flow.Config{ID: "preparation", Version: "1"}, flow.Deps{Definitions: s, Positions: s, States: []capflow.State{&ready.State{}}})
 	if e != nil {
 		t.Fatal(e)
 	}

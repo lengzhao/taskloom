@@ -1,6 +1,6 @@
 # Cap：按真实消费者定义能力
 
-本清单为当前已实现 M04 的接口基线，取代旧 Repository/万能 Service 的接口命名。不兼容旧接口，不提供 type alias 或弃用桥接。完整 52 节点图仍是跨阶段规划，其尚无消费者的领域接口不作为已发布 Go 契约。
+本清单记录 M04 的接口收敛与 M05 的真实消费者增量，取代旧 Repository/万能 Service 命名。新增能力与装配见下文及 [M05](m05-workflow.md)。不兼容旧接口，不提供 type alias 或弃用桥接。完整 52 节点图仍是跨阶段规划，其尚无消费者的领域接口不作为已发布 Go 契约。
 
 ## 原则
 
@@ -30,15 +30,15 @@ SQL 可以实现多个能力，但消费者只通过 typed Deps 得到需要的�
 
 ## State 的明确结果
 
-Describe 返回 Description{Key,Version}，当前 flow 的行为摘要来自该稳定描述；改变行为需更换版本，未来新增可配置规则时需把有效规则纳入描述，不声称能自动检测任意代码变化。
+Describe 返回 Description{Key,Version,Role,Rules}，当前 flow 的行为摘要来自该稳定描述；改变行为需更换版本，未来新增可配置规则时需把有效规则纳入描述，不声称能自动检测任意代码变化。
 
-CheckEnter/CheckComplete 返回 Check{Status,Reason}；Status 为 allow/wait/reject。阻塞必须有原因，非法状态拒绝提交。Position.Complete 只表示当前准备步骤完成，不表示整个任务完成；Waiting 仅保存阻塞原因。信息齐备后的界面提示后续执行尚未接入。Enter 保持本地幂等写入/空动作，检查仍只读。
+CheckEnter/CheckComplete 返回 Check{Status,Reason}；Status 为 allow/wait/reject。阻塞必须有原因，非法状态拒绝提交。Position.Complete 表示当前步骤检查完成，Position.Status 单独区分 active/completed/cancelled；Waiting 保存阻塞原因。State 接收包含任务与位置的 Context。Enter 保持本地幂等写入/空动作，检查仍只读。
 
 FlowRef 的归属移至 flow.DefinitionRef，task.Task 不依赖 flow 或持有流程位置。SQL 只存引用与事实，不替 State 作判断。
 
 ## 实际装配变化
 
-实例数保持 12，根资源与 HTTP owner 不变：
+M04 提交时为 12 个实例；M05 为 22 个，见[实际图](m05-dependencies.md)。以下保留 M04 基础模块说明，M05 的 task/flow 改为 states 列表：
 
 - identity/local：store→identity.CredentialLookup（sql），不再提供 Directory 转发。
 - access/default：store→authorization.Relations（sql）、tasks→task.Reader（sql）。
@@ -61,3 +61,13 @@ SQLite/HTTP 集成回归覆盖现有闭环；新增只读 provider 测试证明�
 workspace 不再自行构造第二个 Runner：配置将 commands 指向现有 command-runtime，回执/审计能力只由该运行机制持有。API、workspace、security 均通过接口获得跨模块能力；只读字段不能调用提供者的写方法。
 
 任务依据写入进一步收紧为 BasisChange：只允许目标/标准/标题及 ExpectedVersion，仓储保留负责人、租户和身份不变，并原子推进该任务版本/依据版本；不接受完整 Task 来覆盖无关字段。
+
+M05 已提供本地执行/结果/验收/取消闭环及安全退回/重开，实际接口、配置、证明边界与验证见[M05 说明](m05-workflow.md)。本地测试不代表真实 Agent/进程清理或生产数据库验收，Harness 未在本轮实现。
+
+## M05 的真实消费者增量
+
+- execution.Reader/Store：执行事实与安全门；delivery.Reader/Store：固定 commit 的候选事实；acceptance.Reader/Records/Actions：状态自有记录与验收动作。
+- workflow.ExecutionCommands/ResultCommands/ControlCommands/Queries/FactsReader 分别服务协议、命令协调和只读聚合；不扩张 workspace。
+- commit.Lookup、identity.PrincipalReader、flow.PositionReader 为新增只读消费者收窄权限；State 使用 Context，目录按固定 DefinitionRef 路由。
+- checkpoint.Records/Actions 只在可选步骤示例挂载；httpapi.RequestSecurity 复用会话、Origin 与 CSRF 协议处理。
+- 具体方法以 cap 源码为准；Deps、超过五字段的保留理由和授权回调的可信边界见 [M05](m05-workflow.md)。

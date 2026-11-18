@@ -11,6 +11,8 @@ import (
 
 	"github.com/lengzhao/pluginkit"
 	"github.com/lengzhao/pluginkit/build"
+	"github.com/lengzhao/taskloom/cap/authorization"
+	"github.com/lengzhao/taskloom/cap/identity"
 	"github.com/lengzhao/taskloom/cap/lifecycle"
 	_ "github.com/lengzhao/taskloom/plugins"
 	cfg "github.com/lengzhao/taskloom/runtime/config"
@@ -49,7 +51,19 @@ type root struct {
 
 func (*root) Run(context.Context) error  { return nil }
 func (*root) Stop(context.Context) error { return nil }
+
+type securityDeps struct {
+	Identity      identity.Authenticator   `json:"identity"`
+	Authorization authorization.Authorizer `json:"authorization"`
+}
+
 func init() {
+	pluginkit.Register("test/security-probe", func(_ struct{}, d securityDeps) (*node, error) {
+		if d.Identity == nil || d.Authorization == nil {
+			return nil, errors.New("missing security deps")
+		}
+		return &node{}, nil
+	})
 	pluginkit.Register("test/root", func(_ struct{}, d root) (*root, error) { return &d, nil })
 	pluginkit.Register("test/component", func(c settings, d dependencies) (*node, error) { return &node{c, d.Next}, nil })
 	pluginkit.Register("test/other", func(c struct {
@@ -202,10 +216,20 @@ func TestInlineDependencyUsesPluginKit(t *testing.T) {
 		t.Fatal("inline not built")
 	}
 }
-func TestDefaultFlowReferenceCheckedBeforeConstruction(t *testing.T) {
-	bp, op := files(t, "server:\n  use: server\n  deps:\n    resources: []\n    components: []\ntask:\n  use: task/catalog\n  config:\n    defaultFlow:\n      id: missing\n      version: '1'\n", "")
-	if _, _, err := cfg.BuildFiles(context.Background(), bp, op); err == nil || !strings.Contains(err.Error(), "flow reference") {
-		t.Fatalf("expected flow reference error: %v", err)
+
+// Business definition validation belongs to the reachable owning plugin, not
+// the generic YAML loader. A dormant legacy/future node must not be interpreted.
+func TestLoaderDoesNotInterpretBusinessFlowConfig(t *testing.T) {
+	bp, op := files(t, base+"unused:\n  use: task/catalog\n  config:\n    defaultFlow:\n      id: missing\n      version: '1'\n", "")
+	if _, _, err := cfg.BuildFiles(context.Background(), bp, op); err != nil {
+		t.Fatalf("loader interpreted unreachable business configuration: %v", err)
+	}
+}
+
+func TestReachableUnimplementedFlowStillFails(t *testing.T) {
+	bp, op := files(t, "server:\n  use: server\n  deps:\n    resources: [flow]\n    components: []\nflow:\n  use: task/flow\n  config:\n    id: example\n    version: '1'\n", "")
+	if _, _, err := cfg.BuildFiles(context.Background(), bp, op); err == nil {
+		t.Fatal("unimplemented reachable business plugin accepted")
 	}
 }
 
@@ -262,5 +286,35 @@ func TestRetiredFlowOverlaysPreserveCurrentDefaults(t *testing.T) {
 				t.Fatal("retired overlay changed runnable graph")
 			}
 		})
+	}
+}
+
+// Build a typed consumer to prove identity/access use Deps, not a Config slot.
+func TestSecurityPluginsComposeThroughDeps(t *testing.T) {
+	bp, op := files(t, `server:
+  use: server
+  deps:
+    resources: [sql]
+    components: [probe]
+sql:
+  use: storage/sql
+  config:
+    dsn: ':memory:'
+identity:
+  use: identity/local
+  deps:
+    store: sql
+access:
+  use: access/default
+  deps:
+    store: sql
+probe:
+  use: test/security-probe
+  deps:
+    identity: identity
+    authorization: access
+`, "")
+	if _, _, err := cfg.BuildFiles(context.Background(), bp, op); err != nil {
+		t.Fatal(err)
 	}
 }

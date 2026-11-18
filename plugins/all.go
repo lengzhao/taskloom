@@ -3,7 +3,10 @@
 package plugins
 
 import (
+	_ "github.com/lengzhao/taskloom/plugins/access/default"
 	_ "github.com/lengzhao/taskloom/plugins/api/health"
+	_ "github.com/lengzhao/taskloom/plugins/identity/local"
 	_ "github.com/lengzhao/taskloom/plugins/server"
+	_ "github.com/lengzhao/taskloom/plugins/storage/sql"
 	_ "github.com/lengzhao/taskloom/plugins/transport/http"
 )

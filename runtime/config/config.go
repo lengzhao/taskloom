@@ -71,9 +71,6 @@ func LoadFiles(basePath, configPath string) (map[string]any, error) {
 			delete(graph, id)
 		}
 	}
-	if err := checkFlowReferences(graph); err != nil {
-		return nil, err
-	}
 	return graph, nil
 }
 
@@ -105,40 +102,6 @@ func checkDocument(raw []byte, allowEmpty bool) error {
 			if key != "use" && key != "id" && key != "config" && key != "deps" {
 				return errors.New("unsupported configuration instance field")
 			}
-		}
-	}
-	return nil
-}
-
-// Definition checks concern immutable configuration references only. They do not
-// register or implement any task/flow business plugin.
-func checkFlowReferences(graph map[string]any) error {
-	definitions := map[[2]string]bool{}
-	for _, raw := range graph {
-		n, _ := raw.(map[string]any)
-		if n["use"] != "task/flow" {
-			continue
-		}
-		c, _ := n["config"].(map[string]any)
-		id, _ := c["id"].(string)
-		version, _ := c["version"].(string)
-		key := [2]string{id, version}
-		if id == "" || version == "" || definitions[key] {
-			return errors.New("invalid or duplicate flow definition reference")
-		}
-		definitions[key] = true
-	}
-	for _, raw := range graph {
-		n, _ := raw.(map[string]any)
-		if n["use"] != "task/catalog" {
-			continue
-		}
-		c, _ := n["config"].(map[string]any)
-		ref, _ := c["defaultFlow"].(map[string]any)
-		id, _ := ref["id"].(string)
-		version, _ := ref["version"].(string)
-		if !definitions[[2]string{id, version}] {
-			return errors.New("default flow reference is not defined")
 		}
 	}
 	return nil

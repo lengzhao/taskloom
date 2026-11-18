@@ -1,6 +1,6 @@
 flowchart TD
     n0["sql<br>storage/sql"]
-    n1["identity<br>identity/existing"]
+    n1["identity<br>identity/local"]
     n2["access<br>access/default"]
     n3["tasks<br>task/facts"]
     n4["conversation<br>conversation/versioned"]
@@ -50,6 +50,7 @@ flowchart TD
     n48["reminder<br>notification/reminder"]
     n49["notification-dispatch<br>notification/dispatch"]
     n50["server<br>server"]
+    n1 -->|store| n0
     n2 -->|grants| n0
     n2 -->|scopes| n0
     n2 -->|confirmations| n0

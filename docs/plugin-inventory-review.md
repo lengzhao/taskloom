@@ -1,6 +1,6 @@
 # 插件清单与依赖审查：流程步骤统一为 State
 
-更新：2026-11-18。本文取代此前 51 节点方案中的通用审核/交付 checks 设计。业务未实现；除 server/http/health 外，kind、接口与 Deps 为设计基线，不是已注册类型。实例数量不是简化目标：默认仍为 51 个跨阶段候选，减少的是职责、依赖与并列的扩展机制。事实审核作为新增步骤示例，不默认装配。
+更新：2026-11-18。本文取代此前 51 节点方案中的通用审核/交付 checks 设计。任务业务未实现；完整表为跨阶段设计基线。M03 已注册 SQL/identity/access，实际接口/Deps 子集见 [M03 实现](m03-storage.md)，不能将未来字段当作当前构造参数。实例数量不是简化目标：默认仍为 51 个跨阶段候选，减少的是职责、依赖与并列的扩展机制。事实审核作为新增步骤示例，不默认装配。
 
 ## 本轮收敛
 
@@ -20,8 +20,8 @@
 
 | ID / kind / 阶段 | 职责；提供接口 | Deps（字段:接口 → 提供者） | 数量 / owner |
 | --- | --- | --- | --- |
-| `sql`<br>`storage/sql`<br>I | SQL 连接、迁移及各领域独立仓储实现；不含业务判断<br>`lifecycle.Resource`<br>`各领域 Repository`<br>`UnitOfWork / Idempotency / Revision / Audit / Event / Cursor` | 无 | 0 / root Resource |
-| `identity`<br>`identity/existing`<br>I | 认证及可信人/Buddy/实例目录；远端读取在事务外<br>`identity.Authenticator.Authenticate`<br>`identity.Directory.Resolve / Validate` | 无 | 0 / 无后台 |
+| `sql`<br>`storage/sql`<br>I | GORM 多方言 SQL 连接、迁移及各领域独立仓储；本地默认 SQLite，不含业务判断<br>`lifecycle.Resource`<br>`各领域 Repository`<br>`UnitOfWork / Idempotency / Revision / Audit / Event / Cursor` | 无 | 0 / root Resource |
+| `identity`<br>`identity/local`<br>I | Taskloom 本地认证及可信人/Agent/实例目录；逐请求核验撤销<br>`identity.Authenticator.Authenticate`<br>`identity.Directory.Resolve / Validate` | `store: identity.Repository → sql` | 1 / 无后台 |
 | `access`<br>`access/default`<br>I→II | 当前作用域授权；第二阶段精确确认事实与消费<br>`authorization.Authorizer.Check / CheckBatch`<br>`grant.Editor.Grant / Revoke`<br>`confirmation.Propose / Confirm / Consume` | `grants:grant.Repository` → sql<br>`scopes:authorization.ScopeReader` → sql<br>`confirmations:confirmation.Repository` → sql<br>`identity:identity.Directory` → identity | 4 / 无后台 |
 | `tasks`<br>`task/facts`<br>I | 目标、负责人、依据、项目与验收人策略；不写轮次/阶段<br>`task.Reader.Get / List / GetPolicy`<br>`task.Editor.Create / UpdateDetails / AssignOwner / SetPolicy`<br>`project.Reader / Editor` | `tasks:task.Repository` → sql<br>`projects:project.Repository` → sql<br>`policies:task.PolicyRepository` → sql | 3 / 无后台 |
 | `conversation`<br>`conversation/versioned`<br>I | 消息修订、阻塞问题及精确回复引用；文本版明确拒绝附件<br>`conversation.Reader.GetRevision / List`<br>`conversation.Editor.Append / Edit`<br>`conversation.ResultReplies.AppendResultReply / PinRevision`<br>`decision.Reader / Editor` | `messages:conversation.Repository` → sql<br>`decisions:decision.Repository` → sql | 2 / 无后台 |
@@ -145,3 +145,7 @@ flowchart TD
 ## 验证边界
 
 运行 `python3 scripts/check-plugin-inventory.py` 校验清单/文档计数、引用、根可达、DAG、完整图一致及三个故意引入的环；结果在本轮报告记录。新增步骤例子仅设计描述，未真实构建或执行。根 base/config 不变；本次无业务代码改动。
+
+M02 已明确身份、停止证据、F02/F06/F07 及 State 幂等边界，见[接入与剩余契约](integration-contract.md)。本清单仍是设计；仓储/迁移实现归 M03/M07，真实 Harness 适配归 M06。
+
+M03 实际装配：root resources=[sql]、components=[http]；sql 无 Deps，identity 的 store→sql，access 当前仅 store→sql。身份/授权尚无业务 HTTP 消费者，不挂入根默认图。完整未来依赖图保留待实现的成员/确认等能力，不等同于本轮实际图。

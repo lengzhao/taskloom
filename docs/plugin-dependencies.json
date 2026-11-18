@@ -7,7 +7,7 @@
       "id": "sql",
       "kind": "storage/sql",
       "phase": "I",
-      "responsibility": "SQL 连接、迁移及各领域独立仓储实现；不含业务判断",
+      "responsibility": "GORM 多方言 SQL 连接、迁移及各领域独立仓储；本地默认 SQLite，不含业务判断",
       "provides": [
         "lifecycle.Resource",
         "各领域 Repository",
@@ -18,14 +18,22 @@
     },
     {
       "id": "identity",
-      "kind": "identity/existing",
+      "kind": "identity/local",
       "phase": "I",
-      "responsibility": "认证及可信人/Buddy/实例目录；远端读取在事务外",
+      "responsibility": "Taskloom 本地认证及可信人/Agent/实例目录；凭据撤销逐请求校验",
       "provides": [
         "identity.Authenticator.Authenticate",
         "identity.Directory.Resolve / Validate"
       ],
-      "deps": [],
+      "deps": [
+        {
+          "field": "store",
+          "interface": "identity.Repository",
+          "targets": [
+            "sql"
+          ]
+        }
+      ],
       "owner": "无后台"
     },
     {

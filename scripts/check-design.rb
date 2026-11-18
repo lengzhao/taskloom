@@ -82,8 +82,16 @@ def check_graph(graph, label, quiet: false)
   assert(seen.size == nodes.size, "#{label}: unreachable instances #{nodes.keys - seen.keys}")
   assert(graph.fetch('server')['use'] == 'server', "#{label}: invalid root")
   assert(graph['server'].fetch('deps').fetch('components') == ['http'], "#{label}: current HTTP owner missing")
-  assert(graph['server']['deps'].fetch('resources') == [], "#{label}: unimplemented resource enabled")
-  assert(nodes.values.map { |n| n['use'] }.sort == %w[api/health server transport/http].sort, "#{label}: default graph must only contain implemented health service")
+  resources = graph['server']['deps'].fetch('resources')
+  expected = %w[api/health server transport/http]
+  if nodes.key?('sql')
+    assert(resources == ['sql'], "#{label}: SQL resource owner missing")
+    assert(nodes['sql']['use'] == 'storage/sql', "#{label}: invalid storage kind")
+    expected << 'storage/sql'
+  else
+    assert(resources == [], "#{label}: unexpected resource")
+  end
+  assert(nodes.values.map { |n| n['use'] }.sort == expected.sort, "#{label}: default graph contains unexpected capabilities")
   assert(graph.fetch('http').fetch('deps').fetch('modules') == ['health'], "#{label}: health module owner missing")
   puts "PASS #{label}: references, acyclic/reachable graph and current owners" unless quiet
 end

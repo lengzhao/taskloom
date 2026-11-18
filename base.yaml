@@ -1,10 +1,10 @@
-# Implemented minimal graph. Process liveness only; no task/storage/Agent behavior.
+# Implemented M03 graph: SQLite storage + process health; no task/Agent APIs.
 server:
   use: server
   config:
     shutdownTimeout: 10s
   deps:
-    resources: []
+    resources: [sql]
     components: [http]
 http:
   use: transport/http
@@ -15,3 +15,9 @@ http:
     modules: [health]
 health:
   use: api/health
+
+sql:
+  use: storage/sql
+  config:
+    driver: sqlite
+    dsn: taskloom.db

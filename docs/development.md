@@ -1,10 +1,10 @@
 # Go 工程与真实装配
 
-更新：2026 年 11 月 18 日。T06/T07 已落地工程底座，业务闭环尚未实现。
+更新：2026 年 11 月 18 日。M03 已落地 SQL/身份/安全命令基础，业务闭环尚未实现；历史记录仅描述各次提交当时状态。
 
 ## 目录与版本
 
-模块为 `github.com/lengzhao/taskloom`，Go 1.27.3；直接依赖固定为 PluginKit v0.1.6、AgentKit v0.4.45、yaml.v3 v3.0.1，见 go.mod/go.sum。
+模块为 `github.com/lengzhao/taskloom`，Go 1.27.3；直接依赖固定为 PluginKit v0.1.6、AgentKit v0.4.45、yaml.v3 v3.0.1；M03 新增 GORM v1.31.1 及 SQLite/MySQL/PostgreSQL 驱动 v1.6.0，见 go.mod/go.sum。
 
 | 位置 | 当前职责 |
 | --- | --- |
@@ -22,9 +22,9 @@
 
 ## M01 业务方向
 
-采用[模块化单体](architecture.md)，尚无业务模块实现。已有 HTTP Module、生命周期及两层加载保留。根 base/config 已切换为真实 health 图，与 examples/minimal 等价；未来适配包装随用例实现，不注册空业务 kind。
+采用[模块化单体](architecture.md)，M03 基础模块见[存储与安全命令](m03-storage.md)。已有 HTTP Module、生命周期及两层加载保留。根 base/config 已挂载 SQL + health，examples/minimal 保留纯 health；未来适配包装随用例实现，不注册空业务 kind。
 
-旧 runtime/config 中 task/catalog.defaultFlow 的专用检查暂保留为代码遗留，当前默认图不会触发；M02 按流程目录与 FlowRef 契约调整并更新其测试。本次不改运行时业务行为。
+M02 已删除 runtime/config 对旧 task/catalog.defaultFlow 的专用检查。通用加载器不解释业务配置；未来由已挂载的流程目录验证定义、内联状态及默认 FlowRef，失败不得启动业务服务。
 
 ## 运行与检查
 
@@ -37,11 +37,11 @@ curl http://127.0.0.1:8080/v1/healthz
 # Ctrl-C 或 SIGTERM 退出
 ```
 
-最小图只有 server、transport/http、api/health 三种真实插件。healthz 返回进程存活，不表示 SQL、S3 或业务就绪。当前 HTTP 仅挂载公开存活路由，没有开放业务接口；认证、授权、WebSocket 按 M03—M06 实现，不能据此部署业务系统。
+最小图只有 server、transport/http、api/health 三种真实插件。healthz 返回进程存活，不表示 SQL、S3 或业务就绪。当前 HTTP 仅挂载公开存活路由，没有开放业务接口；认证/授权基础已实现，业务 HTTP/WebSocket 按 M04—M06 接入，不能据此部署业务系统。
 
 `-check` 只构造并校验，不监听、不调用 Open/Run；成功打印实际实例数。`-config ''` 显式省略 L1；显式指定的文件缺失会失败。配置/运行错误退出 1，参数错误退出 2，帮助及正常信号退出为 0。错误不输出原始配置或构造器错误，仅保留阶段和实例 ID；实例 ID 应使用固定名称，不能包含凭据。
 
-根目录 base/config 可以直接构建当前 health 服务；examples/minimal 是同等的独立两文件示例。均不代表业务闭环。
+根目录 base/config 可以构建 SQLite + health 服务；examples/minimal 是纯 health 的独立两文件示例。均不代表业务闭环。
 
 ```sh
 sh scripts/check.sh all     # 单测、vet、构建、最小真实装配、设计静态检查
@@ -57,9 +57,9 @@ Go 依赖首次需下载；design 使用 Ruby 标准 YAML 库。HTTP 和 CLI 测
 
 同 ID 深合并、列表整体替换、use 改变整节点替换；顶层 null 移除实例，但不会自动修复引用或级联删除消费者。空文件、注释文件或 `{}` 为有效空 L1。重复键、多 YAML 文档、未知节点字段拒绝；不支持 extends、环境插值或隐式多文件搜索。凭据引用仍是未来凭据适配能力的数据，不由当前加载器解密。
 
-仅构建根可达实例，未挂载的未知 kind 不会构造。真实类型、缺失引用、依赖环、Config 字段及 Validate 由 PluginKit 校验；暂保留旧 task/catalog.defaultFlow 引用检查（M02 按修订后的目录契约核对）。可配置状态及固定保护语义由未来领域规则和用例测试负责，不把静态引用校验当作流转实现。
+仅构建根可达实例，未挂载的未知 kind 不会构造。真实类型、缺失引用、依赖环、Config 字段及 Validate 由 PluginKit 校验；业务 FlowRef 语义校验归未来流程目录 owner（见 integration-contract.md）。可配置状态及固定保护语义由未来领域规则和用例测试负责，不把静态引用校验当作流转实现。
 
-测试覆盖合并/替换/禁用、可达与内联实例、配置错误、默认流程引用、脱敏、无监听构造、实际 HTTP、模块失败清理、根取消和资源逆序关闭。事务、身份、SQL/S3、任务流转和真实 Buddy 联调均尚未实现或验证。
+测试覆盖合并/替换/禁用、可达与内联实例、配置错误、默认流程引用、脱敏、无监听构造、实际 HTTP、模块失败清理、根取消和资源逆序关闭。M03 另覆盖 SQLite 事务/身份/授权基础；S3、任务流转和真实 Agent 联调尚未实现或验证。
 
 ## M01 重设计验证记录（2026-11-18）
 
@@ -84,3 +84,7 @@ all 中 Go 尝试写模块 stat cache 时出现沙箱 `operation not permitted` 
 `python3 scripts/check-plugin-inventory.py`、`sh scripts/check.sh design`、`git diff --check` 通过：51 个跨阶段候选节点、182 个 Deps 字段、205 条字段目标边，无构造环/悬空引用/不可达节点，完整图和表格一致，三个反向依赖环被检测；额外检查 flow 不直接依赖审核事实服务、交付不依赖 checks/reviews、人工验收不反向依赖 flow/命令。第一阶段 36 节点投影只是设计数据，不是实际 typed 装配。
 
 本轮未运行 all/race：没有改业务运行源码，前次最小工程通过记录不代表新步骤语义已经运行验证。审核 wait/reject 保留合法交付、Enter 对新证据幂等、前序结论失效、旧异步回执拒绝，均作为 M05/M06 实现验收。未提交或推送。
+
+## M03 工程入口
+
+见[M03 实现说明](m03-storage.md)：根配置现为四实例 SQL + health，最小示例仍为三实例；`scripts/check.sh all` 同时检查两者并构建管理员 CLI。SQLite CGO 驱动需 C 编译器。MySQL/PostgreSQL 已编入但尚未真实服务验证。

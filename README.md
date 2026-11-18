@@ -4,24 +4,24 @@
 
 ## 范围与架构
 
-只建设任务系统，复用已有身份/管理平台及 Agent 运行能力，不建设模型推理、工具执行、上下文组装或远端派发。
+只建设任务系统，默认采用本地身份模块，复用已有管理平台及 Agent 运行能力，不建设模型推理、工具执行、上下文组装或远端派发。
 
 采用模块化单体：接口清晰的模块通过 Deps 与配置组合，一个 SQL 事务边界。所有流程步骤统一为状态插件，默认状态链由配置组合，任务绑定版本化流程定义与策略；同任务结果/评审/阶段原子更新，跨任务影响与通知异步处理。PluginKit 负责模块装配，新增流程步骤和 API 可通过新实现及配置接入，不修改原消费者逻辑。权威设计见 [M01 架构](docs/architecture.md)。
 
 ## 当前实现
 
-已有 Go、PluginKit、真实两层加载、资源生命周期和 HTTP health；没有任务业务实现。根 base/config 现为实际可运行 health 图，与 examples/minimal 一致。health 不表示数据库或任务系统就绪。`sh scripts/check.sh all`、`sh scripts/check.sh race` 为实际检查入口，见[开发说明](docs/development.md)。
+已有 Go/PluginKit 底座，以及 M03 的 GORM 存储、共享事务、身份/授权、幂等、审计/outbox 和管理员 CLI；尚无任务业务闭环。根 base/config 为 SQLite + health 图，examples/minimal 保留纯 health。health 不表示数据库或任务系统就绪。`sh scripts/check.sh all`、`sh scripts/check.sh race` 为实际检查入口，见[开发说明](docs/development.md)。
 
 ## 资料入口
 
 - [核心业务约束与 C01—C18](docs/core-contracts.md)
 - [状态模块与流程控制](docs/task-flow-plugins.md)与[回复交付](docs/reply-delivery.md)
 - [模块/插件边界](docs/plugin-contracts.md)与[功能模块](docs/task-system-modules.md)
-- [共用 API 与变化流](docs/shared-api-and-realtime.md)
+- [共用 API 与变化流](docs/shared-api-and-realtime.md)与[M02 独立接入契约](docs/integration-contract.md)
 - [产品需求](docs/product-requirements.md)与[阶段覆盖](docs/requirements-coverage.md)
-- [两层配置](docs/configuration.md)与[开发清单](todo.md)
+- [两层配置](docs/configuration.md)、[M03 实现与验证边界](docs/m03-storage.md)及[开发清单](todo.md)
 - [外部参考](docs/open-source-references.md)与[Nex V2 参考](docs/nex-v2-references.md)
 
-第一阶段先交付薄界面与真实 Buddy 文本闭环，第二阶段文件/任务树协作，第三阶段历史恢复与治理。下一步 M02 核验真实外部边界；本次重设计未实现业务。D01/D02 为历史方案；M01 已按“插件即接口清晰、Deps 配置组合的模块”修订，不再限制业务模块只能代码装配。
+第一阶段先交付薄界面与真实 Buddy 文本闭环，第二阶段文件/任务树协作，第三阶段历史恢复与治理。M02 已明确独立接入契约，后续由 Harness 插件适配；M03 已落实存储与安全基础，下一步 M04 创建/读取/会话纵向切片。D01/D02 为历史方案；M01 已按“插件即接口清晰、Deps 配置组合的模块”修订，不再限制业务模块只能代码装配。
 
 具体插件清单、各接口/Deps、依赖图及尚未闭合的扩展点见[插件依赖审查](docs/plugin-inventory-review.md)；这是设计基线，非已实现业务图。

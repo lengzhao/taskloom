@@ -27,7 +27,7 @@ def topo(es):
  return order
 # State-step architecture constraints: no parallel generic review/check engine.
 assert not {'reviews', 'checks'} & {d['field'] for d in by['delivery-commands']['deps']}
-assert not {'results', 'conversation', 'accepting'} & {t for d in by['flow-standard']['deps'] if d['field'] != 'states' for t in d['targets']}
+assert not {'results', 'commits', 'accepting'} & {t for d in by['flow-standard']['deps'] if d['field'] != 'states' for t in d['targets']}
 assert not {'flows', 'flow-standard', 'acceptance-commands'} & set(edges['accepting'])
 assert {d['field'] for d in by['results']['deps']} == {'submissions'}
 assert 'accepting' in edges['acceptance-commands'] and 'flows' in edges['acceptance-commands']

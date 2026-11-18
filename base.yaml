@@ -1,4 +1,4 @@
-# Implemented M03 graph: SQLite storage + process health; no task/Agent APIs.
+# Implemented M04 graph: SQLite task/commit workspace; no Agent execution.
 server:
   use: server
   config:
@@ -12,7 +12,7 @@ http:
     listen: 127.0.0.1:8080
     apiPrefix: /v1
   deps:
-    modules: [health]
+    modules: [health, workspace-api]
 health:
   use: api/health
 
@@ -21,3 +21,68 @@ sql:
   config:
     driver: sqlite
     dsn: taskloom.db
+
+identity:
+  use: identity/local
+  deps:
+    store: sql
+access:
+  use: access/default
+  deps:
+    store: sql
+    tasks: sql
+ready:
+  use: state/ready
+flow:
+  use: task/flow
+  config:
+    id: preparation
+    version: '1'
+  deps:
+    definitions: sql
+    positions: sql
+    state: ready
+command-runtime:
+  use: commands/runtime
+  deps:
+    transactions: sql
+    requests: sql
+    identity: identity
+    authorization: access
+    audit: sql
+    events: sql
+security:
+  use: commands/security
+  deps:
+    commands: command-runtime
+    transactions: sql
+    principals: sql
+    credentials: sql
+    bootstrap: sql
+    members: sql
+    audit: sql
+    events: sql
+workspace:
+  use: workspace/tasks
+  deps:
+    members: sql
+    participants: sql
+    transactions: sql
+    tasks: sql
+    commits: sql
+    flow: flow
+    identity: identity
+    authorization: access
+    commands: command-runtime
+    events: sql
+workspace-api:
+  use: api/workspace
+  config:
+    origin: http://127.0.0.1:8080
+    localHTTP: true
+  deps:
+    commands: workspace
+    queries: workspace
+    changes: workspace
+    identity: identity
+    security: security

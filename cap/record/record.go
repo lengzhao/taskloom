@@ -3,8 +3,6 @@ package record
 
 import (
 	"context"
-
-	"github.com/lengzhao/taskloom/cap/identity"
 )
 
 type RequestKey struct{ Tenant, Subject, Operation, Key string }
@@ -13,16 +11,16 @@ type Receipt struct {
 	Digest string
 	Result []byte
 }
-type Requests interface {
-	FindReceipt(context.Context, RequestKey) (Receipt, error)
-	SaveReceipt(context.Context, Receipt) error
+type Receipts interface {
+	FindReceipt(ctx context.Context, key RequestKey) (Receipt, error)
+	SaveReceipt(ctx context.Context, value Receipt) error
 }
 type Audit struct {
 	ID, Tenant, Subject, Operation, Resource, Outcome, Reason string
 	OwnerID, InstanceID, Incarnation                          string
 }
-type Audits interface {
-	AppendAudit(context.Context, Audit) error
+type AuditWriter interface {
+	AppendAudit(ctx context.Context, value Audit) error
 }
 type Event struct {
 	ID                     string
@@ -31,16 +29,13 @@ type Event struct {
 	Payload                []byte
 }
 
-// ReadEvents is an internal outbox-reader capability, not an authorized feed API.
-type Events interface {
-	AppendEvent(context.Context, Event) error
-	ReadEvents(context.Context, string, int64, int) ([]Event, error)
-}
-type Revisions interface {
-	Advance(context.Context, string, string, int64) (int64, error)
+type EventWriter interface {
+	AppendEvent(ctx context.Context, value Event) error
 }
 
-// ActorAudit avoids logging a request payload or credential.
-func ActorAudit(p identity.Principal, op, resource, outcome string) Audit {
-	return Audit{Tenant: p.Tenant, Subject: p.ID, Operation: op, Resource: resource, Outcome: outcome, OwnerID: p.OwnerID, InstanceID: p.InstanceID, Incarnation: p.Incarnation}
+// EventLog is used where one consumer really both records and scans events.
+type EventLog interface {
+	// Internal outbox access, never an authorized user feed.
+	ReadEvents(ctx context.Context, tenant string, after int64, limit int) ([]Event, error)
+	EventWriter
 }

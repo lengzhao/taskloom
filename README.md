@@ -1,6 +1,6 @@
 # Taskloom
 
-面向人与 Buddy 协作的任务系统：人负责，Buddy 执行，以可追溯的任务、会话和结果证据组织工作。名称暂定，未核验商标或域名。
+面向人与 Buddy 协作的任务系统：人负责，Buddy 执行，以可追溯的任务、commit 时间线和结果证据组织工作。名称暂定，未核验商标或域名。
 
 ## 范围与架构
 
@@ -10,7 +10,7 @@
 
 ## 当前实现
 
-已有 Go/PluginKit 底座，以及 M03 的 GORM 存储、共享事务、身份/授权、幂等、审计/outbox 和管理员 CLI；尚无任务业务闭环。根 base/config 为 SQLite + health 图，examples/minimal 保留纯 health。health 不表示数据库或任务系统就绪。`sh scripts/check.sh all`、`sh scripts/check.sh race` 为实际检查入口，见[开发说明](docs/development.md)。
+已有 Go/PluginKit 底座，以及 M03 的 GORM 存储、共享事务、身份/授权、幂等、审计/outbox 和管理员 CLI；M04 已提供任务/commit/准备流程/授权 API 与薄界面闭环。根 base/config 为 SQLite 工作台图，examples/minimal 保留纯 health。health 不表示数据库或任务系统就绪。`sh scripts/check.sh all`、`sh scripts/check.sh race` 为实际检查入口，见[开发说明](docs/development.md)。
 
 ## 资料入口
 
@@ -22,6 +22,12 @@
 - [两层配置](docs/configuration.md)、[M03 实现与验证边界](docs/m03-storage.md)及[开发清单](todo.md)
 - [外部参考](docs/open-source-references.md)与[Nex V2 参考](docs/nex-v2-references.md)
 
-第一阶段先交付薄界面与真实 Buddy 文本闭环，第二阶段文件/任务树协作，第三阶段历史恢复与治理。M02 已明确独立接入契约，后续由 Harness 插件适配；M03 已落实存储与安全基础，下一步 M04 创建/读取/会话纵向切片。D01/D02 为历史方案；M01 已按“插件即接口清晰、Deps 配置组合的模块”修订，不再限制业务模块只能代码装配。
+第一阶段先交付薄界面与真实 Buddy 文本闭环，第二阶段文件/任务树协作，第三阶段历史恢复与治理。M02 已明确独立接入契约，后续由 Harness 插件适配；M03 已落实存储与安全基础，下一步 M05 执行/交付/验收切片。D01/D02 为历史方案；M01 已按“插件即接口清晰、Deps 配置组合的模块”修订，不再限制业务模块只能代码装配。
 
 具体插件清单、各接口/Deps、依赖图及尚未闭合的扩展点见[插件依赖审查](docs/plugin-inventory-review.md)；这是设计基线，非已实现业务图。
+
+M04 本地工作台入口：`http://127.0.0.1:8080/v1/app`，初始化、显式授权及启动见[M04 使用说明](docs/m04-workspace.md)。当前仅准备流程，不含 Harness。
+
+权限已简化为[租户成员与任务关系](docs/permissions.md)：有效成员可创建任务，负责人或管理员管理，参与者读取/评论；无 Scope/Grant 或逐动作授权配置。
+
+当前公共接口按真实消费者收敛，见[cap 能力清单](docs/cap-interfaces.md)：接口拆分不新增插件，实例仍为 12 个，不保留旧 Repository/Service 兼容接口。

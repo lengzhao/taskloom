@@ -30,14 +30,6 @@ type credentialRow struct {
 	Incarnation  string `gorm:"size:128"`
 	Purpose      string `gorm:"size:16"`
 }
-type grantRow struct {
-	Key          string       `gorm:"primaryKey;size:64;column:row_key"`
-	PrincipalKey string       `gorm:"size:64;not null;index"`
-	Principal    principalRow `gorm:"foreignKey:PrincipalKey;references:Key;constraint:OnDelete:RESTRICT"`
-	Action       string       `gorm:"size:128"`
-	Kind         string       `gorm:"size:32"`
-	Resource     string       `gorm:"size:128"`
-}
 type receiptRow struct {
 	Key    string `gorm:"primaryKey;size:64;column:row_key"`
 	Digest string `gorm:"size:64"`
@@ -56,8 +48,4 @@ type eventRow struct {
 	Resource, Kind string
 	Payload        []byte
 	CreatedAt      time.Time
-}
-type revisionRow struct {
-	Key     string `gorm:"primaryKey;size:64;column:row_key"`
-	Version int64
 }

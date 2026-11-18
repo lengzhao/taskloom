@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/lengzhao/pluginkit"
+	"github.com/lengzhao/taskloom/cap/fault"
 	"github.com/lengzhao/taskloom/cap/unitofwork"
 	"gorm.io/driver/mysql"
 	"gorm.io/driver/postgres"
@@ -91,11 +92,11 @@ func (s *Store) Open(ctx context.Context) error {
 	}
 	db, err := gorm.Open(dialect, &gorm.Config{Logger: logger.Default.LogMode(logger.Silent), TranslateError: true, DisableAutomaticPing: true})
 	if err != nil {
-		return unitofwork.ErrUnavailable
+		return fault.ErrUnavailable
 	}
 	raw, err := db.DB()
 	if err != nil {
-		return unitofwork.ErrUnavailable
+		return fault.ErrUnavailable
 	}
 	// A single connection per store keeps SQLite pragmas predictable. Multiple
 	// processes/stores synchronize in the database, never by this mutex.
@@ -109,7 +110,7 @@ func (s *Store) Open(ctx context.Context) error {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		return unitofwork.ErrUnavailable
+		return fault.ErrUnavailable
 	}
 	s.db = db
 	return nil
@@ -131,10 +132,10 @@ func (s *Store) Close(ctx context.Context) error {
 	raw, err := s.db.DB()
 	s.db = nil
 	if err != nil {
-		return unitofwork.ErrUnavailable
+		return fault.ErrUnavailable
 	}
 	if raw.Close() != nil {
-		return unitofwork.ErrUnavailable
+		return fault.ErrUnavailable
 	}
 	return nil
 }
@@ -167,7 +168,7 @@ func (s *Store) Do(ctx context.Context, fn func(context.Context) error) error {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if s.db == nil {
-		return unitofwork.ErrUnavailable
+		return fault.ErrUnavailable
 	}
 	var callbackErr error
 	err := s.db.WithContext(ctx).Transaction(func(db *gorm.DB) error {
@@ -210,7 +211,7 @@ func (s *Store) use(ctx context.Context, write bool, fn func(*gorm.DB) error) er
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if s.db == nil {
-		return unitofwork.ErrUnavailable
+		return fault.ErrUnavailable
 	}
 	return normalize(ctx, fn(s.db.WithContext(ctx)))
 }
@@ -222,15 +223,15 @@ func normalize(ctx context.Context, err error) error {
 		return ctx.Err()
 	}
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return unitofwork.ErrNotFound
+		return fault.ErrNotFound
 	}
 	if errors.Is(err, gorm.ErrDuplicatedKey) {
-		return unitofwork.ErrConflict
+		return fault.ErrConflict
 	}
-	for _, known := range []error{unitofwork.ErrNotFound, unitofwork.ErrConflict, unitofwork.ErrTransaction, unitofwork.ErrRollback} {
+	for _, known := range []error{fault.ErrNotFound, fault.ErrConflict, unitofwork.ErrTransaction, unitofwork.ErrRollback} {
 		if errors.Is(err, known) {
 			return known
 		}
 	}
-	return unitofwork.ErrUnavailable // Never expose DSNs, values or SQL in errors.
+	return fault.ErrUnavailable // Never expose DSNs, values or SQL in errors.
 }

@@ -26,19 +26,26 @@ type Credential struct {
 	Revoked   bool
 }
 type Authenticator interface {
-	Authenticate(context.Context, string) (Principal, error)
-}
-type Directory interface {
-	Resolve(context.Context, string, string) (Principal, error)
+	Authenticate(ctx context.Context, secret string) (Principal, error)
 }
 
-// Repository writes join the caller's transaction; no plaintext secret is stored.
-type Repository interface {
-	Directory
-	CreatePrincipal(context.Context, Principal) error
-	SaveCredential(context.Context, Credential) error
-	FindCredential(context.Context, string) (Credential, error)
-	RevokeCredential(context.Context, string, string) error
-	RevokeSubjectCredentials(context.Context, string, string) error
-	ClaimBootstrap(context.Context) error
+// CredentialLookup is the authentication consumer's sole storage capability.
+type CredentialLookup interface {
+	FindCredential(ctx context.Context, digest string) (Credential, error)
+}
+
+// Principals is the cohesive directory and registration capability used by administration.
+type Principals interface {
+	Resolve(ctx context.Context, tenant, subject string) (Principal, error)
+	CreatePrincipal(ctx context.Context, value Principal) error
+}
+type Credentials interface {
+	SaveCredential(ctx context.Context, value Credential) error
+	RevokeCredential(ctx context.Context, tenant, credentialID string) error
+	RevokeSubjectCredentials(ctx context.Context, tenant, subject string) error
+}
+
+// BootstrapClaim belongs exclusively to the offline administration entry point.
+type BootstrapClaim interface {
+	ClaimBootstrap(ctx context.Context) error
 }

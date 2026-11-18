@@ -308,6 +308,7 @@ access:
   use: access/default
   deps:
     store: sql
+    tasks: sql
 probe:
   use: test/security-probe
   deps:

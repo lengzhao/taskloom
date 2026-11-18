@@ -3,6 +3,7 @@ package command_test
 import (
 	"context"
 	"errors"
+	capcommand "github.com/lengzhao/taskloom/cap/command"
 	"path/filepath"
 	"sync"
 	"sync/atomic"
@@ -10,9 +11,10 @@ import (
 	"time"
 
 	"github.com/lengzhao/taskloom/cap/authorization"
+	"github.com/lengzhao/taskloom/cap/fault"
 	"github.com/lengzhao/taskloom/cap/identity"
 	"github.com/lengzhao/taskloom/cap/record"
-	"github.com/lengzhao/taskloom/cap/unitofwork"
+	"github.com/lengzhao/taskloom/cap/task"
 	"github.com/lengzhao/taskloom/domain/security"
 	access "github.com/lengzhao/taskloom/plugins/access/default"
 	local "github.com/lengzhao/taskloom/plugins/identity/local"
@@ -34,7 +36,7 @@ func fixture(t *testing.T) (*store.Store, *command.Runner, *security.Service, st
 	if err != nil {
 		t.Fatal(err)
 	}
-	az, err := access.New(access.Config{Actions: []string{"test.write", "test.read"}}, access.Deps{Store: s})
+	az, err := access.New(access.Deps{Store: s, Tasks: s})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,7 +44,7 @@ func fixture(t *testing.T) (*store.Store, *command.Runner, *security.Service, st
 	if err != nil {
 		t.Fatal(err)
 	}
-	svc := security.New(security.Deps{Commands: runner, Transactions: s, Identities: s, Grants: s, Audit: s, Events: s})
+	svc := security.New(security.Deps{Commands: runner, Transactions: s, Principals: s, Credentials: s, Bootstrap: s, Members: s, Audit: s, Events: s})
 	issued, err := svc.Bootstrap(context.Background(), security.BootstrapInput{Tenant: "t", Subject: "admin", Operator: "test-operator", Reason: "initial setup", ExpiresAt: time.Now().Add(time.Hour)})
 	if err != nil {
 		t.Fatal(err)
@@ -50,13 +52,9 @@ func fixture(t *testing.T) (*store.Store, *command.Runner, *security.Service, st
 	return s, runner, svc, issued.Secret
 }
 func TestConcurrentIdempotencyAndRevocation(t *testing.T) {
-	s, r, svc, token := fixture(t)
+	s, r, _, token := fixture(t)
 	ctx := context.Background()
-	grant := authorization.Grant{Tenant: "t", Subject: "admin", Action: "test.write", Scope: authorization.Scope{Kind: "task", ID: "a"}}
-	if err := svc.Grant(ctx, token, "grant", grant); err != nil {
-		t.Fatal(err)
-	}
-	req := command.Request{Token: token, Operation: "test.write", Key: "same", Scope: grant.Scope}
+	req := capcommand.Request{Token: token, Operation: "identity.create", Key: "same", Resource: "t"}
 	var writes atomic.Int32
 	var wg sync.WaitGroup
 	errs := make(chan error, 8)
@@ -66,7 +64,7 @@ func TestConcurrentIdempotencyAndRevocation(t *testing.T) {
 			defer wg.Done()
 			out, err := command.Run(ctx, r, req, struct{ Value int }{7}, func(tx context.Context, p identity.Principal) ([]byte, error) {
 				writes.Add(1)
-				_, err := s.Advance(tx, p.Tenant, "a", 0)
+				_, err := insertTask(s, tx, p.Tenant, "a")
 				return []byte("result"), err
 			})
 			if err == nil && string(out) != "result" {
@@ -89,10 +87,12 @@ func TestConcurrentIdempotencyAndRevocation(t *testing.T) {
 		t.Fatal("conflicting payload ran")
 		return nil, nil
 	})
-	if !errors.Is(err, unitofwork.ErrConflict) {
+	if !errors.Is(err, fault.ErrConflict) {
 		t.Fatalf("conflict: %v", err)
 	}
-	if err = svc.Ungrant(ctx, token, "revoke-grant", grant); err != nil {
+	if err = s.Do(ctx, func(tx context.Context) error {
+		return s.SetMember(tx, authorization.Member{Tenant: "t", Subject: "admin", Role: "admin", Active: false})
+	}); err != nil {
 		t.Fatal(err)
 	}
 	_, err = command.Run(ctx, r, req, struct{ Value int }{7}, func(context.Context, identity.Principal) ([]byte, error) {
@@ -106,14 +106,10 @@ func TestConcurrentIdempotencyAndRevocation(t *testing.T) {
 func TestCommandRollbackAndTenantIsolation(t *testing.T) {
 	s, r, svc, token := fixture(t)
 	ctx := context.Background()
-	g := authorization.Grant{Tenant: "t", Subject: "admin", Action: "test.write", Scope: authorization.Scope{Kind: "task", ID: "a"}}
-	if err := svc.Grant(ctx, token, "grant", g); err != nil {
-		t.Fatal(err)
-	}
-	req := command.Request{Token: token, Operation: "test.write", Key: "failure", Scope: g.Scope}
+	req := capcommand.Request{Token: token, Operation: "identity.create", Key: "failure", Resource: "t"}
 	failure := errors.New("failed business validation")
 	_, err := command.Run(ctx, r, req, 1, func(tx context.Context, p identity.Principal) ([]byte, error) {
-		if _, err := s.Advance(tx, p.Tenant, "a", 0); err != nil {
+		if _, err := insertTask(s, tx, p.Tenant, "a"); err != nil {
 			return nil, err
 		}
 		return nil, failure
@@ -123,7 +119,7 @@ func TestCommandRollbackAndTenantIsolation(t *testing.T) {
 	}
 	// A retry with the same key and payload may commit because nothing survived.
 	_, err = command.Run(ctx, r, req, 1, func(tx context.Context, p identity.Principal) ([]byte, error) {
-		_, err := s.Advance(tx, p.Tenant, "a", 0)
+		_, err := insertTask(s, tx, p.Tenant, "a")
 		return nil, err
 	})
 	if err != nil {
@@ -133,9 +129,9 @@ func TestCommandRollbackAndTenantIsolation(t *testing.T) {
 	if err != nil || len(events) != 0 {
 		t.Fatalf("cross tenant event: %v %v", events, err)
 	}
-	g.Tenant = "other"
-	if err = svc.Grant(ctx, token, "cross-tenant", g); !errors.Is(err, authorization.ErrForbidden) {
-		t.Fatalf("cross tenant grant: %v", err)
+
+	if err = svc.SetMember(ctx, token, "cross-tenant", authorization.Member{Tenant: "other", Subject: "admin", Role: "admin", Active: true}); !errors.Is(err, authorization.ErrForbidden) {
+		t.Fatal(err)
 	}
 	req.Operation = "unknown"
 	if _, err = command.Run(ctx, r, req, 1, func(context.Context, identity.Principal) ([]byte, error) {
@@ -148,7 +144,7 @@ func TestCommandRollbackAndTenantIsolation(t *testing.T) {
 func TestBootstrapOnceAndCredentialRevocation(t *testing.T) {
 	_, r, svc, token := fixture(t)
 	ctx := context.Background()
-	if _, err := svc.Bootstrap(ctx, security.BootstrapInput{Tenant: "other", Subject: "admin", Operator: "op", Reason: "again", ExpiresAt: time.Now().Add(time.Hour)}); !errors.Is(err, unitofwork.ErrConflict) {
+	if _, err := svc.Bootstrap(ctx, security.BootstrapInput{Tenant: "other", Subject: "admin", Operator: "op", Reason: "again", ExpiresAt: time.Now().Add(time.Hour)}); !errors.Is(err, fault.ErrConflict) {
 		t.Fatalf("second bootstrap: %v", err)
 	}
 	issued, err := svc.Issue(ctx, token, "issue", security.IssueInput{Tenant: "t", Subject: "admin", ExpiresAt: time.Now().Add(time.Hour)})
@@ -158,7 +154,7 @@ func TestBootstrapOnceAndCredentialRevocation(t *testing.T) {
 	if err = svc.Revoke(ctx, token, "revoke", security.RevokeInput{Tenant: "t", CredentialID: issued.ID}); err != nil {
 		t.Fatal(err)
 	}
-	req := command.Request{Token: issued.Secret, Key: "denied", Operation: "identity.issue", Scope: authorization.Scope{Kind: "tenant", ID: "t"}}
+	req := capcommand.Request{Token: issued.Secret, Key: "denied", Operation: "identity.issue", Resource: "t"}
 	if _, err = command.Run(ctx, r, req, 1, func(context.Context, identity.Principal) ([]byte, error) {
 		t.Fatal("revoked credential ran")
 		return nil, nil
@@ -171,7 +167,7 @@ func TestBootstrapOnceAndCredentialRevocation(t *testing.T) {
 	}
 }
 
-var _ record.Events = (*store.Store)(nil)
+var _ record.EventWriter = (*store.Store)(nil)
 
 func TestRecoveryRevokesOldCredentials(t *testing.T) {
 	_, r, svc, token := fixture(t)
@@ -180,7 +176,7 @@ func TestRecoveryRevokesOldCredentials(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := command.Request{Token: token, Operation: "identity.issue", Key: "old", Scope: authorization.Scope{Kind: "tenant", ID: "t"}}
+	req := capcommand.Request{Token: token, Operation: "identity.issue", Key: "old", Resource: "t"}
 	if _, err = command.Run(ctx, r, req, 1, func(context.Context, identity.Principal) ([]byte, error) {
 		t.Fatal("old token usable")
 		return nil, nil
@@ -242,20 +238,17 @@ func TestAgentBindingsAreCredentialScopedAndDoNotInheritOwner(t *testing.T) {
 	if a.ID != b.ID || a.Incarnation != "boot-1" || b.Incarnation != "boot-2" {
 		t.Fatal("runtime binding drift")
 	}
-	req := command.Request{Token: first.Secret, Operation: "identity.issue", Key: "forbidden", Scope: authorization.Scope{Kind: "tenant", ID: "t"}}
+	req := capcommand.Request{Token: first.Secret, Operation: "identity.issue", Key: "forbidden", Resource: "t"}
 	if _, err = command.Run(ctx, r, req, 1, func(context.Context, identity.Principal) ([]byte, error) {
 		t.Fatal("inherited owner permission")
 		return nil, nil
 	}); !errors.Is(err, authorization.ErrForbidden) {
 		t.Fatal(err)
 	}
-	// Even an explicit business grant cannot let a runtime proof credential write.
-	if err = svc.Grant(ctx, token, "agent-grant", authorization.Grant{Tenant: "t", Subject: "agent", Action: "test.write", Scope: authorization.Scope{Kind: "task", ID: "a"}}); err != nil {
-		t.Fatal(err)
-	}
+
 	req.Token = second.Secret
-	req.Operation = "test.write"
-	req.Scope = authorization.Scope{Kind: "task", ID: "a"}
+	req.Operation = "identity.create"
+	req.Resource = "t"
 	if _, err = command.Run(ctx, r, req, 1, func(context.Context, identity.Principal) ([]byte, error) {
 		t.Fatal("runtime credential used for business")
 		return nil, nil
@@ -264,44 +257,45 @@ func TestAgentBindingsAreCredentialScopedAndDoNotInheritOwner(t *testing.T) {
 	}
 }
 
-type failingEvents struct{ record.Events }
+type failingEvents struct{ record.EventWriter }
 
 func (f failingEvents) AppendEvent(ctx context.Context, e record.Event) error {
-	if err := f.Events.AppendEvent(ctx, e); err != nil {
+	if err := f.EventWriter.AppendEvent(ctx, e); err != nil {
 		return err
 	}
 	return errors.New("injected outbox failure")
 }
 func TestOutboxFailureRollsBackFactsAndReceipt(t *testing.T) {
-	s, _, svc, token := fixture(t)
+	s, _, _, token := fixture(t)
 	ctx := context.Background()
-	scope := authorization.Scope{Kind: "task", ID: "a"}
-	if err := svc.Grant(ctx, token, "grant", authorization.Grant{Tenant: "t", Subject: "admin", Action: "test.write", Scope: scope}); err != nil {
-		t.Fatal(err)
-	}
+
 	auth, _ := local.New(local.Deps{Store: s})
-	az, _ := access.New(access.Config{Actions: []string{"test.write"}}, access.Deps{Store: s})
+	az, _ := access.New(access.Deps{Store: s, Tasks: s})
 	runner, _ := command.New(command.Deps{Transactions: s, Requests: s, Identity: auth, Authorization: az, Audit: s, Events: failingEvents{s}})
 	before, err := s.ReadEvents(ctx, "t", 0, 100)
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := command.Request{Token: token, Operation: "test.write", Key: "outbox-failure", Scope: scope}
+	req := capcommand.Request{Token: token, Operation: "identity.create", Key: "outbox-failure", Resource: "t"}
 	_, err = command.Run(ctx, runner, req, 1, func(tx context.Context, p identity.Principal) ([]byte, error) {
-		_, err := s.Advance(tx, p.Tenant, "a", 0)
+		_, err := insertTask(s, tx, p.Tenant, "a")
 		return []byte("never committed"), err
 	})
 	if err == nil {
 		t.Fatal("outbox failure accepted")
 	}
-	if _, err = s.FindReceipt(ctx, record.RequestKey{Tenant: "t", Subject: "admin", Operation: "test.write", Key: req.Key}); !errors.Is(err, unitofwork.ErrNotFound) {
+	if _, err = s.FindReceipt(ctx, record.RequestKey{Tenant: "t", Subject: "admin", Operation: "identity.create", Key: req.Key}); !errors.Is(err, fault.ErrNotFound) {
 		t.Fatalf("receipt leaked: %v", err)
 	}
 	after, err := s.ReadEvents(ctx, "t", 0, 100)
 	if err != nil || len(after) != len(before) {
 		t.Fatal("outbox write leaked")
 	}
-	if err = s.Do(ctx, func(tx context.Context) error { _, err := s.Advance(tx, "t", "a", 0); return err }); err != nil {
+	if err = s.Do(ctx, func(tx context.Context) error { _, err := insertTask(s, tx, "t", "a"); return err }); err != nil {
 		t.Fatalf("revision leaked: %v", err)
 	}
+}
+
+func insertTask(s *store.Store, ctx context.Context, tenant, id string) (int64, error) {
+	return 1, s.CreateTask(ctx, task.Task{Tenant: tenant, ID: id, Version: 1, BasisVersion: 1})
 }

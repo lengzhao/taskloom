@@ -3,7 +3,7 @@ flowchart TD
     n1["identity<br>identity/local"]
     n2["access<br>access/default"]
     n3["tasks<br>task/facts"]
-    n4["conversation<br>conversation/versioned"]
+    n4["commits<br>commit/immutable"]
     n5["execution<br>execution/facts"]
     n6["results<br>delivery/reply"]
     n7["ready<br>state/ready"]
@@ -13,7 +13,7 @@ flowchart TD
     n11["flow-standard<br>task/flow"]
     n12["flows<br>flow/directory"]
     n13["task-commands<br>commands/tasks"]
-    n14["conversation-commands<br>commands/conversation"]
+    n14["commit-commands<br>commands/commit"]
     n15["execution-commands<br>commands/execution"]
     n16["delivery-commands<br>commands/delivery"]
     n17["acceptance-commands<br>commands/acceptance"]
@@ -24,7 +24,7 @@ flowchart TD
     n22["worker<br>event/worker"]
     n23["reconciler<br>flow/reconciler"]
     n24["api-tasks<br>api/tasks"]
-    n25["api-conversation<br>api/conversation"]
+    n25["api-commits<br>api/commit"]
     n26["api-execution<br>api/execution"]
     n27["api-delivery<br>api/delivery"]
     n28["api-acceptance<br>api/acceptance"]
@@ -50,24 +50,22 @@ flowchart TD
     n48["reminder<br>notification/reminder"]
     n49["notification-dispatch<br>notification/dispatch"]
     n50["server<br>server"]
+    n51["decisions<br>decision/facts"]
     n1 -->|store| n0
-    n2 -->|grants| n0
-    n2 -->|scopes| n0
-    n2 -->|confirmations| n0
-    n2 -->|identity| n1
+    n2 -->|store| n0
+    n2 -->|tasks| n3
     n3 -->|tasks| n0
     n3 -->|projects| n0
     n3 -->|policies| n0
-    n4 -->|messages| n0
-    n4 -->|decisions| n0
+    n4 -->|store| n0
     n5 -->|store| n0
     n6 -->|submissions| n0
     n7 -->|tasks| n3
-    n7 -->|decisions| n4
+    n7 -->|decisions| n51
     n8 -->|tasks| n3
     n8 -->|executions| n5
     n8 -->|deliveries| n6
-    n8 -->|decisions| n4
+    n8 -->|decisions| n51
     n9 -->|tasks| n3
     n9 -->|deliveries| n6
     n9 -->|store| n0
@@ -75,7 +73,7 @@ flowchart TD
     n9 -->|subjects| n0
     n10 -->|tasks| n3
     n10 -->|deliveries| n6
-    n10 -->|decisions| n4
+    n10 -->|decisions| n51
     n11 -->|store| n0
     n11 -->|tasks| n3
     n11 -->|executions| n5
@@ -89,49 +87,44 @@ flowchart TD
     n12 -->|flows| n11
     n13 -->|tx| n0
     n13 -->|requests| n0
-    n13 -->|changes| n0
     n13 -->|audit| n0
     n13 -->|events| n0
     n13 -->|authz| n2
     n13 -->|tasks| n3
     n13 -->|flows| n12
-    n13 -->|identity| n1
+    n13 -->|identity| n0
     n14 -->|tx| n0
     n14 -->|requests| n0
-    n14 -->|changes| n0
     n14 -->|audit| n0
     n14 -->|events| n0
     n14 -->|authz| n2
-    n14 -->|messages| n4
-    n14 -->|decisions| n4
+    n14 -->|commits| n4
+    n14 -->|decisions| n51
     n14 -->|tasks| n3
     n14 -->|flows| n12
     n15 -->|tx| n0
     n15 -->|requests| n0
-    n15 -->|changes| n0
     n15 -->|audit| n0
     n15 -->|events| n0
     n15 -->|authz| n2
     n15 -->|executions| n5
     n15 -->|tasks| n3
-    n15 -->|decisions| n4
+    n15 -->|decisions| n51
     n15 -->|flows| n12
     n15 -->|positions| n12
-    n15 -->|identity| n1
+    n15 -->|identity| n0
     n16 -->|tx| n0
     n16 -->|requests| n0
-    n16 -->|changes| n0
     n16 -->|audit| n0
     n16 -->|events| n0
     n16 -->|authz| n2
     n16 -->|tasks| n3
     n16 -->|executions| n5
-    n16 -->|replies| n4
+    n16 -->|commits| n4
     n16 -->|deliveries| n6
     n16 -->|flows| n12
     n17 -->|tx| n0
     n17 -->|requests| n0
-    n17 -->|changes| n0
     n17 -->|audit| n0
     n17 -->|events| n0
     n17 -->|authz| n2
@@ -140,7 +133,6 @@ flowchart TD
     n17 -->|flows| n12
     n18 -->|tx| n0
     n18 -->|requests| n0
-    n18 -->|changes| n0
     n18 -->|audit| n0
     n18 -->|events| n0
     n18 -->|authz| n2
@@ -148,13 +140,11 @@ flowchart TD
     n18 -->|flows| n12
     n19 -->|tx| n0
     n19 -->|requests| n0
-    n19 -->|changes| n0
     n19 -->|audit| n0
     n19 -->|events| n0
     n19 -->|authz| n2
-    n19 -->|grants| n2
-    n19 -->|confirmations| n2
-    n19 -->|identity| n1
+    n19 -->|members| n0
+    n19 -->|identity| n0
     n20 -->|queries| n0
     n20 -->|authz| n2
     n21 -->|commands| n18
@@ -177,7 +167,7 @@ flowchart TD
     n33 -->|queries| n20
     n34 -->|events| n0
     n34 -->|cursors| n0
-    n34 -->|scopes| n0
+    n34 -->|members| n0
     n34 -->|authz| n2
     n36 -->|identity| n1
     n36 -->|modules| n35
@@ -196,14 +186,13 @@ flowchart TD
     n37 -->|store| n0
     n38 -->|tx| n0
     n38 -->|requests| n0
-    n38 -->|changes| n0
     n38 -->|audit| n0
     n38 -->|events| n0
     n38 -->|authz| n2
     n38 -->|plan| n37
     n38 -->|tasks| n3
     n38 -->|flows| n12
-    n38 -->|identity| n1
+    n38 -->|identity| n0
     n38 -->|confirmation| n2
     n39 -->|impacts| n37
     n39 -->|commands| n18
@@ -211,7 +200,6 @@ flowchart TD
     n41 -->|tasks| n3
     n42 -->|tx| n0
     n42 -->|requests| n0
-    n42 -->|changes| n0
     n42 -->|audit| n0
     n42 -->|events| n0
     n42 -->|authz| n2
@@ -228,7 +216,6 @@ flowchart TD
     n44 -->|store| n0
     n45 -->|tx| n0
     n45 -->|requests| n0
-    n45 -->|changes| n0
     n45 -->|audit| n0
     n45 -->|events| n0
     n45 -->|authz| n2
@@ -238,7 +225,7 @@ flowchart TD
     n46 -->|authz| n2
     n47 -->|inbox| n44
     n47 -->|tasks| n3
-    n47 -->|decisions| n4
+    n47 -->|decisions| n51
     n47 -->|authz| n2
     n47 -->|tx| n0
     n48 -->|due| n0
@@ -256,3 +243,4 @@ flowchart TD
     n50 -->|components| n43
     n50 -->|components| n48
     n50 -->|components| n49
+    n51 -->|store| n0

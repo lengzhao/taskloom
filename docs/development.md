@@ -88,3 +88,7 @@ all 中 Go 尝试写模块 stat cache 时出现沙箱 `operation not permitted` 
 ## M03 工程入口
 
 见[M03 实现说明](m03-storage.md)：根配置现为四实例 SQL + health，最小示例仍为三实例；`scripts/check.sh all` 同时检查两者并构建管理员 CLI。SQLite CGO 驱动需 C 编译器。MySQL/PostgreSQL 已编入但尚未真实服务验证。
+
+## M04 工作台
+
+[工作台说明](m04-workspace.md)记录实际接口、12 实例根图、准备流程、授权 API、内嵌 HTML/CSS/JS 及 SQLite/HTTP/浏览器验证。HTTP 变化轮询已接通；执行、结构化问答、WS 和 Harness 仍留后续阶段。

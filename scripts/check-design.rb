@@ -88,11 +88,14 @@ def check_graph(graph, label, quiet: false)
     assert(resources == ['sql'], "#{label}: SQL resource owner missing")
     assert(nodes['sql']['use'] == 'storage/sql', "#{label}: invalid storage kind")
     expected << 'storage/sql'
+    if nodes.key?('workspace-api')
+      expected += %w[identity/local access/default state/ready task/flow commands/runtime commands/security workspace/tasks api/workspace]
+    end
   else
     assert(resources == [], "#{label}: unexpected resource")
   end
   assert(nodes.values.map { |n| n['use'] }.sort == expected.sort, "#{label}: default graph contains unexpected capabilities")
-  assert(graph.fetch('http').fetch('deps').fetch('modules') == ['health'], "#{label}: health module owner missing")
+  assert(graph.fetch('http').fetch('deps').fetch('modules') == (nodes.key?('workspace-api') ? ['health','workspace-api'] : ['health']), "#{label}: health module owner missing")
   puts "PASS #{label}: references, acyclic/reachable graph and current owners" unless quiet
 end
 

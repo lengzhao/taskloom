@@ -1,58 +1,63 @@
-# M01：以状态插件组合流程步骤
+# Taskloom 整体设计
 
-更新：2026-11-18。按用户确认，插件是接口清晰、经 Deps 配置组合的模块；准备、执行、事实审核、人工验收、完成等所有流程步骤统一为状态插件。本文取代前版并列的交付 checks、通用审核 Coordinator/Evaluator 方案。已有 M03 存储与身份/安全命令基础，详见[M03 实现](m03-storage.md)；以下任务流程业务尚未实现。
+Taskloom 是人与 Agent 协作的任务系统。采用模块化单体：公共能力接口经 typed Deps 和配置组合，PluginKit 注册/构建；GORM 封装在 SQL 仓储内，本地 SQLite，生产配置驱动和 DSN。已有 M03 存储与安全基础；M04 已实现本地任务/commit/准备流程与薄界面闭环。Harness 适配不属于当前工作。
 
-## 简化后的结构
+## 四种事实
 
-```mermaid
-flowchart TD
-    HTTP[HTTP modules] --> Commands[命名业务命令]
-    Commands --> Facts[任务 / 会话 / 执行 / 交付]
-    Commands --> Directory[流程目录]
-    Directory --> Flow[流程控制器]
-    Flow --> Steps[有序状态插件]
-    Steps --> Facts
-    Steps --> Store[各自的记录存储接口]
-```
+| 模型 | 保存什么 | 不承担什么 |
+| --- | --- | --- |
+| Task | 当前目标、标准、负责人、依据与策略版本 | 聊天上下文、模型运行 |
+| Commit | 不可变协作内容、作者归属、引用、提交顺序 | 修改状态、授权、通用动作执行 |
+| 领域事实 | 执行、问题、交付、验收、文件等结构化记录 | 根据自然语言猜测正式决定 |
+| Flow position | 绑定定义、轮次、状态位置、进入标识和等待原因 | 复制各领域判断规则 |
 
-命令处理明确业务动作和事务，例如创建任务、认领执行、提交回复、记录验收结论；状态插件决定该步骤的进入条件、进入动作、完成条件。HTTP、存储、身份、推送仍是能力模块，不必伪装成流程步骤。内部辅助函数不单独配置。
+Task 与 Flow position 分表/接口归属；M04 已将位置字段移至 flow.Position，task/facts 不写状态。正文唯一保存在 Commit，结构化事实引用 CommitID。没有 Conversation、Message 或消息修订层，也不从日志重放构建整个业务数据库。
 
-默认流程：准备 → 执行 → 人工验收 → 完成；无需人工验收时省略人工验收步骤；需要事实审核时在执行与人工验收之间插入事实审核状态。无需额外“审核引擎”“检查策略列表”或每类审核再加一套 Coordinator。
+## Commit 与命名动作
 
-flow 只处理定义、位置、EntryID/RoundID、推进、控制命令、有界续查和事务内可靠写入。步骤业务由 State 实现；flow 不直接读取验收表、匹配 manual/none 分支、调用 review.Service 或遍历交付 checks。权限、版本、执行代次、取消不等于停止等是固定公共约束，不能通过删除业务步骤关闭。
+普通评论、进度、提问可以追加 commit。更正追加新 commit，RefID 指向同任务旧记录，历史内容不覆盖；更正不撤回旧结果或旧决定。界面将 commits 和受权业务事实展示为时间线。
 
-## 状态插件的统一契约
+正式修改目标、提出阻塞问题、回答/解决问题、提交结果、验收、取消和重开分别是命名用例。用例认证、授权、校验版本/依据，然后同事务更新自身领域事实、追加需要的 commit、审计、outbox 和幂等回执。客户端不能通过任意 kind 或正文触发业务动作；commit 类型由对应命令决定。
 
-State 提供 Describe/CheckEnter/Enter/CheckComplete。Describe 给稳定 key、角色、版本及行为摘要；检查只读返回 allow/wait/reject、原因及证据；Enter 为本地幂等准备动作，可为空，也可创建当前证据对应的审核记录/outbox。Enter 可被重复调用以同步新证据，不另设可选 Reconcile。
+普通 commit 不增加 BasisVersion，不自动交付，不改变任务终态。结果正文也是 commit，但成为当前结果必须有显式 Submission 登记。验收绑定 SubmissionID、CommitID、Basis、PolicyRevision；更正结果必须重新提交。撤回只撤销当前候选，不恢复旧结果。
 
-验收状态自己负责审核记录、结论绑定、验收人规则和等待原因；事实审核状态自己决定需要哪些材料/来源。它们通过 Deps 读取任务/交付及自己的存储，不依赖命令或 flow。需要人/远端输入的步骤可提供命名的事务内写能力，命令/API 适配它；步骤本身不调用远端、不决定 Agent 如何工作。
+## 模块与依赖
 
-流程变更不等于 API 自动生成：纯本地审核只增加状态实现和配置；需要新的人工输入时同时提供该步骤的命名动作/API。新增存储可能需迁移，但不修改 flow 或原业务步骤。首版只支持线性步骤及显式取消/退回/重开，不扩展为脚本或任意 DAG。
+- task/facts：目标、标准、负责人和策略；自己的仓储。
+- commit/immutable：追加、精确读取、提交序分页；自己的仓储，文件阶段组合引用保留能力。
+- decision/facts：阻塞问题、答案与解决事实，引用 commit；普通评论不解除阻塞。
+- execution/facts：执行代次、保活、停止事实，实例/代次隔离。
+- delivery/reply：结果登记及当前轮候选引用，不保存正文或评审规则。
+- State：准备、执行、事实审核、人工验收、完成等步骤；需要审核记录的步骤拥有自己的仓储。
+- task/flow：状态/轮次/位置唯一写入者；通过有序 states 调用步骤，保留执行安全退出等固定保护。
+- 命名命令与查询：依赖上述能力及事务、身份、权限；HTTP 只协议适配，薄界面调用同一 API。
 
-## 单体与原子性
+详细字段见[插件清单](plugin-inventory-review.md)与[依赖图](plugin-dependencies.mmd)。SQL 实现各领域仓储，不能把领域规则放入 SQL。插件不直接 import 其他插件实现；共享事务不代表共享领域所有权。超过五个 Deps 记录协调职责及拆分理由，不把不同接口打包规避计数。
 
-一个进程、一个 SQL 事务边界，模块通过 PluginKit 装配。命令为事务/幂等 owner，runtime/command 复用机制，不提供全局服务定位。步骤/事实子操作沿用主体、父 CommandID 及同一事务，内层失败 rollback-only。
+## 流程组合
 
-CreateTask 同事务创建基础事实/验收人策略并由 flow 初始化首轮/位置。SubmitReply 固定消息修订和交付后调用流程 Evaluate，进入审核或验收。业务审核未通过表示已提交但该步骤等待/拒绝，不删除交付；格式、权限、代次或依据不合法则拒绝提交。技术失败整体回滚。RecordVerdict/EndExecution 等同事务重查。
+默认目标链 ready → executing → accepting → completed；额外事实审核以新 State 插入，省略 accepting 表示无需人工验收。任务绑定不可变 FlowRef，不能改同版本配置偷偷改变旧任务行为。M04 只实现创建与准备位置，M05 接入执行和后续步骤，不能把尚未实现的状态配置成假成功。
 
-正常推进保留 RoundID；显式 Return/Reopen 新轮使旧轮候选和步骤结论不再当前。交付按任务＋轮次保存 current 引用，不要求 flow 回调 results 清空全局指针。旧记录继续可追溯。替换执行、撤回及新交付仍显式使相关证据组合失效。
+State 的 Describe、CheckEnter、Enter、CheckComplete 保持不变。检查只读；Enter 在本地事务幂等准备/同步记录，远端请求只写 outbox。当前证据变化重查所有已到达步骤，未来步骤不提前 Enter，前序失效保留位置和原因。Enter 幂等依据为 EntryID 与真实证据组合，不使用自己写入后必变的 TaskVersion。
 
-关键操作保护任务协调行及证据版本；跨任务按稳定 ID 锁顺序。远端身份解析在事务外，步骤使用可信本地身份依据。S3/通知/远端审核通过 outbox 和补偿，跨任务影响异步重查；命令完成校验不信任过期投影。
+正常推进保留 RoundID，退回/重开新轮；执行 Generation 单独隔离。认领在同事务通过 CheckAction(OpenExecution) 重查。任务完成必须满足有效候选、当前依据、全部相关步骤及安全退出；普通 commit 或 Hook 不能绕过。取消请求、断线、在线、执行成功均不等同所有外部工作停止。
 
-## 版本与完成保护
+## 一致性、权限与变化流
 
-FlowRef 绑定步骤顺序、实现规则版本及行为摘要。验收模式由步骤描述派生并随定义固化：默认含人工验收步骤则需要该步骤通过，否则不要求独立人工验收；不再设置一份可能与列表矛盾的 acceptanceMode 配置。PolicyRevision 保存验收人及职责分离，不决定是否跳过步骤。人工验收配置由该步骤校验，none 情况不能留下无归属的验收策略。
+同 SQL UnitOfWork 提交领域事实、commit、审计、outbox 和回执；嵌套失败使整个事务 rollback-only。幂等命名空间 tenant/subject/operation/key，重放仍校验当前权限。实际作者由认证产生，Agent 不继承 owner 权限；历史、引用、搜索、附件和变化流逐次检查当前任务范围。
 
-同版本变更行为拒绝，保留旧定义实现或明确拒绝不支持版本；不声称保存 YAML 即可运行旧代码。末状态只能在当前轮所有已经过的步骤针对当前证据仍通过、完成步骤本身通过、执行安全退出通过后到达。新交付不能沿用旧事实审核/验收结论；具体算法见[状态契约](task-flow-plugins.md)。
+Commit 的 Sequence 与 outbox 游标分别用于内容分页与变化恢复，不互相冒充；均保证提交顺序。用户变化流不直接暴露内部 outbox。先 StartCursor、再快照、再补拉；支持重复、游标过期明确重同步。新任务可通过动态权限范围发现。
 
-## 生命周期与分期
+SQL/S3 不共享事务，文件版本固定与删除补偿按 M07 实现。定义、材料及记录保留遵守历史引用；不承诺外部链接内容快照或任意工具副作用恰好一次。
 
-root 管 SQL/blob、流程目录和受管组件；目录发布定义后开放业务入口，步骤无独立后台。HTTP 管模块和长连接，worker 管消费者，通知发送管渠道资源；构造无 IO/goroutine。依赖全部经 Deps，不把多个职责藏入万能 Service。
+## 交付顺序
 
-第一阶段文本、默认步骤、薄界面与真实 Buddy；用新事实审核状态验证无需改原插件的扩展。第二阶段文件/任务树/提醒，第三阶段历史恢复/容量。根 base/config 包含已实现的 SQL + health，不预注册占位业务插件。
+M03 已验证存储/安全基础。M04：任务创建/读取/正式依据变更、不可变 commits、准备初始化、授权 API/变化流和薄界面；不接 Harness。M05：执行、正式结果、验收/取消/退回/重开与新 State 扩展验证。M06：第一阶段真实 Agent 适配与恢复联调。文件、树依赖、提醒及历史恢复按后续清单推进。
 
-[插件接口](plugin-contracts.md)、[清单与依赖审查](plugin-inventory-review.md)、[开发清单](../todo.md)同步描述本方案；构造无环不等于业务正确。
+核心约束见[核心契约](core-contracts.md)，内容与交付见[Commit](commits.md)和[结果交付](reply-delivery.md)。文档及依赖静态检查不能代替运行验证。
 
-M02 补充：[独立接入与剩余契约](integration-contract.md)明确本地身份、Harness 后续适配、停止证据、状态幂等、操作权限与模块迁移边界。NEX/Buddy 现有接口不作为实现前置条件；尚无业务实现。
+M04 实际子集与验证见[工作台说明](m04-workspace.md)，含 HTTP 变化补拉；WS、结构化阻塞问答及执行后续步骤尚未实现。
 
-存储实现采用 GORM，默认 SQLite 本地验证，生产按 driver/DSN 选择已适配数据库；GORM 与方言差异封装在 SQL 仓储内部，领域接口和业务插件不变。跨仓储共享事务与版本校验要求不变，详见[存储契约](integration-contract.md)。
+当前权限基线见[成员与任务关系](permissions.md)：移除通用 Scope/Grant 和逐动作授权配置，以有效租户成员、固定角色、负责人及参与关系判断业务资格；保持租户隔离、即时撤销和幂等重放前重新鉴权。不兼容旧权限数据库格式。
+
+当前 Go cap 的消费者边界见[能力清单](cap-interfaces.md)。共享命令生命周期由 command.Handler 提供，状态检查使用明确的 allow/wait/reject；通用 Revisions 和旧 Repository/Service 已移除。

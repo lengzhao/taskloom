@@ -10,8 +10,8 @@
       "responsibility": "GORM 多方言 SQL 连接、迁移及各领域独立仓储；本地默认 SQLite，不含业务判断",
       "provides": [
         "lifecycle.Resource",
-        "各领域 Repository",
-        "UnitOfWork / Idempotency / Revision / Audit / Event / Cursor"
+        "各消费者所需的领域 Store / Log / 只读能力",
+        "unitofwork.Manager / record.Receipts / AuditWriter / EventLog"
       ],
       "deps": [],
       "owner": "root Resource"
@@ -20,15 +20,14 @@
       "id": "identity",
       "kind": "identity/local",
       "phase": "I",
-      "responsibility": "Taskloom 本地认证及可信人/Agent/实例目录；凭据撤销逐请求校验",
+      "responsibility": "使用仅查询摘要凭据的能力认证，目录查询由 SQL 提供",
       "provides": [
-        "identity.Authenticator.Authenticate",
-        "identity.Directory.Resolve / Validate"
+        "identity.Authenticator.Authenticate"
       ],
       "deps": [
         {
           "field": "store",
-          "interface": "identity.Repository",
+          "interface": "identity.CredentialLookup",
           "targets": [
             "sql"
           ]
@@ -40,39 +39,23 @@
       "id": "access",
       "kind": "access/default",
       "phase": "I→II",
-      "responsibility": "当前作用域授权；第二阶段精确确认事实与消费",
+      "responsibility": "按有效租户成员、管理员、任务负责人和参与关系判断固定业务规则",
       "provides": [
-        "authorization.Authorizer.Check / CheckBatch",
-        "grant.Editor.Grant / Revoke",
-        "confirmation.Propose / Confirm / Consume"
+        "authorization.Authorizer.Check"
       ],
       "deps": [
         {
-          "field": "grants",
-          "interface": "grant.Repository",
+          "field": "store",
+          "interface": "authorization.Relations",
           "targets": [
             "sql"
           ]
         },
         {
-          "field": "scopes",
-          "interface": "authorization.ScopeReader",
+          "field": "tasks",
+          "interface": "task.Reader",
           "targets": [
-            "sql"
-          ]
-        },
-        {
-          "field": "confirmations",
-          "interface": "confirmation.Repository",
-          "targets": [
-            "sql"
-          ]
-        },
-        {
-          "field": "identity",
-          "interface": "identity.Directory",
-          "targets": [
-            "identity"
+            "tasks"
           ]
         }
       ],
@@ -91,7 +74,7 @@
       "deps": [
         {
           "field": "tasks",
-          "interface": "task.Repository",
+          "interface": "task.Store",
           "targets": [
             "sql"
           ]
@@ -114,27 +97,17 @@
       "owner": "无后台"
     },
     {
-      "id": "conversation",
-      "kind": "conversation/versioned",
+      "id": "commits",
+      "kind": "commit/immutable",
       "phase": "I",
-      "responsibility": "消息修订、阻塞问题及精确回复引用；文本版明确拒绝附件",
+      "responsibility": "不可变正文与引用；追加/精确读取/游标分页，不拥有阻塞问题或业务状态",
       "provides": [
-        "conversation.Reader.GetRevision / List",
-        "conversation.Editor.Append / Edit",
-        "conversation.ResultReplies.AppendResultReply / PinRevision",
-        "decision.Reader / Editor"
+        "commit.Log.Append / Get / List"
       ],
       "deps": [
         {
-          "field": "messages",
-          "interface": "conversation.Repository",
-          "targets": [
-            "sql"
-          ]
-        },
-        {
-          "field": "decisions",
-          "interface": "decision.Repository",
+          "field": "store",
+          "interface": "commit.Log",
           "targets": [
             "sql"
           ]
@@ -202,7 +175,7 @@
           "field": "decisions",
           "interface": "decision.Reader",
           "targets": [
-            "conversation"
+            "decisions"
           ]
         }
       ],
@@ -242,7 +215,7 @@
           "field": "decisions",
           "interface": "decision.Reader",
           "targets": [
-            "conversation"
+            "decisions"
           ]
         }
       ],
@@ -323,7 +296,7 @@
           "field": "decisions",
           "interface": "decision.Reader",
           "targets": [
-            "conversation"
+            "decisions"
           ]
         }
       ],
@@ -342,7 +315,7 @@
       "deps": [
         {
           "field": "store",
-          "interface": "flow.PositionRepository",
+          "interface": "flow.PositionStore",
           "targets": [
             "sql"
           ]
@@ -441,13 +414,6 @@
           ]
         },
         {
-          "field": "changes",
-          "interface": "revision.Writer",
-          "targets": [
-            "sql"
-          ]
-        },
-        {
           "field": "audit",
           "interface": "audit.Writer",
           "targets": [
@@ -486,19 +452,19 @@
           "field": "identity",
           "interface": "identity.Directory",
           "targets": [
-            "identity"
+            "sql"
           ]
         }
       ],
       "owner": "无后台"
     },
     {
-      "id": "conversation-commands",
-      "kind": "commands/conversation",
+      "id": "commit-commands",
+      "kind": "commands/commit",
       "phase": "I",
-      "responsibility": "发消息、编辑、阻塞问答；解决后同步核对",
+      "responsibility": "普通评论/进度的追加和更正引用；正式问题走命名决策动作，不接受任意 kind 执行业务",
       "provides": [
-        "conversation.Commands.Post / Edit",
+        "commit.Commands.Post / Edit",
         "decision.Commands.Open / Answer / Resolve"
       ],
       "deps": [
@@ -512,13 +478,6 @@
         {
           "field": "requests",
           "interface": "idempotency.Repository",
-          "targets": [
-            "sql"
-          ]
-        },
-        {
-          "field": "changes",
-          "interface": "revision.Writer",
           "targets": [
             "sql"
           ]
@@ -545,17 +504,17 @@
           ]
         },
         {
-          "field": "messages",
-          "interface": "conversation.Editor",
+          "field": "commits",
+          "interface": "commit.Appender / Reader",
           "targets": [
-            "conversation"
+            "commits"
           ]
         },
         {
           "field": "decisions",
           "interface": "decision.Editor",
           "targets": [
-            "conversation"
+            "decisions"
           ]
         },
         {
@@ -599,13 +558,6 @@
           ]
         },
         {
-          "field": "changes",
-          "interface": "revision.Writer",
-          "targets": [
-            "sql"
-          ]
-        },
-        {
           "field": "audit",
           "interface": "audit.Writer",
           "targets": [
@@ -644,7 +596,7 @@
           "field": "decisions",
           "interface": "decision.Reader",
           "targets": [
-            "conversation"
+            "decisions"
           ]
         },
         {
@@ -665,7 +617,7 @@
           "field": "identity",
           "interface": "identity.Directory",
           "targets": [
-            "identity"
+            "sql"
           ]
         }
       ],
@@ -677,7 +629,7 @@
       "phase": "I",
       "responsibility": "登记/撤回回复交付，校验权限/依据/代次；随后核对流程，业务审核不在登记前执行",
       "provides": [
-        "delivery.Commands.SubmitReply / Withdraw"
+        "delivery.Commands.SubmitResult / Withdraw"
       ],
       "deps": [
         {
@@ -690,13 +642,6 @@
         {
           "field": "requests",
           "interface": "idempotency.Repository",
-          "targets": [
-            "sql"
-          ]
-        },
-        {
-          "field": "changes",
-          "interface": "revision.Writer",
           "targets": [
             "sql"
           ]
@@ -737,10 +682,10 @@
           ]
         },
         {
-          "field": "replies",
-          "interface": "conversation.ResultReplies",
+          "field": "commits",
+          "interface": "commit.Appender / Reader",
           "targets": [
-            "conversation"
+            "commits"
           ]
         },
         {
@@ -779,13 +724,6 @@
         {
           "field": "requests",
           "interface": "idempotency.Repository",
-          "targets": [
-            "sql"
-          ]
-        },
-        {
-          "field": "changes",
-          "interface": "revision.Writer",
           "targets": [
             "sql"
           ]
@@ -859,13 +797,6 @@
           ]
         },
         {
-          "field": "changes",
-          "interface": "revision.Writer",
-          "targets": [
-            "sql"
-          ]
-        },
-        {
           "field": "audit",
           "interface": "audit.Writer",
           "targets": [
@@ -907,9 +838,10 @@
       "id": "access-commands",
       "kind": "commands/access",
       "phase": "I→II",
-      "responsibility": "授权管理及第二阶段精确确认；禁止公开管理员自举",
+      "responsibility": "租户成员角色与有效性管理、任务参与关系变更；管理员初始化仅离线入口",
       "provides": [
-        "access.Commands.Grant / Revoke / Propose / Confirm / Reject"
+        "membership.Commands.SetMember",
+        "participation.Commands.SetParticipant"
       ],
       "deps": [
         {
@@ -922,13 +854,6 @@
         {
           "field": "requests",
           "interface": "idempotency.Repository",
-          "targets": [
-            "sql"
-          ]
-        },
-        {
-          "field": "changes",
-          "interface": "revision.Writer",
           "targets": [
             "sql"
           ]
@@ -955,24 +880,17 @@
           ]
         },
         {
-          "field": "grants",
-          "interface": "grant.Editor",
+          "field": "members",
+          "interface": "authorization.Relations",
           "targets": [
-            "access"
-          ]
-        },
-        {
-          "field": "confirmations",
-          "interface": "confirmation.Editor",
-          "targets": [
-            "access"
+            "sql"
           ]
         },
         {
           "field": "identity",
           "interface": "identity.Directory",
           "targets": [
-            "identity"
+            "sql"
           ]
         }
       ],
@@ -982,7 +900,7 @@
       "id": "query",
       "kind": "query/tasks",
       "phase": "I→III",
-      "responsibility": "授权任务/会话/历史聚合；步骤审核详情由各步骤 API 暴露，不假定 SQL 提供通用审核服务",
+      "responsibility": "授权任务/commit 时间线/历史聚合；步骤审核详情由各步骤 API 暴露，不假定 SQL 提供通用审核服务",
       "provides": [
         "query.Reader.GetTask / List / Timeline / History"
       ],
@@ -1104,8 +1022,8 @@
       "owner": "无后台"
     },
     {
-      "id": "api-conversation",
-      "kind": "api/conversation",
+      "id": "api-commits",
+      "kind": "api/commit",
       "phase": "I",
       "responsibility": "协议适配，只调用对应命名命令",
       "provides": [
@@ -1114,9 +1032,9 @@
       "deps": [
         {
           "field": "commands",
-          "interface": "conversation.Commands",
+          "interface": "commit.Commands",
           "targets": [
-            "conversation-commands"
+            "commit-commands"
           ]
         }
       ],
@@ -1299,8 +1217,8 @@
           ]
         },
         {
-          "field": "scopes",
-          "interface": "authorization.ScopeReader",
+          "field": "members",
+          "interface": "authorization.Relations",
           "targets": [
             "sql"
           ]
@@ -1348,7 +1266,7 @@
           "targets": [
             "health",
             "api-tasks",
-            "api-conversation",
+            "api-commits",
             "api-execution",
             "api-delivery",
             "api-acceptance",
@@ -1409,13 +1327,6 @@
           ]
         },
         {
-          "field": "changes",
-          "interface": "revision.Writer",
-          "targets": [
-            "sql"
-          ]
-        },
-        {
           "field": "audit",
           "interface": "audit.Writer",
           "targets": [
@@ -1461,7 +1372,7 @@
           "field": "identity",
           "interface": "identity.Directory",
           "targets": [
-            "identity"
+            "sql"
           ]
         },
         {
@@ -1516,7 +1427,7 @@
       "id": "artifacts",
       "kind": "artifact/versioned",
       "phase": "II",
-      "responsibility": "文件元数据、可用版本和引用保留；不反查会话/交付",
+      "responsibility": "文件元数据、可用版本和引用保留；不反查commit 时间线/交付",
       "provides": [
         "artifact.Reader",
         "artifact.Editor.Begin / Complete / MarkDelete",
@@ -1559,13 +1470,6 @@
         {
           "field": "requests",
           "interface": "idempotency.Repository",
-          "targets": [
-            "sql"
-          ]
-        },
-        {
-          "field": "changes",
-          "interface": "revision.Writer",
           "targets": [
             "sql"
           ]
@@ -1721,13 +1625,6 @@
           ]
         },
         {
-          "field": "changes",
-          "interface": "revision.Writer",
-          "targets": [
-            "sql"
-          ]
-        },
-        {
           "field": "audit",
           "interface": "audit.Writer",
           "targets": [
@@ -1818,7 +1715,7 @@
           "field": "decisions",
           "interface": "decision.Reader",
           "targets": [
-            "conversation"
+            "decisions"
           ]
         },
         {
@@ -1941,6 +1838,26 @@
         }
       ],
       "owner": "cmd"
+    },
+    {
+      "id": "decisions",
+      "kind": "decision/facts",
+      "phase": "I",
+      "responsibility": "结构化阻塞问题、答案与解决事实；引用不可变 commit，不把评论自动解释成决定",
+      "provides": [
+        "decision.Reader",
+        "decision.Editor.Open / Answer / Resolve"
+      ],
+      "deps": [
+        {
+          "field": "store",
+          "interface": "decision.Repository",
+          "targets": [
+            "sql"
+          ]
+        }
+      ],
+      "owner": "无后台"
     }
   ]
 }

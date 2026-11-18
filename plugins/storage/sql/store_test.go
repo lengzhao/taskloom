@@ -7,8 +7,10 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/lengzhao/taskloom/cap/fault"
 	"github.com/lengzhao/taskloom/cap/identity"
 	"github.com/lengzhao/taskloom/cap/record"
+	"github.com/lengzhao/taskloom/cap/task"
 	"github.com/lengzhao/taskloom/cap/unitofwork"
 	store "github.com/lengzhao/taskloom/plugins/storage/sql"
 )
@@ -47,7 +49,7 @@ func TestRollbackAcrossRepositoriesAndNestedFailure(t *testing.T) {
 	if !errors.Is(err, unitofwork.ErrRollback) {
 		t.Fatalf("expected rollback-only, got %v", err)
 	}
-	if _, err = s.Resolve(ctx, "t", "u"); !errors.Is(err, unitofwork.ErrNotFound) {
+	if _, err = s.Resolve(ctx, "t", "u"); !errors.Is(err, fault.ErrNotFound) {
 		t.Fatalf("principal leaked: %v", err)
 	}
 	es, err := s.ReadEvents(ctx, "t", 0, 100)
@@ -58,7 +60,7 @@ func TestRollbackAcrossRepositoriesAndNestedFailure(t *testing.T) {
 		t.Fatalf("unowned write: %v", err)
 	}
 }
-func TestRevisionConcurrencyAndDurability(t *testing.T) {
+func TestTaskInsertConcurrencyAndDurability(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "store.db")
 	a := open(t, path)
 	b := open(t, path)
@@ -70,7 +72,7 @@ func TestRevisionConcurrencyAndDurability(t *testing.T) {
 		go func(s *store.Store) {
 			defer wg.Done()
 			results <- s.Do(ctx, func(tx context.Context) error {
-				_, err := s.Advance(tx, "t", "r", 0)
+				err := s.CreateTask(tx, task.Task{Tenant: "t", ID: "r", Version: 1, BasisVersion: 1})
 				if err != nil {
 					return err
 				}
@@ -84,7 +86,7 @@ func TestRevisionConcurrencyAndDurability(t *testing.T) {
 	for err := range results {
 		if err == nil {
 			success++
-		} else if errors.Is(err, unitofwork.ErrConflict) {
+		} else if errors.Is(err, fault.ErrConflict) {
 			conflict++
 		} else {
 			t.Fatal(err)
@@ -140,7 +142,7 @@ func TestConstructionDoesNotOpenDatabase(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = s.Open(context.Background()); !errors.Is(err, unitofwork.ErrUnavailable) {
+	if err = s.Open(context.Background()); !errors.Is(err, fault.ErrUnavailable) {
 		t.Fatalf("open error: %v", err)
 	}
 	if err = s.Close(context.Background()); err != nil {

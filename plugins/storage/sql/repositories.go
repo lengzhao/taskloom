@@ -7,12 +7,10 @@ import (
 	"encoding/hex"
 	"encoding/json"
 
-	"github.com/lengzhao/taskloom/cap/authorization"
+	"github.com/lengzhao/taskloom/cap/fault"
 	"github.com/lengzhao/taskloom/cap/identity"
 	"github.com/lengzhao/taskloom/cap/record"
-	"github.com/lengzhao/taskloom/cap/unitofwork"
 	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
 func key(parts ...string) string {
@@ -62,7 +60,7 @@ func (s *Store) RevokeCredential(ctx context.Context, tenant, id string) error {
 			return r.Error
 		}
 		if r.RowsAffected != 1 {
-			return unitofwork.ErrNotFound
+			return fault.ErrNotFound
 		}
 		return nil
 	})
@@ -74,28 +72,10 @@ func (s *Store) ClaimBootstrap(ctx context.Context) error {
 			return r.Error
 		}
 		if r.RowsAffected != 1 {
-			return unitofwork.ErrConflict
+			return fault.ErrConflict
 		}
 		return nil
 	})
-}
-func grantKey(g authorization.Grant) string {
-	return key(g.Tenant, g.Subject, g.Action, g.Scope.Kind, g.Scope.ID)
-}
-func (s *Store) HasGrant(ctx context.Context, g authorization.Grant) (bool, error) {
-	var count int64
-	err := s.use(ctx, false, func(db *gorm.DB) error {
-		return db.Model(&grantRow{}).Where("row_key = ?", grantKey(g)).Count(&count).Error
-	})
-	return count == 1, err
-}
-func (s *Store) PutGrant(ctx context.Context, g authorization.Grant) error {
-	return s.use(ctx, true, func(db *gorm.DB) error {
-		return db.Clauses(clause.OnConflict{DoNothing: true}).Create(&grantRow{Key: grantKey(g), PrincipalKey: key(g.Tenant, g.Subject), Action: g.Action, Kind: g.Scope.Kind, Resource: g.Scope.ID}).Error
-	})
-}
-func (s *Store) RemoveGrant(ctx context.Context, g authorization.Grant) error {
-	return s.use(ctx, true, func(db *gorm.DB) error { return db.Delete(&grantRow{}, "row_key = ?", grantKey(g)).Error })
 }
 func receiptKey(k record.RequestKey) string { return key(k.Tenant, k.Subject, k.Operation, k.Key) }
 func (s *Store) FindReceipt(ctx context.Context, k record.RequestKey) (record.Receipt, error) {
@@ -144,26 +124,6 @@ func (s *Store) ReadEvents(ctx context.Context, tenant string, after int64, limi
 		out = append(out, record.Event{ID: r.ID, Sequence: r.Sequence, Tenant: r.Tenant, Resource: r.Resource, Kind: r.Kind, Payload: r.Payload})
 	}
 	return out, err
-}
-func (s *Store) Advance(ctx context.Context, tenant, resource string, expected int64) (int64, error) {
-	err := s.use(ctx, true, func(db *gorm.DB) error {
-		k := key(tenant, resource)
-		if expected == 0 {
-			return db.Create(&revisionRow{Key: k, Version: 1}).Error
-		}
-		r := db.Model(&revisionRow{}).Where("row_key = ? AND version = ?", k, expected).Update("version", expected+1)
-		if r.Error != nil {
-			return r.Error
-		}
-		if r.RowsAffected != 1 {
-			return unitofwork.ErrConflict
-		}
-		return nil
-	})
-	if err != nil {
-		return 0, err
-	}
-	return expected + 1, nil
 }
 
 func (s *Store) RevokeSubjectCredentials(ctx context.Context, tenant, subject string) error {

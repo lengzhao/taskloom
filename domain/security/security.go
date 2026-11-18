@@ -9,10 +9,12 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	capcommand "github.com/lengzhao/taskloom/cap/command"
 	"strings"
 	"time"
 
 	"github.com/lengzhao/taskloom/cap/authorization"
+	"github.com/lengzhao/taskloom/cap/fault"
 	"github.com/lengzhao/taskloom/cap/identity"
 	"github.com/lengzhao/taskloom/cap/record"
 	"github.com/lengzhao/taskloom/cap/unitofwork"
@@ -22,12 +24,14 @@ import (
 // Bootstrap needs five independent capabilities; normal administrative commands
 // additionally use the shared command lifecycle. No hidden service container.
 type Deps struct {
-	Commands     *command.Runner          `json:"commands"`
-	Transactions unitofwork.Manager       `json:"transactions"`
-	Identities   identity.Repository      `json:"identities"`
-	Grants       authorization.Repository `json:"grants"`
-	Audit        record.Audits            `json:"audit"`
-	Events       record.Events            `json:"events"`
+	Commands     capcommand.Handler         `json:"commands"`
+	Transactions unitofwork.Manager         `json:"transactions"`
+	Principals   identity.Principals        `json:"principals"`
+	Credentials  identity.Credentials       `json:"credentials"`
+	Bootstrap    identity.BootstrapClaim    `json:"bootstrap"`
+	Members      authorization.MemberWriter `json:"members"`
+	Audit        record.AuditWriter         `json:"audit"`
+	Events       record.EventWriter         `json:"events"`
 }
 type Service struct{ d Deps }
 
@@ -75,19 +79,17 @@ func (s *Service) Bootstrap(ctx context.Context, in BootstrapInput) (Issued, err
 		return Issued{}, err
 	}
 	err = s.d.Transactions.Do(ctx, func(tx context.Context) error {
-		if err := s.d.Identities.ClaimBootstrap(tx); err != nil {
+		if err := s.d.Bootstrap.ClaimBootstrap(tx); err != nil {
 			return err
 		}
-		if err := s.d.Identities.CreatePrincipal(tx, p); err != nil {
+		if err := s.d.Principals.CreatePrincipal(tx, p); err != nil {
 			return err
 		}
-		if err := s.d.Identities.SaveCredential(tx, c); err != nil {
+		if err := s.d.Credentials.SaveCredential(tx, c); err != nil {
 			return err
 		}
-		for _, action := range []string{"identity.create", "identity.issue", "identity.revoke", "access.grant", "access.revoke"} {
-			if err := s.d.Grants.PutGrant(tx, authorization.Grant{Tenant: p.Tenant, Subject: p.ID, Action: action, Scope: authorization.Scope{Kind: "tenant", ID: p.Tenant}}); err != nil {
-				return err
-			}
+		if err := s.d.Members.SetMember(tx, authorization.Member{Tenant: p.Tenant, Subject: p.ID, Role: "admin", Active: true}); err != nil {
+			return err
 		}
 		if err := s.d.Audit.AppendAudit(tx, record.Audit{Tenant: p.Tenant, Subject: in.Operator, Operation: "identity.bootstrap", Resource: p.ID, Outcome: "committed", Reason: in.Reason}); err != nil {
 			return err
@@ -99,8 +101,8 @@ func (s *Service) Bootstrap(ctx context.Context, in BootstrapInput) (Issued, err
 	}
 	return issued, nil
 }
-func request(token, key, op, tenant string) command.Request {
-	return command.Request{Token: token, Key: key, Operation: op, Scope: authorization.Scope{Kind: "tenant", ID: tenant}}
+func request(token, key, op, tenant string) capcommand.Request {
+	return capcommand.Request{Token: token, Key: key, Operation: op, Resource: tenant}
 }
 func (s *Service) Create(ctx context.Context, token, key string, p identity.Principal) error {
 	_, err := command.Run(ctx, s.d.Commands, request(token, key, "identity.create", p.Tenant), p, func(tx context.Context, actor identity.Principal) ([]byte, error) {
@@ -117,12 +119,15 @@ func (s *Service) Create(ctx context.Context, token, key string, p identity.Prin
 			if !valid(p.OwnerID) || p.InstanceID != "" || p.Incarnation != "" || p.CredentialPurpose != "" {
 				return nil, errors.New("agent requires owner; runtime binding belongs to credentials")
 			}
-			owner, err := s.d.Identities.Resolve(tx, p.Tenant, p.OwnerID)
+			owner, err := s.d.Principals.Resolve(tx, p.Tenant, p.OwnerID)
 			if err != nil || owner.Kind != "human" {
 				return nil, authorization.ErrForbidden
 			}
 		}
-		return nil, s.d.Identities.CreatePrincipal(tx, p)
+		if e := s.d.Principals.CreatePrincipal(tx, p); e != nil {
+			return nil, e
+		}
+		return nil, s.d.Members.SetMember(tx, authorization.Member{Tenant: p.Tenant, Subject: p.ID, Role: "member", Active: true})
 	})
 	return err
 }
@@ -134,7 +139,7 @@ func (s *Service) Issue(ctx context.Context, token, key string, in IssueInput) (
 		if p.Tenant != in.Tenant {
 			return nil, authorization.ErrForbidden
 		}
-		subject, err := s.d.Identities.Resolve(tx, in.Tenant, in.Subject)
+		subject, err := s.d.Principals.Resolve(tx, in.Tenant, in.Subject)
 		if err != nil {
 			return nil, err
 		}
@@ -152,7 +157,7 @@ func (s *Service) Issue(ctx context.Context, token, key string, in IssueInput) (
 		if err != nil {
 			return nil, err
 		}
-		if err = s.d.Identities.SaveCredential(tx, c); err != nil {
+		if err = s.d.Credentials.SaveCredential(tx, c); err != nil {
 			return nil, err
 		}
 		issued = out
@@ -164,7 +169,7 @@ func (s *Service) Issue(ctx context.Context, token, key string, in IssueInput) (
 	}
 	if !created {
 		if err = json.Unmarshal(result, &issued.ID); err != nil {
-			return Issued{}, unitofwork.ErrUnavailable
+			return Issued{}, fault.ErrUnavailable
 		}
 	}
 	return issued, nil
@@ -174,58 +179,43 @@ func (s *Service) Revoke(ctx context.Context, token, key string, in RevokeInput)
 		if p.Tenant != in.Tenant {
 			return nil, authorization.ErrForbidden
 		}
-		return nil, s.d.Identities.RevokeCredential(tx, in.Tenant, in.CredentialID)
+		return nil, s.d.Credentials.RevokeCredential(tx, in.Tenant, in.CredentialID)
 	})
 	return err
 }
-func (s *Service) Grant(ctx context.Context, token, key string, g authorization.Grant) error {
-	return s.changeGrant(ctx, token, key, g, false)
-}
-func (s *Service) Ungrant(ctx context.Context, token, key string, g authorization.Grant) error {
-	return s.changeGrant(ctx, token, key, g, true)
-}
-func (s *Service) changeGrant(ctx context.Context, token, key string, g authorization.Grant, remove bool) error {
-	op := "access.grant"
-	if remove {
-		op = "access.revoke"
-	}
-	_, err := command.Run(ctx, s.d.Commands, request(token, key, op, g.Tenant), g, func(tx context.Context, p identity.Principal) ([]byte, error) {
-		if p.Tenant != g.Tenant {
+
+// SetMember changes a concrete tenant relationship. Revocation applies to all
+// task reads/writes/replays without deleting historic authorship or ownership.
+func (s *Service) SetMember(ctx context.Context, token, key string, in authorization.Member) error {
+	_, err := command.Run(ctx, s.d.Commands, request(token, key, "member.set", in.Tenant), in, func(tx context.Context, p identity.Principal) ([]byte, error) {
+		if p.Tenant != in.Tenant || (in.Role != "admin" && in.Role != "member") {
 			return nil, authorization.ErrForbidden
 		}
-		if !valid(g.Subject) || !valid(g.Action) || !valid(g.Scope.ID) {
+		if p.ID == in.Subject && (!in.Active || in.Role != "admin") {
 			return nil, authorization.ErrForbidden
 		}
-		switch g.Scope.Kind {
-		case "tenant":
-			if g.Scope.ID != g.Tenant {
-				return nil, authorization.ErrForbidden
-			}
-		case "task", "project", "instance":
-		default:
+		subject, e := s.d.Principals.Resolve(tx, in.Tenant, in.Subject)
+		if e != nil {
+			return nil, e
+		}
+		if in.Role == "admin" && subject.Kind != "human" {
 			return nil, authorization.ErrForbidden
 		}
-		if _, err := s.d.Identities.Resolve(tx, g.Tenant, g.Subject); err != nil {
-			return nil, err
-		}
-		if remove {
-			return nil, s.d.Grants.RemoveGrant(tx, g)
-		}
-		return nil, s.d.Grants.PutGrant(tx, g)
+		return nil, s.d.Members.SetMember(tx, in)
 	})
 	return err
 }
 
 // Recover is an offline operator capability, never callable by an ordinary API.
 // Every old credential of this human is revoked atomically with issuing the new
-// credential and restoring only the explicit administrative actions.
+// credential and restoring this human’s tenant administrator membership.
 func (s *Service) Recover(ctx context.Context, in BootstrapInput) (Issued, error) {
 	if !valid(in.Tenant) || !valid(in.Subject) || !valid(in.Operator) || !valid(in.Reason) {
 		return Issued{}, errors.New("recovery requires tenant, subject, operator and reason")
 	}
 	var issued Issued
 	err := s.d.Transactions.Do(ctx, func(tx context.Context) error {
-		p, err := s.d.Identities.Resolve(tx, in.Tenant, in.Subject)
+		p, err := s.d.Principals.Resolve(tx, in.Tenant, in.Subject)
 		if err != nil {
 			return err
 		}
@@ -236,16 +226,14 @@ func (s *Service) Recover(ctx context.Context, in BootstrapInput) (Issued, error
 		if err != nil {
 			return err
 		}
-		if err = s.d.Identities.RevokeSubjectCredentials(tx, p.Tenant, p.ID); err != nil {
+		if err = s.d.Credentials.RevokeSubjectCredentials(tx, p.Tenant, p.ID); err != nil {
 			return err
 		}
-		if err = s.d.Identities.SaveCredential(tx, c); err != nil {
+		if err = s.d.Credentials.SaveCredential(tx, c); err != nil {
 			return err
 		}
-		for _, action := range []string{"identity.create", "identity.issue", "identity.revoke", "access.grant", "access.revoke"} {
-			if err = s.d.Grants.PutGrant(tx, authorization.Grant{Tenant: p.Tenant, Subject: p.ID, Action: action, Scope: authorization.Scope{Kind: "tenant", ID: p.Tenant}}); err != nil {
-				return err
-			}
+		if err := s.d.Members.SetMember(tx, authorization.Member{Tenant: p.Tenant, Subject: p.ID, Role: "admin", Active: true}); err != nil {
+			return err
 		}
 		if err = s.d.Audit.AppendAudit(tx, record.Audit{Tenant: p.Tenant, Subject: in.Operator, Operation: "identity.recover", Resource: p.ID, Outcome: "committed", Reason: in.Reason}); err != nil {
 			return err

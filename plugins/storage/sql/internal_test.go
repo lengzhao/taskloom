@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lengzhao/taskloom/cap/fault"
 	"github.com/lengzhao/taskloom/cap/identity"
 	"github.com/lengzhao/taskloom/cap/unitofwork"
 	"github.com/lengzhao/taskloom/domain/security"
@@ -26,7 +27,7 @@ func TestMigrationRejectsDriftAndRecoversAfterRepair(t *testing.T) {
 		t.Fatal(err)
 	}
 	probe, _ := New(c)
-	if err := probe.Open(ctx); !errors.Is(err, unitofwork.ErrUnavailable) {
+	if err := probe.Open(ctx); !errors.Is(err, fault.ErrUnavailable) {
 		t.Fatalf("schema drift accepted: %v", err)
 	}
 	// Removing the incomplete ledger record allows idempotent migration to resume.
@@ -53,7 +54,7 @@ func TestForeignKeysAndCapturedWriteFailurePoisonTransaction(t *testing.T) {
 	if !errors.Is(err, unitofwork.ErrRollback) {
 		t.Fatalf("captured FK failure committed: %v", err)
 	}
-	if _, err = s.Resolve(ctx, "t", "u"); !errors.Is(err, unitofwork.ErrNotFound) {
+	if _, err = s.Resolve(ctx, "t", "u"); !errors.Is(err, fault.ErrNotFound) {
 		t.Fatalf("write leaked: %v", err)
 	}
 }
@@ -140,7 +141,7 @@ func TestCredentialPersistenceContainsOnlyDigestAndExpiryIsChecked(t *testing.T)
 	if err := s.Open(ctx); err != nil {
 		t.Fatal(err)
 	}
-	svc := security.New(security.Deps{Transactions: s, Identities: s, Grants: s, Audit: s, Events: s})
+	svc := security.New(security.Deps{Transactions: s, Principals: s, Credentials: s, Bootstrap: s, Members: s, Audit: s, Events: s})
 	issued, err := svc.Bootstrap(ctx, security.BootstrapInput{Tenant: "t", Subject: "admin", Operator: "op", Reason: "test", ExpiresAt: time.Now().Add(time.Hour)})
 	if err != nil {
 		t.Fatal(err)
@@ -168,5 +169,20 @@ func TestCredentialPersistenceContainsOnlyDigestAndExpiryIsChecked(t *testing.T)
 	}
 	if bytes.Contains(raw, []byte(issued.Secret)) {
 		t.Fatal("plaintext credential persisted")
+	}
+}
+
+func TestFreshSchemaHasRelationshipsAndNoGrantTable(t *testing.T) {
+	s, _ := New(Config{DSN: filepath.Join(t.TempDir(), "db")})
+	ctx := context.Background()
+	if e := s.Open(ctx); e != nil {
+		t.Fatal(e)
+	}
+	defer s.Close(ctx)
+	if s.db.Migrator().HasTable("grant_rows") {
+		t.Fatal("legacy grant schema remains")
+	}
+	if !s.db.Migrator().HasTable(&memberRow{}) || !s.db.Migrator().HasTable(&participantRow{}) {
+		t.Fatal("missing relationship schema")
 	}
 }

@@ -57,11 +57,13 @@ func run(ctx context.Context, args []string, out, errout io.Writer) int {
 		return 1
 	}
 	tx, ok1 := build.GetByID[unitofwork.Manager](graph, *id)
-	identities, ok2 := build.GetByID[identity.Repository](graph, *id)
-	grants, ok3 := build.GetByID[authorization.Repository](graph, *id)
-	audit, ok4 := build.GetByID[record.Audits](graph, *id)
-	events, ok5 := build.GetByID[record.Events](graph, *id)
-	if !ok1 || !ok2 || !ok3 || !ok4 || !ok5 {
+	identities, ok2 := build.GetByID[identity.Principals](graph, *id)
+	members, ok3 := build.GetByID[authorization.MemberWriter](graph, *id)
+	audit, ok4 := build.GetByID[record.AuditWriter](graph, *id)
+	events, ok5 := build.GetByID[record.EventWriter](graph, *id)
+	credentials, ok6 := build.GetByID[identity.Credentials](graph, *id)
+	bootstrap, ok7 := build.GetByID[identity.BootstrapClaim](graph, *id)
+	if !ok1 || !ok2 || !ok3 || !ok4 || !ok5 || !ok6 || !ok7 {
 		fmt.Fprintln(errout, "storage lacks administrative capabilities")
 		return 1
 	}
@@ -83,7 +85,7 @@ func run(ctx context.Context, args []string, out, errout io.Writer) int {
 		return 1
 	}
 	defer resource.Close(context.Background())
-	svc := security.New(security.Deps{Transactions: tx, Identities: identities, Grants: grants, Audit: audit, Events: events})
+	svc := security.New(security.Deps{Transactions: tx, Principals: identities, Credentials: credentials, Bootstrap: bootstrap, Members: members, Audit: audit, Events: events})
 	in := security.BootstrapInput{Tenant: *tenant, Subject: *subject, Operator: *operator, Reason: *reason, ExpiresAt: time.Now().Add(*ttl)}
 	var issued security.Issued
 	if *mode == "bootstrap" {

@@ -8,11 +8,12 @@
 
 ## 身份和权限
 
-首版使用 `identity/local`，唯一 Deps 为 `store: identity.Repository`，由 SQL 提供；公开 Authenticate 与 Directory.Resolve/Validate。租户、人、Agent、运行实例分别有不可变 ID；实例每次启动有独立 incarnation，凭据绑定租户/主体/实例及有效期。负责人关系不隐含代理授权，客户端请求体不能指定可信操作者。
+首版使用 `identity/local`，唯一 Deps 为 `store: identity.CredentialLookup`，由 SQL 提供；公开 Authenticate 与 Directory.Resolve/Validate。租户、人、Agent、运行实例分别有不可变 ID；实例每次启动有独立 incarnation，凭据绑定租户/主体/实例及有效期。负责人关系不隐含代理授权，客户端请求体不能指定可信操作者。
 
 由受控管理员初始化入口建立首个人和显式授权；随后受权管理员登记 Agent/实例、签发可撤销的高熵不透明凭据。秘密只在签发时返回，服务端仅存摘要及元数据，日志不得记录秘密。逐请求核验主体、凭据有效期和撤销状态；正式写入在事务提交前核验本地授权版本并与撤销串行化。已有请求先提交则有效，撤销先提交则拒绝；不承诺追回已发生的外部副作用。实例停止证明凭据与模型可调用的业务凭据分离。
 
-动作采用命名操作，如 task.create、execution.claim、reply.submit、acceptance.record、execution.stopEvidence；资源范围为 tenant/project/task/本人实例，默认拒绝。每个新增 API/命令声明自己的动作及范围解析，由领域命令再次校验；插入 State 不授予任何权限，不增加通用 Execute 或另一个注册容器。未知动作拒绝；动作冲突在模块挂载时失败。M04 的浏览器会话使用服务端可撤销会话、Secure/HttpOnly/SameSite cookie，写操作校验 CSRF；Agent 使用 Authorization 凭据，均进入同一业务命令。
+权限采用有效租户成员、固定管理员/成员角色、任务负责人和参与关系；不提供 Scope/Grant、通配符、可配置动作目录或逐动作授权 API。业务命令按明确规则检查，具体见[成员与任务权限](permissions.md)。浏览器会话仍使用服务端可撤销会话与 HttpOnly/SameSite Cookie，生产 HTTPS 启用 Secure；Agent 归属不继承权限。
+
 
 ## 共用业务协议与 Harness 责任
 
@@ -50,13 +51,13 @@ Enter 幂等键由 EntryID、RoundID 以及步骤实际依赖的依据版本、�
 
 认领命令在同一事务锁定任务协调行、校验 expectedVersion/当前依据、调用 CheckAction(OpenExecution) 重查已到达步骤与当前进入条件，再建立执行代次；不得在事务外检查后直接写入。State 不反向依赖 flow，CheckAction 不变成通用动作执行器。
 
-F02：文件版会话通过材料 ReferenceKeeper 固定 fileId/version，校验租户、任务读写范围、上传完成和保留状态；交付引用同事务固定消息修订及文件版本。链接只存地址，不冒充快照。删除与引用竞争以 SQL 锁/引用记录串行化，S3 删除走 outbox 和补偿；具体实现及真实存储验证归 M07。
+F02：文件版commit 时间线通过材料 ReferenceKeeper 固定 fileId/version，校验租户、任务读写范围、上传完成和保留状态；交付引用同事务固定commit及文件版本。链接只存地址，不冒充快照。删除与引用竞争以 SQL 锁/引用记录串行化，S3 删除走 outbox 和补偿；具体实现及真实存储验证归 M07。
 
 ## 存储、迁移与流程定义
 
 SQL 存储采用 GORM，不绑定 PostgreSQL。本地开发和自动验证默认使用 SQLite；生产按配置选择已适配的 SQL 驱动与 DSN，不修改业务插件。首批适配目标为 SQLite、MySQL、PostgreSQL，其他 GORM 驱动按需接入并验证，不把 ORM 的支持列表直接等同于项目已验证的数据库列表。
 
-GORM 留在 storage/sql 仓储实现内部，cap/domain/State 不暴露 `*gorm.DB` 或方言类型；各模块拥有自身表、仓储和迁移，SQL 插件提供同一 UnitOfWork。跨仓储操作必须使用该事务关联的 GORM 会话，不能退回根连接自动提交。新增步骤可以带自己的仓储，但不能自行提交或使用另一数据库冒充原子性。
+GORM 留在 storage/sql 仓储实现内部，cap/domain/State 不暴露 `*gorm.DB` 或方言类型；各模块拥有自身表、仓储和迁移，SQL 插件提供同一 UnitOfWork。跨仓储操作必须使用该事务关联的 GORM commit 时间线，不能退回根连接自动提交。新增步骤可以带自己的仓储，但不能自行提交或使用另一数据库冒充原子性。
 
 连接配置为 `driver` + `dsn`：本地默认 driver=sqlite；同驱动换实例只改 DSN，跨数据库类型同时修改 driver。原生 DSN 格式不同，不能假设 GORM 自动识别驱动。保持两层配置，不增加连接解析框架或为每个方言新增业务插件；未知/未编入的驱动启动时报错，DSN 不写入日志。具体部署见[配置契约](configuration.md)。
 

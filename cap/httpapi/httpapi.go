@@ -18,6 +18,6 @@ type Module interface{ Routes() []Route }
 // ModuleLifecycle is optional. The HTTP owner opens and closes it exactly once;
 // it must not also be registered as an application Resource.
 type ModuleLifecycle interface {
-	Open(context.Context) error
-	Close(context.Context) error
+	Open(ctx context.Context) error
+	Close(ctx context.Context) error
 }

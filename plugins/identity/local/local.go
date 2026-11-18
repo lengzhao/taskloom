@@ -13,9 +13,9 @@ import (
 )
 
 type Deps struct {
-	Store identity.Repository `json:"store"`
+	Store identity.CredentialLookup `json:"store"`
 }
-type Service struct{ store identity.Repository }
+type Service struct{ store identity.CredentialLookup }
 
 func init() {
 	pluginkit.Register("identity/local", func(_ struct{}, d Deps) (*Service, error) { return New(d) })
@@ -36,7 +36,4 @@ func (s *Service) Authenticate(ctx context.Context, secret string) (identity.Pri
 		return identity.Principal{}, identity.ErrUnauthenticated
 	}
 	return c.Principal, nil
-}
-func (s *Service) Resolve(ctx context.Context, tenant, id string) (identity.Principal, error) {
-	return s.store.Resolve(ctx, tenant, id)
 }

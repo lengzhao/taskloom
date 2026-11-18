@@ -84,6 +84,7 @@ func (s *Query) ReadFacts(ctx context.Context, t task.Task) (api.Snapshot, error
 	} else if !errors.Is(e, fault.ErrNotFound) {
 		return out, e
 	}
+	out.NextActor = s.nextActor(ctx, t, out)
 	return out, nil
 }
 func (s *Query) Read(ctx context.Context, token, taskID string) (api.Snapshot, error) {
@@ -104,13 +105,23 @@ func (s *Query) Read(ctx context.Context, token, taskID string) (api.Snapshot, e
 		if e == nil {
 			out.CanIsolate = s.d.Authorization.Check(tx, p, "execution.isolate", taskID) == nil
 			out.CanManage = s.d.Authorization.Check(tx, p, "task.cancel", taskID) == nil
-			out.CanReview = p.Kind == "human" && p.ID == t.Owner && out.Review != nil && out.Position.Status == flow.PhaseActive
-			out.CanOpen = p.Kind == "agent" && p.CredentialPurpose == "business" && out.AssignedAgent == p.ID && out.SafeToExit && s.canOpen(tx, t)
+			blocked := map[string]string{}
+			why := func(action, code string, relevant bool) bool {
+				if code != "" && relevant {
+					blocked[action] = code
+				}
+				return code == ""
+			}
+			agent := p.Kind == "agent"
+			out.CanReview = why(api.ActionReview, reviewBlock(p, t, out), out.Review != nil)
+			out.CanOpen = why(api.ActionOpen, s.openBlock(tx, p, t, out), agent)
 			if out.Execution != nil {
-				v := out.Execution
 				raw, _ := s.d.Executions.Current(tx, t.Tenant, t.ID)
-				out.CanRenew = raw.Status == "active" && raw.Writable && raw.Subject == p.ID && raw.InstanceID == p.InstanceID && raw.Incarnation == p.Incarnation && p.CredentialPurpose == "business" && out.Position.Status == flow.PhaseActive && raw.RoundID == out.Position.RoundID
-				out.CanSubmit = out.Position.Status == flow.PhaseActive && v.Writable && v.Subject == p.ID && v.InstanceID == p.InstanceID && v.Incarnation == p.Incarnation && v.RoundID == out.Position.RoundID && v.BasisVersion == t.BasisVersion && p.CredentialPurpose == "business" && (v.Safe || v.Status == "ended" || time.Now().Before(v.LeaseUntil))
+				out.CanRenew = why(api.ActionRenew, renewBlock(p, out.Position, raw), agent)
+				out.CanSubmit = why(api.ActionSubmit, submitBlock(p, t, out.Position, *out.Execution), agent)
+			}
+			if len(blocked) > 0 {
+				out.Blocked = blocked
 			}
 		}
 		return e
@@ -118,9 +129,109 @@ func (s *Query) Read(ctx context.Context, token, taskID string) (api.Snapshot, e
 	return out, e
 }
 
-// canOpen reuses the controller's OpenExecution check instead of guessing from
+// Each *Block returns the first reason an action is unavailable, or "" when the
+// matching Can* flag is true, so flags and explanations cannot drift apart.
+func reviewBlock(p identity.Principal, t task.Task, out api.Snapshot) string {
+	switch {
+	case out.Review == nil:
+		return api.ReasonStepNotOpen
+	case out.Position.Status != flow.PhaseActive:
+		return api.ReasonTaskNotActive
+	case p.Kind != "human" || p.ID != t.Owner:
+		return api.ReasonNotReviewer
+	}
+	return ""
+}
+
+// openBlock reuses the controller's OpenExecution check instead of guessing from
 // state names, so the UI flag and the Open command cannot drift apart.
-func (s *Query) canOpen(ctx context.Context, t task.Task) bool {
-	_, e := s.d.Flow.CheckOpen(ctx, t)
-	return e == nil
+func (s *Query) openBlock(ctx context.Context, p identity.Principal, t task.Task, out api.Snapshot) string {
+	switch {
+	case out.Position.Status != flow.PhaseActive:
+		return api.ReasonTaskNotActive
+	case p.Kind != "agent" || p.CredentialPurpose != "business":
+		return api.ReasonCredential
+	case out.AssignedAgent != p.ID:
+		return api.ReasonNotAssigned
+	case !out.SafeToExit && out.Execution != nil && !out.Execution.Safe && out.Execution.RoundID == out.Position.RoundID:
+		return api.ReasonExecutionInProgress
+	case !out.SafeToExit:
+		return api.ReasonPreviousNotStopped
+	}
+	if _, e := s.d.Flow.CheckOpen(ctx, t); e != nil {
+		return api.ReasonStepNotOpen
+	}
+	return ""
+}
+
+func ownExecution(p identity.Principal, v execution.Execution) bool {
+	return v.Subject == p.ID && v.InstanceID == p.InstanceID && v.Incarnation == p.Incarnation
+}
+
+// renewBlock reads the stored execution, not the lease-overlaid view: an
+// expired but still active execution may be renewed by its own instance.
+func renewBlock(p identity.Principal, pos flow.Position, raw execution.Execution) string {
+	switch {
+	case pos.Status != flow.PhaseActive:
+		return api.ReasonTaskNotActive
+	case p.CredentialPurpose != "business":
+		return api.ReasonCredential
+	case !ownExecution(p, raw):
+		return api.ReasonNotYourExecution
+	case raw.Status != "active":
+		return api.ReasonExecutionNotActive
+	case !raw.Writable:
+		return api.ReasonExecutionFenced
+	case raw.RoundID != pos.RoundID:
+		return api.ReasonRoundChanged
+	}
+	return ""
+}
+
+func submitBlock(p identity.Principal, t task.Task, pos flow.Position, v execution.Execution) string {
+	switch {
+	case pos.Status != flow.PhaseActive:
+		return api.ReasonTaskNotActive
+	case p.CredentialPurpose != "business":
+		return api.ReasonCredential
+	case !ownExecution(p, v):
+		return api.ReasonNotYourExecution
+	case !v.Writable:
+		return api.ReasonExecutionFenced
+	case v.RoundID != pos.RoundID:
+		return api.ReasonRoundChanged
+	case v.BasisVersion != t.BasisVersion:
+		return api.ReasonBasisChanged
+	case !(v.Safe || v.Status == "ended" || time.Now().Before(v.LeaseUntil)):
+		return api.ReasonLeaseExpired
+	}
+	return ""
+}
+
+// nextActor is viewer independent and derived only from facts already read.
+func (s *Query) nextActor(ctx context.Context, t task.Task, out api.Snapshot) api.Actor {
+	pos := out.Position
+	switch {
+	case pos.Status != flow.PhaseActive:
+		if !out.SafeToExit {
+			return api.ActorAgent
+		}
+		return ""
+	case out.Review != nil && out.Review.Outcome == "pending":
+		return api.ActorReviewer
+	case out.Execution != nil && !out.Execution.Safe:
+		return api.ActorAgent
+	case out.Submission != nil:
+		return ""
+	}
+	if _, e := s.d.Flow.CheckOpen(ctx, t); e == nil {
+		if out.AssignedAgent == "" {
+			return api.ActorOwner
+		}
+		return api.ActorAgent
+	}
+	if pos.Waiting != "" && s.d.Flow.CheckEdit(ctx, t) == nil {
+		return api.ActorOwner
+	}
+	return ""
 }

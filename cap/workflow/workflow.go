@@ -48,9 +48,46 @@ type Withdraw struct {
 	Basis
 	SubmissionID string
 }
+
+// Actor names who must act next for the task to move. Empty means nothing is
+// pending from a fixed role; Position.Waiting still carries step-specific text.
+type Actor string
+
+const (
+	ActorOwner    Actor = "owner"
+	ActorAgent    Actor = "agent"
+	ActorReviewer Actor = "reviewer"
+)
+
+// Action keys and stable reason codes for Snapshot.Blocked. Codes explain a
+// false Can* flag to the current viewer; commands still re-check on write.
+const (
+	ActionOpen   = "open"
+	ActionRenew  = "renew"
+	ActionSubmit = "submit"
+	ActionReview = "review"
+
+	ReasonTaskNotActive       = "task_not_active"
+	ReasonCredential          = "business_credential_required"
+	ReasonNotAssigned         = "not_assigned"
+	ReasonExecutionInProgress = "execution_in_progress"
+	ReasonPreviousNotStopped  = "previous_execution_not_stopped"
+	ReasonStepNotOpen         = "step_not_open"
+	ReasonNotYourExecution    = "not_your_execution"
+	ReasonExecutionNotActive  = "execution_not_active"
+	ReasonExecutionFenced     = "execution_fenced"
+	ReasonRoundChanged        = "round_changed"
+	ReasonBasisChanged        = "basis_changed"
+	ReasonLeaseExpired        = "lease_expired"
+	ReasonNotReviewer         = "not_reviewer"
+)
+
 type Snapshot struct {
-	ResultCommit                                                   *commit.Commit
-	AssignedAgent                                                  string
+	ResultCommit  *commit.Commit
+	AssignedAgent string
+	NextActor     Actor
+	// Blocked holds, for actions relevant to this viewer, why each is not allowed now.
+	Blocked                                                        map[string]string `json:",omitempty"`
 	CanOpen, CanSubmit, CanReview, CanManage, CanIsolate, CanRenew bool
 	SafeToExit                                                     bool
 	Position                                                       flow.Position

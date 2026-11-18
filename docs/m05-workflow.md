@@ -80,6 +80,8 @@ Submit 原子追加不可变 result commit、登记 Submission，再核对已到
 
 界面支持角色切换、分配、认领/续期/结束、结果区、验收/撤回、取消、退回、重开及管理员恢复表单。结果正文按稳定引用读取，不依赖时间线首屏。网络结果不明确时保留请求幂等键；编辑期间保留输入并提示刷新。查询操作提示不是授权凭证，服务端每次重新检查。
 
+快照另带两项只读说明：`NextActor`（owner/agent/reviewer，空表示没有固定角色需要行动，步骤专有原因仍看 `Position.Waiting`）与 `Blocked`（仅对当前查看者相关的 open/renew/submit/review 给出不可用原因码，例如 not_assigned、execution_in_progress、lease_expired、basis_changed、not_reviewer，完整列表见 `cap/workflow`）。每个 Can* 与其原因码出自同一判断函数，避免提示与开关漂移；原因码只解释当前状态，不是授权凭证，也不替代命令写入时的重查。
+
 ## 状态扩展示例
 
 - `state/factcheck`：纯本地文本规则示例，用配置 requiredText 检查结果，规则摘要纳入定义。它演示本地事实/质量门，不代表模型事实核验服务。

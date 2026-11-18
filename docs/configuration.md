@@ -1,6 +1,6 @@
 # 两层配置与实际可运行图
 
-更新：2026-11-18，M03。根 base/config 只描述已实现能力，目前为 SQL + HTTP health 图；examples/minimal 保留纯 health，没有任务/WS。未来架构只在[设计](architecture.md)描述，不再提供未实现完整业务图。
+根 base/config 只描述已实现能力，当前为 22 实例的 SQLite 工作台与 M05 流程图（见[运行图](m05-dependencies.md)）；examples/minimal 保留纯 health。未来架构只在[设计](architecture.md)描述，不提供未实现的完整业务图。
 
 ## 规则
 
@@ -16,22 +16,14 @@
 
 ## 生命周期与验证
 
-当前 server 管 http，http 管 health；未来 SQL 等资源、worker 和 HTTP 按明确 owner 装配。无后台领域模块不登记为组件，HTTP 连接不重复登记。业务能力实现并通过验证后才加入默认图；不创建占位插件。
+server 以 resources 管 SQL、以 components 管 http，http 管各 API 模块；未来 worker 等按明确 owner 装配。无后台领域模块不登记为组件，HTTP 连接不重复登记。业务能力实现并通过验证后才加入默认图；不创建占位插件。
 
 `sh scripts/check.sh all` 验证当前工程及两层真实构建，`race` 检查竞态；`design` 检查 YAML 图引用/环/可达、文档链接、案例与开发清单依赖。不把静态检查当作 SQL、授权、流程或 Agent 联调通过。
-
-M02 补充：[独立接入与剩余契约](integration-contract.md)明确本地身份、Harness 后续适配、停止证据、状态幂等、操作权限与模块迁移边界。NEX/Buddy 现有接口不作为实现前置条件；尚无业务实现。
 
 ## SQL 连接配置（M03 已实现）
 
 `storage/sql` 内部使用 GORM；连接字段为 `driver` 和 `dsn`。本地默认 `driver: sqlite`、`dsn: taskloom.db`（相对工作目录），生产通过同一 config.yaml 覆盖。切换到 MySQL/PostgreSQL 时同时选择对应 driver 和原生 DSN；同类型数据库只需改 DSN。业务 Deps、接口及状态配置不变，不新增配置层或通用 DSN 猜测规则。携带凭据的 DSN 不进入日志，当前通过受限部署 config 文件提供，不隐式插值环境变量。
 
-根 base/config 已添加 SQL resource，由 server 打开和关闭。identity/access 已注册并验证注入，业务 API 尚未挂载。支持范围以实际编入并验证的驱动为准；数据库切换与已有数据搬迁是两件事。存储一致性与迁移要求见[接入契约](integration-contract.md)。
+SQL resource 由 server 打开和关闭。支持范围以实际编入并验证的驱动为准；数据库切换与已有数据搬迁是两件事。存储一致性与迁移要求见[接入契约](integration-contract.md)。
 
-实际接口、数据库支持与运维边界见[M03 实现](m03-storage.md)。
-
-M04 根图已挂载 workspace/tasks、preparation/1 + ready、身份授权、命令包装及 api/workspace，共 12 实例。origin/localHTTP、Cookie 与生产 HTTPS 配置见[M04 说明](m04-workspace.md)。examples/minimal 仍是三实例 health。
-
-当前权限基线见[成员与任务关系](permissions.md)：移除通用 Scope/Grant 和逐动作授权配置，以有效租户成员、固定角色、负责人及参与关系判断业务资格；保持租户隔离、即时撤销和幂等重放前重新鉴权。不兼容旧权限数据库格式。
-
-M05 已提供本地执行/结果/验收/取消闭环及安全退回/重开，实际接口、配置、证明边界与验证见[M05 说明](m05-workflow.md)。本地测试不代表真实 Agent/进程清理或生产数据库验收，Harness 未在本轮实现。
+实际接口、数据库支持与运维边界见[M03 实现](m03-storage.md)；origin/localHTTP、Cookie 与生产 HTTPS 配置见[M04 说明](m04-workspace.md)。

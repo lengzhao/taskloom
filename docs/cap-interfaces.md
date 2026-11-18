@@ -62,8 +62,6 @@ workspace 不再自行构造第二个 Runner：配置将 commands 指向现有 c
 
 任务依据写入进一步收紧为 BasisChange：只允许目标/标准/标题及 ExpectedVersion，仓储保留负责人、租户和身份不变，并原子推进该任务版本/依据版本；不接受完整 Task 来覆盖无关字段。
 
-M05 已提供本地执行/结果/验收/取消闭环及安全退回/重开，实际接口、配置、证明边界与验证见[M05 说明](m05-workflow.md)。本地测试不代表真实 Agent/进程清理或生产数据库验收，Harness 未在本轮实现。
-
 ## M05 的真实消费者增量
 
 - execution.Reader/Store：执行事实与安全门；delivery.Reader/Store：固定 commit 的候选事实；acceptance.Reader/Records/Actions：状态自有记录与验收动作。

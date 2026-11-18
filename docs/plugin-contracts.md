@@ -1,6 +1,6 @@
 # 插件接口与组合契约
 
-更新：2026-11-18。流程步骤统一为 State；不再并列设计 delivery.Check、review.Coordinator、ReviewPolicy/Evaluator 引擎。以下为目标接口边界，实际 M03 子集见 m03-storage.md，M04 开发中。
+流程步骤统一为 State，不另设 delivery.Check、review.Coordinator 或 ReviewPolicy/Evaluator 引擎。下表为目标接口边界；当前 Go 接口以 [cap 清单](cap-interfaces.md) 为准。
 
 | 插件能力 | 职责与接口 | Deps 方向 |
 | --- | --- | --- |
@@ -31,5 +31,3 @@ E03：新增 API 模块，认证/生命周期和冲突检测统一。
 E04：新增通知渠道，原业务逻辑不改、逐渠道重试。
 
 接口/Deps 清单、结构检查与未闭合边界见[依赖审查](plugin-inventory-review.md)。清单数量不作为拆分目标，超过 5 个依赖按职责和事务边界评审。
-
-当前权限基线见[成员与任务关系](permissions.md)：移除通用 Scope/Grant 和逐动作授权配置，以有效租户成员、固定角色、负责人及参与关系判断业务资格；保持租户隔离、即时撤销和幂等重放前重新鉴权。不兼容旧权限数据库格式。

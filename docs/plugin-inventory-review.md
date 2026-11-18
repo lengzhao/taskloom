@@ -1,6 +1,6 @@
 # 插件清单与依赖审查：流程步骤统一为 State
 
-更新：2026-11-18。本文取代此前 52 节点方案中的通用审核/交付 checks 设计。M05 已有本地业务闭环；完整表仍为跨阶段规划，不代表当前构造签名。当前实际图见 [M05 运行图](m05-dependencies.md)。M03 已注册 SQL/identity/access，实际接口/Deps 子集见 [M03 实现](m03-storage.md)，不能将未来字段当作当前构造参数。实例数量不是简化目标：默认仍为 52 个跨阶段候选，减少的是职责、依赖与并列的扩展机制。事实审核作为新增步骤示例，不默认装配。
+本文是跨阶段规划，不代表当前构造签名；当前实际图见 [M05 运行图](m05-dependencies.md)，实际接口/Deps 以 [cap 清单](cap-interfaces.md) 与 root base 为准，不能将未来字段当作当前构造参数。实例数量不是简化目标：默认仍为 52 个跨阶段候选，减少的是职责、依赖与并列的扩展机制。事实审核作为新增步骤示例，不默认装配。
 
 ## 本轮收敛
 
@@ -71,7 +71,6 @@
 | `server`<br>`server`<br>现有→II | 根资源与组件生命周期，不编排业务<br>`lifecycle.App` | `resources:[]lifecycle.Resource` → sql, objects, flows<br>`components:[]lifecycle.Component` → http, worker, reconciler, artifact-maintenance, reminder, notification-dispatch | 2 / cmd |
 | `decisions`<br>`decision/facts`<br>I | 结构化阻塞问题、答案与解决事实；引用不可变 commit，不把评论自动解释成决定<br>`decision.Reader`<br>`decision.Editor.Open / Answer / Resolve` | `store:decision.Repository` → sql | 1 / 无后台 |
 
-
 ## 新增事实审核步骤示例（不计入默认清单）
 
 `state/fact-review` 提供 State；Deps 为 `tasks:task.Reader → tasks`、`deliveries:delivery.Reader → results`，需要持久审核证据时再注入本步骤的命名 Repository。它检查当前 SubmissionID 对应的事实依据，缺证据返回 wait，不调用原插件的具体实现。可直接读本地可信证据的审核无需新服务/命令；需要新外部数据才增加对应输入能力/API。替换任一 Deps 实现不修改该步骤逻辑。
@@ -126,10 +125,4 @@ flowchart TD
 
 运行 `python3 scripts/check-plugin-inventory.py` 校验清单/文档计数、引用、根可达、DAG、完整图一致及三个故意引入的环；结果在本轮报告记录。新增步骤例子仅设计描述，未真实构建或执行。根 base/config 不变；本次无业务代码改动。
 
-M02 已明确身份、停止证据、F02/F06/F07 及 State 幂等边界，见[接入与剩余契约](integration-contract.md)。本清单仍是设计；仓储/迁移实现归 M03/M07，真实 Harness 适配归 M06。
-
-M03 实际装配：root resources=[sql]、components=[http]；sql 无 Deps，identity 的 store→sql，access 当前仅 store→sql。身份/授权尚无业务 HTTP 消费者，不挂入根默认图。完整未来依赖图保留待实现的成员/确认等能力，不等同于本轮实际图。
-
-M04 实际图已扩为 12 实例，workspace/tasks 的九项 Deps 及单状态准备 flow 与目标图不同，详见[M04 实际清单](m04-workspace.md)。目标图的状态列表/流程目录、decision、执行、验收等仍待后续实现，不将未来配置字段用作当前构造参数。
-
-Cap 收敛：实际 M04 的接口/Deps 以[cap 清单](cap-interfaces.md)与 root base 为准，目标表中未实现模块的 Store 等名字仍是规划描述。去掉各命令通用 revision.Writer 依赖，业务版本由领域事实 CAS；身份插件只提供认证。目标图数量见本轮脚本输出，不沿用历史边数作为现状。
+未实现模块（状态目录、decision、计划、材料等）的 Store 等名字仍是规划描述；仓储/迁移按 M07 等阶段实现，真实 Harness 适配归 M06。

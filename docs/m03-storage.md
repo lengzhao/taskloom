@@ -1,6 +1,6 @@
 # M03：GORM 存储与安全命令基础
 
-本页描述已实现的基础能力。任务、会话、流程、业务 HTTP/WS 和真实 Harness 接入仍未实现。根配置现在打开 SQLite SQL 资源并提供 health；`examples/minimal` 仍是纯 health 三实例图。health 是进程存活，不表示任务系统已就绪。
+本页记录 M03 实现的存储与安全基础；任务、流程与业务 API 由 [M04](m04-workspace.md)/[M05](m05-workflow.md) 在其上实现，Harness 仍未接入。
 
 ## 接口、实现和装配
 

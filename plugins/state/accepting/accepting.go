@@ -29,7 +29,7 @@ func New(_ struct{}, d Deps) (*State, error) {
 }
 func init() { pluginkit.Register("state/accepting", New) }
 func (*State) Describe() flow.Description {
-	return flow.Description{Key: "accepting", Version: "1", Role: "accepting"}
+	return flow.Description{Key: "accepting", Version: "1", Role: flow.RoleAccepting}
 }
 func (*State) CheckEnter(context.Context, flow.Context) (flow.Check, error) {
 	return flow.Check{Status: flow.Allow}, nil

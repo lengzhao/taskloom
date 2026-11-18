@@ -84,3 +84,47 @@ func TestTypedCompletionAndDefinitionFence(t *testing.T) {
 		t.Fatal("invalid result leaked position", e)
 	}
 }
+
+func TestNoopRefreshKeepsRevisionAndStepNeedsReachedEntry(t *testing.T) {
+	ctx := context.Background()
+	db, e := store.New(store.Config{DSN: filepath.Join(t.TempDir(), "db")})
+	if e != nil {
+		t.Fatal(e)
+	}
+	if e = db.Open(ctx); e != nil {
+		t.Fatal(e)
+	}
+	defer db.Close(ctx)
+	controller, e := flow.New(flow.Config{ID: "preparation", Version: "1"}, flow.Deps{Definitions: db, Positions: db, States: []capflow.State{&ready.State{}}})
+	if e != nil {
+		t.Fatal(e)
+	}
+	value := task.Task{Tenant: "t", ID: "a", Version: 1}
+	e = db.Do(ctx, func(tx context.Context) error {
+		if e := db.CreateTask(tx, value); e != nil {
+			return e
+		}
+		first, e := controller.Initialize(tx, value)
+		if e != nil {
+			return e
+		}
+		again, e := controller.Refresh(tx, value)
+		if e != nil {
+			return e
+		}
+		if again.Revision != first.Revision {
+			t.Fatalf("no-op refresh bumped revision %d -> %d", first.Revision, again.Revision)
+		}
+		step, e := controller.Step(tx, value, "ready")
+		if e != nil || step.Position.EntryID != first.EntryID || step.Position.State != "ready" {
+			t.Fatalf("reached step %+v %v", step, e)
+		}
+		if _, e = controller.Step(tx, value, "accepting"); !errors.Is(e, fault.ErrConflict) {
+			t.Fatal("unreached step resolved", e)
+		}
+		return nil
+	})
+	if e != nil {
+		t.Fatal(e)
+	}
+}

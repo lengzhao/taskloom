@@ -48,7 +48,7 @@ Harness 插件负责认证、授权变化流订阅/游标恢复、认领后启�
 
 Enter 幂等键由 EntryID、RoundID 以及步骤实际依赖的依据版本、候选交付修订、策略版本、前序证据版本构成；不要使用 Enter 自己写入后必变的 TaskVersion 造成重复循环。同键重复不得重复记录或 outbox；证据变化产生新记录并保留旧依据。检查只读，Enter 仅本地事务写入。重新提交后，同事务同步已到达步骤的新证据并重查；未来步骤不得提前 Enter，前序失效保留当前位置和等待原因。
 
-认领命令在同一事务锁定任务协调行、校验 expectedVersion/当前依据、调用 CheckAction(OpenExecution) 重查已到达步骤与当前进入条件，再建立执行代次；不得在事务外检查后直接写入。State 不反向依赖 flow，CheckAction 不变成通用动作执行器。
+认领命令在同一事务锁定任务协调行、校验 expectedVersion/当前依据、调用 CheckOpen 重查已到达步骤与当前进入条件，再建立执行代次；不得在事务外检查后直接写入。State 不反向依赖 flow，CheckOpen 不变成通用动作执行器。
 
 F02：文件版commit 时间线通过材料 ReferenceKeeper 固定 fileId/version，校验租户、任务读写范围、上传完成和保留状态；交付引用同事务固定commit及文件版本。链接只存地址，不冒充快照。删除与引用竞争以 SQL 锁/引用记录串行化，S3 删除走 outbox 和补偿；具体实现及真实存储验证归 M07。
 

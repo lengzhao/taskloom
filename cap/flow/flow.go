@@ -7,10 +7,36 @@ import (
 )
 
 type DefinitionRef struct{ ID, Version, Digest string }
+
+// Phase is the task-level lifecycle owned by the flow controller.
+type Phase string
+
+const (
+	PhaseActive    Phase = "active"
+	PhaseCancelled Phase = "cancelled"
+	PhaseCompleted Phase = "completed"
+)
+
+// Role is the fixed contract a State declares to the controller. Only these
+// roles carry controller semantics; any other step leaves Role empty.
+//   - RoleReady must be first in a multi-step flow; task edits are allowed there.
+//   - RoleExecuting is the only step where OpenExecution may be checked.
+//   - RoleCompleted must be last; completing it also requires safe execution exit.
+//   - RoleAccepting marks the human acceptance step (informational).
+type Role string
+
+const (
+	RoleReady     Role = "ready"
+	RoleExecuting Role = "executing"
+	RoleAccepting Role = "accepting"
+	RoleCompleted Role = "completed"
+)
+
 type Entry struct{ Key, ID string }
 type Position struct {
+	// Revision changes only when the stored position actually changes.
 	Revision                                         int64
-	Status                                           string
+	Status                                           Phase
 	Entries                                          []Entry
 	Index                                            int
 	Tenant, TaskID, RoundID, EntryID, State, Waiting string
@@ -26,11 +52,12 @@ type PositionReader interface {
 type PositionStore interface {
 	PositionReader
 	CreatePosition(ctx context.Context, value Position) error
-	SavePosition(ctx context.Context, value Position) error
+	// SavePosition fails with fault.ErrConflict unless the stored revision equals expected.
+	SavePosition(ctx context.Context, value Position, expected int64) error
 }
 type Description struct {
 	Key, Version string
-	Role         string `json:",omitempty"`
+	Role         Role   `json:",omitempty"`
 	Rules        string `json:",omitempty"`
 }
 type Context struct {
@@ -68,4 +95,7 @@ type Controller interface {
 	Initialize(ctx context.Context, value task.Task) (Position, error)
 	Refresh(ctx context.Context, value task.Task) (Position, error)
 	Read(ctx context.Context, tenant, taskID string) (Position, error)
+	// Step returns the State context of an already reached step with this key in
+	// the current active round, so step-owned actions never rebuild positions.
+	Step(ctx context.Context, value task.Task, key string) (Context, error)
 }

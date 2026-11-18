@@ -104,16 +104,23 @@ func (s *Query) Read(ctx context.Context, token, taskID string) (api.Snapshot, e
 		if e == nil {
 			out.CanIsolate = s.d.Authorization.Check(tx, p, "execution.isolate", taskID) == nil
 			out.CanManage = s.d.Authorization.Check(tx, p, "task.cancel", taskID) == nil
-			out.CanReview = p.Kind == "human" && p.ID == t.Owner && out.Review != nil && out.Position.Status == "active"
-			out.CanOpen = p.Kind == "agent" && p.CredentialPurpose == "business" && out.AssignedAgent == p.ID && out.Position.Status == "active" && out.Position.State == "executing" && out.SafeToExit
+			out.CanReview = p.Kind == "human" && p.ID == t.Owner && out.Review != nil && out.Position.Status == flow.PhaseActive
+			out.CanOpen = p.Kind == "agent" && p.CredentialPurpose == "business" && out.AssignedAgent == p.ID && out.SafeToExit && s.canOpen(tx, t)
 			if out.Execution != nil {
 				v := out.Execution
 				raw, _ := s.d.Executions.Current(tx, t.Tenant, t.ID)
-				out.CanRenew = raw.Status == "active" && raw.Writable && raw.Subject == p.ID && raw.InstanceID == p.InstanceID && raw.Incarnation == p.Incarnation && p.CredentialPurpose == "business" && out.Position.Status == "active" && raw.RoundID == out.Position.RoundID
-				out.CanSubmit = out.Position.Status == "active" && v.Writable && v.Subject == p.ID && v.InstanceID == p.InstanceID && v.Incarnation == p.Incarnation && v.RoundID == out.Position.RoundID && v.BasisVersion == t.BasisVersion && p.CredentialPurpose == "business" && (v.Safe || v.Status == "ended" || time.Now().Before(v.LeaseUntil))
+				out.CanRenew = raw.Status == "active" && raw.Writable && raw.Subject == p.ID && raw.InstanceID == p.InstanceID && raw.Incarnation == p.Incarnation && p.CredentialPurpose == "business" && out.Position.Status == flow.PhaseActive && raw.RoundID == out.Position.RoundID
+				out.CanSubmit = out.Position.Status == flow.PhaseActive && v.Writable && v.Subject == p.ID && v.InstanceID == p.InstanceID && v.Incarnation == p.Incarnation && v.RoundID == out.Position.RoundID && v.BasisVersion == t.BasisVersion && p.CredentialPurpose == "business" && (v.Safe || v.Status == "ended" || time.Now().Before(v.LeaseUntil))
 			}
 		}
 		return e
 	})
 	return out, e
+}
+
+// canOpen reuses the controller's OpenExecution check instead of guessing from
+// state names, so the UI flag and the Open command cannot drift apart.
+func (s *Query) canOpen(ctx context.Context, t task.Task) bool {
+	_, e := s.d.Flow.CheckOpen(ctx, t)
+	return e == nil
 }

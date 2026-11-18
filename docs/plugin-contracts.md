@@ -9,7 +9,7 @@
 | decisions | 结构化阻塞问题、回答与解决；Reader/Editor | 自己的仓储；正文引用 CommitID |
 | execution | 分配/代次/保活/停止；Reader/Editor | 自己的仓储 |
 | delivery | 提交登记、按轮次的当前候选；Reader/Register/Withdraw | 自己的仓储，不管理评审 |
-| flow | 顺序推进/轮次/控制、CheckAction、Reader | 状态列表及任务/执行安全能力，不直接读评审表 |
+| flow | 顺序推进/轮次/控制、CheckOpen、Reader | 状态列表及任务/执行安全能力，不直接读评审表 |
 | State | Describe/CheckEnter/Enter/CheckComplete | 所需事实/本步骤记录，不依赖 flow/外部命令 |
 | state/accepting | 人工验收规则、记录与判定；可提供 RecordVerdict | task/delivery/execution/本地可信身份及验收仓储 |
 | state/fact-review | 自定义证据审核，具体规则由此插件实现 | task/delivery/本地证据，按需有自己的记录 |

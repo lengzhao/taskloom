@@ -159,7 +159,7 @@ func (s *Service) active(ctx context.Context, t task.Task, v execution.Execution
 	if e != nil {
 		return e
 	}
-	if pos.Status != "active" || pos.RoundID != v.RoundID || t.BasisVersion != v.BasisVersion || latest.ID != v.ID || !v.Writable {
+	if pos.Status != flow.PhaseActive || pos.RoundID != v.RoundID || t.BasisVersion != v.BasisVersion || latest.ID != v.ID || !v.Writable {
 		return fault.ErrConflict
 	}
 	return nil
@@ -180,7 +180,13 @@ func (s *Service) Renew(ctx context.Context, token, key string, in api.Execution
 		if e = s.d.ExecutionWrites.SaveExecution(tx, v); e != nil {
 			return nil, e
 		}
-		return s.finish(tx, t)
+		// A lease renewal is a heartbeat, not a business change: it must not
+		// re-evaluate the flow, bump its revision or emit a task change.
+		snap, e := s.snapshot(tx, t)
+		if e != nil {
+			return nil, e
+		}
+		return json.Marshal(snap)
 	})
 }
 func (s *Service) End(ctx context.Context, token, key string, in api.ExecutionRef) (api.Snapshot, error) {
@@ -247,21 +253,14 @@ func (s *Service) Review(ctx context.Context, token, key string, in api.Review) 
 		if e != nil {
 			return nil, e
 		}
-		if pos.Status != "active" || s.d.Accepting == nil {
+		if pos.Status != flow.PhaseActive || s.d.Accepting == nil {
 			return nil, fault.ErrConflict
 		}
-		entry := ""
-		for _, v := range pos.Entries {
-			if v.Key == "accepting" {
-				entry = v.ID
-			}
+		step, e := s.d.Flow.Step(tx, t, s.d.Accepting.Describe().Key)
+		if e != nil {
+			return nil, e
 		}
-		if entry == "" {
-			return nil, fault.ErrConflict
-		}
-		pos.EntryID = entry
-		pos.State = "accepting"
-		if e = s.d.Accepting.RecordVerdict(tx, flow.Context{Task: t, Position: pos}, p, in.Verdict); e != nil {
+		if e = s.d.Accepting.RecordVerdict(tx, step, p, in.Verdict); e != nil {
 			return nil, e
 		}
 		return s.finish(tx, t)
@@ -273,7 +272,7 @@ func (s *Service) Withdraw(ctx context.Context, token, key string, in api.Withdr
 		if e != nil {
 			return nil, e
 		}
-		if pos.Status != "active" {
+		if pos.Status != flow.PhaseActive {
 			return nil, fault.ErrConflict
 		}
 		v, e := s.d.Results.CurrentSubmission(tx, t.Tenant, t.ID, pos.RoundID)
@@ -425,7 +424,7 @@ func (s *Service) Assign(ctx context.Context, token, key string, in api.Assignme
 		if e != nil {
 			return nil, e
 		}
-		if pos.Status != "active" {
+		if pos.Status != flow.PhaseActive {
 			return nil, fault.ErrConflict
 		}
 		if _, e = s.d.Flow.CheckOpen(tx, t); e != nil {

@@ -22,5 +22,7 @@ type Verdict struct{ SubmissionID, CommitID, Outcome, Reason string }
 
 // Actions is supplied by the accepting State, never by a parallel review engine.
 type Actions interface {
+	// Describe identifies the reached flow step that owns these actions.
+	Describe() flow.Description
 	RecordVerdict(ctx context.Context, current flow.Context, actor identity.Principal, value Verdict) error
 }

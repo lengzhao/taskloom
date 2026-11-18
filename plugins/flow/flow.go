@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
+
 	"github.com/lengzhao/pluginkit"
 	"github.com/lengzhao/taskloom/cap/execution"
 	"github.com/lengzhao/taskloom/cap/fault"
@@ -47,7 +49,7 @@ func New(c Config, d Deps) (*Controller, error) {
 			return nil, errors.New("invalid state descriptions")
 		}
 		seen[v.Key] = true
-		if v.Role == "completed" {
+		if v.Role == capflow.RoleCompleted {
 			if i != len(d.States)-1 {
 				return nil, errors.New("completed state must be last")
 			}
@@ -55,7 +57,7 @@ func New(c Config, d Deps) (*Controller, error) {
 		}
 		descs = append(descs, v)
 	}
-	if len(d.States) > 1 && (descs[0].Role != "ready" || !terminal || d.Executions == nil) {
+	if len(d.States) > 1 && (descs[0].Role != capflow.RoleReady || !terminal || d.Executions == nil) {
 		return nil, errors.New("workflow requires ready, terminal and execution safety")
 	}
 	var b []byte
@@ -86,7 +88,7 @@ func (c *Controller) safe(ctx context.Context, t task.Task) (bool, error) {
 	return c.d.Executions.SafeToExit(ctx, t.Tenant, t.ID)
 }
 func (c *Controller) Initialize(ctx context.Context, t task.Task) (capflow.Position, error) {
-	p := capflow.Position{Tenant: t.Tenant, TaskID: t.ID, RoundID: id(), EntryID: id(), State: c.d.States[0].Describe().Key, Flow: c.ref, Status: "active"}
+	p := capflow.Position{Tenant: t.Tenant, TaskID: t.ID, RoundID: id(), EntryID: id(), State: c.d.States[0].Describe().Key, Flow: c.ref, Status: capflow.PhaseActive}
 	p.Entries = []capflow.Entry{{Key: p.State, ID: p.EntryID}}
 	if e := c.d.Definitions.EnsureDefinition(ctx, c.ref); e != nil {
 		return p, e
@@ -115,7 +117,7 @@ func (c *Controller) Read(ctx context.Context, tenant, taskID string) (capflow.P
 		p.Entries = []capflow.Entry{{Key: p.State, ID: p.EntryID}}
 	}
 	if p.Status == "" {
-		p.Status = "active"
+		p.Status = capflow.PhaseActive
 	}
 	if p.Index < 0 || p.Index >= len(c.d.States) || len(p.Entries) != p.Index+1 {
 		return p, fault.ErrConflict
@@ -138,11 +140,12 @@ func (c *Controller) Refresh(ctx context.Context, t task.Task) (capflow.Position
 	if e != nil {
 		return p, e
 	}
-	if p.Status == "completed" {
+	if p.Status == capflow.PhaseCompleted {
 		return p, nil
 	}
-	p.Revision++
-	if p.Status == "cancelled" {
+	before := p
+	before.Entries = append([]capflow.Entry(nil), p.Entries...)
+	if p.Status == capflow.PhaseCancelled {
 		safe, e := c.safe(ctx, t)
 		if e != nil {
 			return p, e
@@ -151,7 +154,7 @@ func (c *Controller) Refresh(ctx context.Context, t task.Task) (capflow.Position
 		if !safe {
 			p.Waiting = "已取消；外部工作停止待确认"
 		}
-		return p, c.d.Positions.SavePosition(ctx, p)
+		return c.save(ctx, before, p)
 	}
 	for iteration := 0; iteration < len(c.d.States)+1; iteration++ {
 		// Synchronize every reached step before judging any of them, so a new
@@ -184,7 +187,7 @@ func (c *Controller) Refresh(ctx context.Context, t task.Task) (capflow.Position
 			break
 		}
 		if p.Index == len(c.d.States)-1 {
-			if c.d.States[p.Index].Describe().Role == "completed" {
+			if c.d.States[p.Index].Describe().Role == capflow.RoleCompleted {
 				safe, e := c.safe(ctx, t)
 				if e != nil {
 					return p, e
@@ -194,7 +197,7 @@ func (c *Controller) Refresh(ctx context.Context, t task.Task) (capflow.Position
 					p.Waiting = "等待全部执行安全停止"
 					break
 				}
-				p.Status = "completed"
+				p.Status = capflow.PhaseCompleted
 			}
 			break
 		}
@@ -212,7 +215,7 @@ func (c *Controller) Refresh(ctx context.Context, t task.Task) (capflow.Position
 			p.Waiting = check.Reason
 			break
 		}
-		if c.d.States[next].Describe().Role == "completed" {
+		if c.d.States[next].Describe().Role == capflow.RoleCompleted {
 			safe, e := c.safe(ctx, t)
 			if e != nil {
 				return p, e
@@ -227,14 +230,43 @@ func (c *Controller) Refresh(ctx context.Context, t task.Task) (capflow.Position
 		p.State = p.Entries[next].Key
 		p.EntryID = p.Entries[next].ID
 	}
-	return p, c.d.Positions.SavePosition(ctx, p)
+	return c.save(ctx, before, p)
+}
+
+// save persists p only when it differs from before. A no-op refresh (e.g. after
+// a lease renewal) keeps the revision, so clients' expected versions stay valid.
+func (c *Controller) save(ctx context.Context, before, p capflow.Position) (capflow.Position, error) {
+	if reflect.DeepEqual(before, p) {
+		return before, nil
+	}
+	p.Revision = before.Revision + 1
+	if e := c.d.Positions.SavePosition(ctx, p, before.Revision); e != nil {
+		return before, e
+	}
+	return p, nil
+}
+
+func (c *Controller) Step(ctx context.Context, t task.Task, key string) (capflow.Context, error) {
+	p, e := c.Read(ctx, t.Tenant, t.ID)
+	if e != nil {
+		return capflow.Context{}, e
+	}
+	if p.Status != capflow.PhaseActive {
+		return capflow.Context{}, fault.ErrConflict
+	}
+	for i := range p.Entries {
+		if p.Entries[i].Key == key {
+			return c.stateContext(t, p, i), nil
+		}
+	}
+	return capflow.Context{}, fault.ErrConflict
 }
 func (c *Controller) CheckOpen(ctx context.Context, t task.Task) (capflow.Position, error) {
 	p, e := c.Read(ctx, t.Tenant, t.ID)
 	if e != nil {
 		return p, e
 	}
-	if p.Status != "active" || c.d.States[p.Index].Describe().Role != "executing" {
+	if p.Status != capflow.PhaseActive || c.d.States[p.Index].Describe().Role != capflow.RoleExecuting {
 		return p, fault.ErrConflict
 	}
 	for i := 0; i < p.Index; i++ {
@@ -260,11 +292,11 @@ func (c *Controller) CheckEdit(ctx context.Context, t task.Task) error {
 	if e != nil {
 		return e
 	}
-	if p.Status != "active" {
+	if p.Status != capflow.PhaseActive {
 		return fault.ErrConflict
 	}
 	role := c.d.States[p.Index].Describe().Role
-	if role == "ready" {
+	if role == capflow.RoleReady {
 		safe, e := c.safe(ctx, t)
 		if e != nil {
 			return e
@@ -273,7 +305,7 @@ func (c *Controller) CheckEdit(ctx context.Context, t task.Task) error {
 			return nil
 		}
 	}
-	if role == "executing" && c.d.Executions != nil {
+	if role == capflow.RoleExecuting && c.d.Executions != nil {
 		previous, readErr := c.d.Executions.Current(ctx, t.Tenant, t.ID)
 		e = readErr
 		if e == nil && previous.RoundID != p.RoundID && previous.Safe {
@@ -293,21 +325,21 @@ func (c *Controller) Cancel(ctx context.Context, t task.Task) (capflow.Position,
 	if e != nil {
 		return p, e
 	}
-	if p.Status != "active" {
+	if p.Status != capflow.PhaseActive {
 		return p, fault.ErrConflict
 	}
-	p.Status = "cancelled"
+	before := p
+	p.Status = capflow.PhaseCancelled
 	p.Complete = false
-	p.Revision++
 	p.Waiting = "已取消；外部工作停止待确认"
-	return p, c.d.Positions.SavePosition(ctx, p)
+	return c.save(ctx, before, p)
 }
 func (c *Controller) restart(ctx context.Context, t task.Task, reopen bool) (capflow.Position, error) {
 	p, e := c.Read(ctx, t.Tenant, t.ID)
 	if e != nil {
 		return p, e
 	}
-	if reopen == (p.Status == "active") {
+	if reopen == (p.Status == capflow.PhaseActive) {
 		return p, fault.ErrConflict
 	}
 	safe, e := c.safe(ctx, t)
@@ -317,16 +349,17 @@ func (c *Controller) restart(ctx context.Context, t task.Task, reopen bool) (cap
 	if !safe {
 		return p, fault.ErrConflict
 	}
+	before := p
+	before.Entries = append([]capflow.Entry(nil), p.Entries...)
 	p.RoundID = id()
 	p.EntryID = id()
 	p.State = c.d.States[0].Describe().Key
 	p.Index = 0
 	p.Entries = []capflow.Entry{{Key: p.State, ID: p.EntryID}}
-	p.Status = "active"
+	p.Status = capflow.PhaseActive
 	p.Complete = false
 	p.Waiting = ""
-	p.Revision++
-	if e = c.d.Positions.SavePosition(ctx, p); e != nil {
+	if p, e = c.save(ctx, before, p); e != nil {
 		return p, e
 	}
 	return c.Refresh(ctx, t)
@@ -439,4 +472,12 @@ func (d *Directory) CheckEdit(ctx context.Context, t task.Task) error {
 		return e
 	}
 	return f.CheckEdit(ctx, t)
+}
+
+func (d *Directory) Step(ctx context.Context, t task.Task, key string) (capflow.Context, error) {
+	f, e := d.bound(ctx, t)
+	if e != nil {
+		return capflow.Context{}, e
+	}
+	return f.Step(ctx, t, key)
 }

@@ -23,7 +23,7 @@ func init() {
 	})
 }
 func (*State) Describe() flow.Description {
-	return flow.Description{Key: "completed", Version: "1", Role: "completed"}
+	return flow.Description{Key: "completed", Version: "1", Role: flow.RoleCompleted}
 }
 func (*State) CheckEnter(context.Context, flow.Context) (flow.Check, error) {
 	return flow.Check{Status: flow.Allow}, nil

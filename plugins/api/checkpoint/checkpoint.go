@@ -77,22 +77,14 @@ func (m *Module) serve(w http.ResponseWriter, r *http.Request) {
 		if e != nil {
 			return nil, e
 		}
-		if pos.Status != "active" || pos.RoundID != in.RoundID || pos.Revision != in.ExpectedVersion || t.BasisVersion != in.BasisVersion {
+		if pos.Status != flow.PhaseActive || pos.RoundID != in.RoundID || pos.Revision != in.ExpectedVersion || t.BasisVersion != in.BasisVersion {
 			return nil, fault.ErrConflict
 		}
-		entry := ""
-		for _, v := range pos.Entries {
-			if v.Key == m.d.Step.StepKey() {
-				entry = v.ID
-			}
+		current, e := m.d.Flow.Step(ctx, t, m.d.Step.StepKey())
+		if e != nil {
+			return nil, e
 		}
-		if entry == "" {
-			return nil, fault.ErrConflict
-		}
-		current := pos
-		current.EntryID = entry
-		current.State = m.d.Step.StepKey()
-		if e = m.d.Step.Confirm(ctx, flow.Context{Task: t, Position: current}, p, in.Input); e != nil {
+		if e = m.d.Step.Confirm(ctx, current, p, in.Input); e != nil {
 			return nil, e
 		}
 		pos, e = m.d.Flow.Refresh(ctx, t)

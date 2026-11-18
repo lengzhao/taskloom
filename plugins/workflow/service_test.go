@@ -433,3 +433,40 @@ func TestEndedExecutionCanSubmitButDoesNotProveSafety(t *testing.T) {
 		t.Fatal(e)
 	}
 }
+
+func TestLeaseRenewalKeepsRevisionAndPendingReviewValid(t *testing.T) {
+	f := setup(t, nil)
+	d := f.create(t)
+	s := f.open(t, d)
+	s, e := f.results.Submit(f.ctx, f.agent, "submit", api.Submit{Basis: basis(d, s), ExecutionID: s.Execution.ID, Generation: s.Execution.Generation, Body: "result"})
+	if e != nil {
+		t.Fatal(e)
+	}
+	pending := basis(d, s)
+	submitted := *s.Submission
+	ref := api.ExecutionRef{TaskID: d.Task.ID, ExecutionID: s.Execution.ID, Generation: s.Execution.Generation}
+	feed, _ := build.GetByID[workspace.ChangeFeed](f.graph, "workspace")
+	start, e := feed.Changes(f.ctx, f.owner, "")
+	if e != nil {
+		t.Fatal(e)
+	}
+	for _, key := range []string{"renew-1", "renew-2", "renew-3"} {
+		renewed, e := f.ex.Renew(f.ctx, f.agent, key, ref)
+		if e != nil {
+			t.Fatal(e)
+		}
+		if renewed.Position.Revision != pending.ExpectedVersion {
+			t.Fatalf("heartbeat changed flow revision %d -> %d", pending.ExpectedVersion, renewed.Position.Revision)
+		}
+	}
+	changes, e := feed.Changes(f.ctx, f.owner, start.Cursor)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if len(changes.Changes) != 0 {
+		t.Fatalf("heartbeat emitted task changes %+v", changes.Changes)
+	}
+	if _, e = f.results.Review(f.ctx, f.owner, "approve", api.Review{Basis: pending, Verdict: acceptance.Verdict{SubmissionID: submitted.ID, CommitID: submitted.CommitID, Outcome: "approved"}}); e != nil {
+		t.Fatal("review with pre-heartbeat version rejected", e)
+	}
+}

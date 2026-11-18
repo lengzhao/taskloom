@@ -12,7 +12,7 @@ type State struct{}
 
 func init() { pluginkit.Register("state/ready", func() (*State, error) { return &State{}, nil }) }
 func (*State) Describe() flow.Description {
-	return flow.Description{Key: "ready", Version: "1", Role: "ready"}
+	return flow.Description{Key: "ready", Version: "1", Role: flow.RoleReady}
 }
 func (*State) CheckEnter(context.Context, flow.Context) (flow.Check, error) {
 	return flow.Check{Status: flow.Allow}, nil

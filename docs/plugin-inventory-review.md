@@ -8,7 +8,7 @@
 - review-commands 改为薄 acceptance-commands，仅适配授权/事务和步骤的命名 RecordVerdict，不再实现另一套验收规则。
 - 删除 delivery checks 列表；可定制的交付质量/事实审核改为提交后的状态步骤。登记前的格式、授权、代次和依据验证仍不可省略。
 - flow 不直接依赖 delivery/review/decision，不清空全局结果指针；新 RoundID 自然隔离旧轮候选。任务语义由步骤检查，执行退出仍为固定安全保护。
-- 不增加通用 Eligibility/CompletionCondition/ReviewEvaluator 框架；认领调用流程 CheckAction 重查相应状态，完成检查在完成状态，额外阶段审核用新 State。
+- 不增加通用 Eligibility/CompletionCondition/ReviewEvaluator 框架；认领调用流程 CheckOpen 重查相应状态，完成检查在完成状态，额外阶段审核用新 State。
 
 [JSON 清单](plugin-dependencies.json)是静态审查数据，不是运行配置或第三层配置。[完整 Mermaid](plugin-dependencies.mmd)逐字段对应清单。第一阶段仅使用第一阶段候选，I→II 节点的后续字段需随实现裁剪，不能以图投影冒充 typed 构建。
 
@@ -29,8 +29,8 @@
 | `working`<br>`state/executing`<br>I | 执行阶段进入/结果就绪判断，不启动 Agent<br>`flow.State` | `tasks:task.Reader` → tasks<br>`executions:execution.Reader` → execution<br>`deliveries:delivery.Reader` → results<br>`decisions:decision.Reader` → decisions | 4 / 无后台 |
 | `accepting`<br>`state/accepting`<br>I | 人工验收步骤：本地幂等准备当前评审、校验结论及职责分离，不调用 flow<br>`flow.State.Describe / CheckEnter / Enter / CheckComplete`<br>`acceptance.Actions.RecordVerdict` | `tasks:task.Reader` → tasks<br>`deliveries:delivery.Reader` → results<br>`store:acceptance.Repository` → sql<br>`executions:execution.Reader` → execution<br>`subjects:identity.TrustedLocalReader` → sql | 5 / 无后台 |
 | `completed`<br>`state/completed`<br>I | 完成步骤：当前目标/结果、阻塞及必要子任务检查；不读取通用评审服务<br>`flow.State` | `tasks:task.Reader` → tasks<br>`deliveries:delivery.Reader` → results<br>`decisions:decision.Reader` → decisions | 3 / 无后台 |
-| `flow-standard`<br>`task/flow`<br>I | 流程位置/轮次、有序步骤推进及已到达步骤重查；公共执行安全保护，不理解审核业务<br>`flow.Definition.Describe`<br>`flow.Controller.Initialize / Evaluate / CheckAction / Cancel / Return / Reopen`<br>`flow.Reader.GetPosition` | `store:flow.PositionStore` → sql<br>`tasks:task.Reader` → tasks<br>`executions:execution.Reader` → execution<br>`executionControl:execution.Invalidator` → execution<br>`events:event.Writer` → sql<br>`states:[]flow.State` → ready, working, accepting, completed | 6 / 无后台 |
-| `flows`<br>`flow/directory`<br>I | 按 FlowRef 路由；发布及校验不可变定义；不查任意服务<br>`flow.Router.Initialize / Evaluate / CheckAction / Cancel / Return / Reopen`<br>`flow.DefinitionReader.Get`<br>`flow.PositionReader.Get`<br>`lifecycle.Resource` | `definitions:flow.DefinitionRepository` → sql<br>`flows:[]flow.DefinitionController` → flow-standard | 2 / root Resource；管理定义发布，子 flow 无独立后台 |
+| `flow-standard`<br>`task/flow`<br>I | 流程位置/轮次、有序步骤推进及已到达步骤重查；公共执行安全保护，不理解审核业务<br>`flow.Definition.Describe`<br>`flow.Controller.Initialize / Refresh / CheckOpen / Cancel / Return / Reopen`<br>`flow.Reader.GetPosition` | `store:flow.PositionStore` → sql<br>`tasks:task.Reader` → tasks<br>`executions:execution.Reader` → execution<br>`executionControl:execution.Invalidator` → execution<br>`events:event.Writer` → sql<br>`states:[]flow.State` → ready, working, accepting, completed | 6 / 无后台 |
+| `flows`<br>`flow/directory`<br>I | 按 FlowRef 路由；发布及校验不可变定义；不查任意服务<br>`flow.Router.Initialize / Refresh / CheckOpen / Cancel / Return / Reopen`<br>`flow.DefinitionReader.Get`<br>`flow.PositionReader.Get`<br>`lifecycle.Resource` | `definitions:flow.DefinitionRepository` → sql<br>`flows:[]flow.DefinitionController` → flow-standard | 2 / root Resource；管理定义发布，子 flow 无独立后台 |
 | `task-commands`<br>`commands/tasks`<br>I | 任务创建/修订/负责人、采用新要求；组合初始化而非事实层自行写轮次<br>`task.Commands.Create / Update / AssignOwner / ApplyRequirements` | `tx:persistence.UnitOfWork` → sql<br>`requests:idempotency.Repository` → sql<br>`audit:audit.Writer` → sql<br>`events:event.Writer` → sql<br>`authz:authorization.Authorizer` → access<br>`tasks:task.Editor` → tasks<br>`flows:flow.Router` → flows<br>`identity:identity.Directory` → sql | 8 / 无后台 |
 | `commit-commands`<br>`commands/commit`<br>I | 普通评论/进度的追加和更正引用；正式问题走命名决策动作，不接受任意 kind 执行业务<br>`commit.Commands.Post / Edit`<br>`decision.Commands.Open / Answer / Resolve` | `tx:persistence.UnitOfWork` → sql<br>`requests:idempotency.Repository` → sql<br>`audit:audit.Writer` → sql<br>`events:event.Writer` → sql<br>`authz:authorization.Authorizer` → access<br>`commits:commit.Appender / Reader` → commits<br>`decisions:decision.Editor` → decisions<br>`tasks:task.Reader` → tasks<br>`flows:flow.Router` → flows | 9 / 无后台 |
 | `execution-commands`<br>`commands/execution`<br>I | 执行分配/认领/续用/结束/停止；验证可信实例和阶段<br>`execution.Commands.Assign / Open / Renew / Report / End / RequestStop / AcknowledgeStop / Replace` | `tx:persistence.UnitOfWork` → sql<br>`requests:idempotency.Repository` → sql<br>`audit:audit.Writer` → sql<br>`events:event.Writer` → sql<br>`authz:authorization.Authorizer` → access<br>`executions:execution.Editor` → execution<br>`tasks:task.Reader` → tasks<br>`decisions:decision.Reader` → decisions<br>`flows:flow.Router` → flows<br>`positions:flow.PositionReader` → flows<br>`identity:identity.Directory` → sql | 11 / 无后台 |
@@ -110,9 +110,9 @@ flowchart TD
 
 | 编号 | 当前结论与后续边界 |
 | --- | --- |
-| F01 | 不新增条件引擎；认领经 CheckAction 重查状态条件，完成及计划条件归相应状态；第二阶段接真实 plan.Reader，不用空成功实现。仍需并发测试 |
+| F01 | 不新增条件引擎；认领经 CheckOpen 重查状态条件，完成及计划条件归相应状态；第二阶段接真实 plan.Reader，不用空成功实现。仍需并发测试 |
 | F02 | 附件保留是内容基础能力，不是审核步骤；commit 时间线通过材料 ReferenceKeeper 固定版本。实现文件版commit 时间线适配需明确输入类型/授权，仍待 M07 |
-| F03 | 新审核直接是 State；有外部输入时增加本步骤记录入口后 Evaluate，不额外通用 Coordinator。Enter 幂等和旧回执拒绝待验证 |
+| F03 | 新审核直接是 State；有外部输入时增加本步骤记录入口后 Refresh，不额外通用 Coordinator。Enter 幂等和旧回执拒绝待验证 |
 | F04 | 不建设通用验收策略引擎；不同审核逻辑分别实现步骤。真正多方会签的步骤可后置，不必修改控制器 |
 | F05 | 通知渠道与业务规则仍区分：新规则用新 handler，投递机制不改，不建设通用规则平台 |
 | F06 | 新步骤/动作的授权仍须声明和默认拒绝，状态插入不自动授予写权限；M02 明确最小操作/范围契约 |

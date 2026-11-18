@@ -40,7 +40,7 @@ Task 与 Flow position 分表/接口归属，task/facts 不写状态。正文唯
 
 State 的 Describe、CheckEnter、Enter、CheckComplete 保持不变。检查只读；Enter 在本地事务幂等准备/同步记录，远端请求只写 outbox。当前证据变化重查所有已到达步骤，未来步骤不提前 Enter，前序失效保留位置和原因。Enter 幂等依据为 EntryID 与真实证据组合，不使用自己写入后必变的 TaskVersion。
 
-正常推进保留 RoundID，退回/重开新轮；执行 Generation 单独隔离。认领在同事务通过 CheckAction(OpenExecution) 重查。任务完成必须满足有效候选、当前依据、全部相关步骤及安全退出；普通 commit 或 Hook 不能绕过。取消请求、断线、在线、执行成功均不等同所有外部工作停止。
+正常推进保留 RoundID，退回/重开新轮；执行 Generation 单独隔离。认领在同事务通过 CheckOpen 重查。任务完成必须满足有效候选、当前依据、全部相关步骤及安全退出；普通 commit 或 Hook 不能绕过。取消请求、断线、在线、执行成功均不等同所有外部工作停止。
 
 ## 一致性、权限与变化流
 

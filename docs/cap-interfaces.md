@@ -16,7 +16,7 @@ SQL 可以实现多个能力，但消费者只通过 typed Deps 得到需要的�
 | commit | Log.Append/Get/List | workspace 真实同时追加/回读/分页，保留一个内聚不可变 Log；无编辑、删除或任意 Execute |
 | identity | Authenticator；CredentialLookup；Principals；Credentials；BootstrapClaim | HTTP/命令用认证；认证插件仅拿 CredentialLookup；管理命令用主体与凭据管理；离线初始化使用 BootstrapClaim。目录读取留在 Principals，不再经认证插件转发；没有独立消费者就不预留 Directory |
 | authorization | MemberReader/MemberWriter；Relations（成员+参与只读）；ParticipantWriter；Authorizer | access 只读关系和任务；workspace 只查成员并写参与关系；成员管理只拿 MemberWriter。固定业务规则保留，没有 Scope/Grant |
-| flow | DefinitionRef、DefinitionStore、PositionStore、State、Controller | 版本化定义和可变位置分开；flow controller 显式组合两者；workspace 调用 Controller，不能绕过它写位置 |
+| flow | DefinitionRef、DefinitionStore、PositionStore、State、Controller、Role、Phase | 版本化定义和可变位置分开；flow controller 显式组合两者；workspace 调用 Controller，不能绕过它写位置。SavePosition 带预期版本；Controller.Step 按步骤 key 返回已到达条目的上下文，供步骤自有动作使用 |
 | workspace | Commands、Queries、ChangeFeed | HTTP 各命名写入/快照查询/变化补拉分别依赖能力，可独立替换；仍由同一 workspace 实例提供，无新增容器或服务分发 |
 | security | MemberCommands.SetMember | HTTP 只能管理成员，拿不到凭据或离线初始化能力 |
 | record | Receipts；AuditWriter；EventWriter；EventLog | 命令回执 find/save 总在一起；审计只追加；命令和安全管理只写事件；workspace 同时写/扫描，才使用 EventLog（写入加内部扫描）；没有只读消费者，不预留 EventReader |
@@ -30,7 +30,7 @@ SQL 可以实现多个能力，但消费者只通过 typed Deps 得到需要的�
 
 ## State 的明确结果
 
-Describe 返回 Description{Key,Version,Role,Rules}，当前 flow 的行为摘要来自该稳定描述；改变行为需更换版本，未来新增可配置规则时需把有效规则纳入描述，不声称能自动检测任意代码变化。
+Describe 返回 Description{Key,Version,Role,Rules}，Role 为固定契约（见[状态模块](task-flow-plugins.md#角色契约与版本)）；acceptance.Actions 也暴露 Describe 以便命令定位其步骤；当前 flow 的行为摘要来自该稳定描述；改变行为需更换版本，未来新增可配置规则时需把有效规则纳入描述，不声称能自动检测任意代码变化。
 
 CheckEnter/CheckComplete 返回 Check{Status,Reason}；Status 为 allow/wait/reject。阻塞必须有原因，非法状态拒绝提交。Position.Complete 表示当前步骤检查完成，Position.Status 单独区分 active/completed/cancelled；Waiting 保存阻塞原因。State 接收包含任务与位置的 Context。Enter 保持本地幂等写入/空动作，检查仍只读。
 

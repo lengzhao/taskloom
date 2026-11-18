@@ -59,9 +59,10 @@ func TestNewStatesAndAPIComposeWithoutChangingOriginalConsumers(t *testing.T) {
 	for _, r := range module.Routes() {
 		mux.Handle(r.Method+" /v1"+r.Path, r.Handler)
 	}
+	versionField := "ExpectedRevision"
 	confirm := func(key string, current api.Snapshot, submissionID, commitID string) int {
 		t.Helper()
-		in := map[string]any{"RoundID": current.Position.RoundID, "BasisVersion": d.Task.BasisVersion, "ExpectedVersion": current.Position.Revision, "SubmissionID": submissionID, "CommitID": commitID, "Note": "external input"}
+		in := map[string]any{"RoundID": current.Position.RoundID, "BasisVersion": d.Task.BasisVersion, versionField: current.Position.Revision, "SubmissionID": submissionID, "CommitID": commitID, "Note": "external input"}
 		b, _ := json.Marshal(in)
 		r := httptest.NewRequest("POST", "/v1/tasks/"+d.Task.ID+"/checkpoint", bytes.NewReader(b))
 		r.Header.Set("Authorization", "Bearer "+f.owner)
@@ -71,6 +72,12 @@ func TestNewStatesAndAPIComposeWithoutChangingOriginalConsumers(t *testing.T) {
 		return w.Code
 	}
 	first := *s.Submission
+	// Flow commands pin the flow revision; the task-version field name is not accepted.
+	versionField = "ExpectedVersion"
+	if code := confirm("confirm-legacy-field", s, first.ID, first.CommitID); code != 400 {
+		t.Fatal("legacy ExpectedVersion field accepted", code)
+	}
+	versionField = "ExpectedRevision"
 	if code := confirm("confirm-first", s, first.ID, first.CommitID); code != 200 {
 		t.Fatal("checkpoint API", code)
 	}

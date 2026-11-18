@@ -10,9 +10,11 @@ import (
 	"github.com/lengzhao/taskloom/cap/task"
 )
 
+// Basis pins a flow command to the state the client saw. ExpectedRevision is the
+// flow Position.Revision, distinct from task.Version used by basis edits.
 type Basis struct {
-	TaskID, RoundID               string
-	BasisVersion, ExpectedVersion int64
+	TaskID, RoundID                string
+	BasisVersion, ExpectedRevision int64
 }
 type Assignment struct {
 	Basis

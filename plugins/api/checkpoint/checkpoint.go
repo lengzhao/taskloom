@@ -43,8 +43,8 @@ func (m *Module) Routes() []httpapi.Route {
 }
 
 type input struct {
-	RoundID                       string
-	ExpectedVersion, BasisVersion int64
+	RoundID                        string
+	ExpectedRevision, BasisVersion int64
 	capcheck.Input
 }
 
@@ -77,7 +77,7 @@ func (m *Module) serve(w http.ResponseWriter, r *http.Request) {
 		if e != nil {
 			return nil, e
 		}
-		if pos.Status != flow.PhaseActive || pos.RoundID != in.RoundID || pos.Revision != in.ExpectedVersion || t.BasisVersion != in.BasisVersion {
+		if pos.Status != flow.PhaseActive || pos.RoundID != in.RoundID || pos.Revision != in.ExpectedRevision || t.BasisVersion != in.BasisVersion {
 			return nil, fault.ErrConflict
 		}
 		current, e := m.d.Flow.Step(ctx, t, m.d.Step.StepKey())

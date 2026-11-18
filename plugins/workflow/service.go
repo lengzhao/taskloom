@@ -65,7 +65,7 @@ func (s *Service) load(ctx context.Context, p identity.Principal, in api.Basis) 
 	if e != nil {
 		return t, pos, e
 	}
-	if pos.RoundID != in.RoundID || t.BasisVersion != in.BasisVersion || pos.Revision != in.ExpectedVersion {
+	if pos.RoundID != in.RoundID || t.BasisVersion != in.BasisVersion || pos.Revision != in.ExpectedRevision {
 		return t, pos, fault.ErrConflict
 	}
 	return t, pos, nil

@@ -63,7 +63,7 @@ Submit 原子追加不可变 result commit、登记 Submission，再核对已到
 
 ## API 与薄界面
 
-下列路径均为 `/v1/tasks/{id}` 下的命名操作，业务写需 Idempotency-Key，Cookie/Origin/CSRF 与 M04 一致；Agent 可用同一 API 的 Bearer 认证。Basis 字段为 RoundID、BasisVersion、ExpectedVersion（Position.Revision），界面自动读取，不要求手工填写标识。
+下列路径均为 `/v1/tasks/{id}` 下的命名操作，业务写需 Idempotency-Key，Cookie/Origin/CSRF 与 M04 一致；Agent 可用同一 API 的 Bearer 认证。Basis 字段为 RoundID、BasisVersion、ExpectedRevision（流程 Position.Revision；任务依据修改另用 ExpectedVersion 即 task.Version，旧字段名在流程命令上按未知字段拒绝），界面自动读取，不要求手工填写标识。
 
 | 路径 | 行为 |
 | --- | --- |
@@ -89,7 +89,7 @@ Submit 原子追加不可变 result commit、登记 Submission，再核对已到
 
 扩展命令可提供由服务端代码构造的具名资格检查（command.Request.Authorize），在首次执行和重放前都运行；例如 checkpoint.confirm 复用任务管理角色并由 State 再核对 owner/候选。该回调不来自 HTTP，不是跳过授权开关；未提供时使用固定业务规则，未知操作仍拒绝。无需把新步骤动作登记进全局权限目录。
 
-checkpoint 的写入入口是 POST `/v1/tasks/{id}/checkpoint`，输入 RoundID/BasisVersion/ExpectedVersion/SubmissionID/CommitID/Note；新候选需要新的确认。该示例未默认挂载，专有输入走专有 API，薄界面通用部分只展示其步骤/等待原因。
+checkpoint 的写入入口是 POST `/v1/tasks/{id}/checkpoint`，输入 RoundID/BasisVersion/ExpectedRevision/SubmissionID/CommitID/Note；新候选需要新的确认。该示例未默认挂载，专有输入走专有 API，薄界面通用部分只展示其步骤/等待原因。
 
 ## 验证范围
 

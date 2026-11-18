@@ -18,12 +18,12 @@
 
 通过现有共用 API 模块提供命名操作：读取任务/消息、认领与保活执行、提交回复、请求停止、报告执行结束及停止证据。人和 Agent 使用同一授权模型；没有 agent 专用业务副本。HTTP 路由和完整字段 schema 随 M04/M05 实现固定，不借 M02 声称可联调。
 
-写命令带幂等键和 expectedVersion；涉及工作依据的操作带 roundId、basisVersion，执行写入另带 executionId/generation。租户和 actor 来自认证。相同操作/主体/幂等键与相同载荷返回已保存结果；同键不同载荷冲突。无权限返回 403，版本/代次/幂等冲突返回 409，格式错误返回 400；流程等待是带原因的业务结果，不是技术失败。提交的回复即使后续审核不通过也保留；事务技术失败则回复、交付、审计和事件全部回滚。
+写命令带幂等键和对象版本：修改任务依据带 expectedVersion（任务版本），流程命令带 expectedRevision（流程位置修订号，仅在位置实际变化时递增）；涉及工作依据的操作带 roundId、basisVersion，执行写入另带 executionId/generation。租户和 actor 来自认证。相同操作/主体/幂等键与相同载荷返回已保存结果；同键不同载荷冲突。无权限返回 403，版本/代次/幂等冲突返回 409，格式错误返回 400；流程等待是带原因的业务结果，不是技术失败。提交的回复即使后续审核不通过也保留；事务技术失败则回复、交付、审计和事件全部回滚。
 
 示意请求（非已实现端点）：
 
 ```json
-{"operation":"reply.submit","idempotencyKey":"request-1","expectedVersion":12,"taskId":"task-1","roundId":"round-1","basisVersion":3,"executionId":"exec-1","generation":2,"body":"交付结果"}
+{"operation":"reply.submit","idempotencyKey":"request-1","expectedRevision":12,"taskId":"task-1","roundId":"round-1","basisVersion":3,"executionId":"exec-1","generation":2,"body":"交付结果"}
 ```
 
 Harness 插件负责认证、授权变化流订阅/游标恢复、认领后启动运行、保活、处理新消息和输入、显式提交结果、停止与可靠上报。事件可以重复；Ack 只代表收到，断线和在线均不证明运行状态。重连不能自动新建执行；先读取当前执行、代次及停止请求。快照与游标衔接、过期重同步沿用通信契约；任务系统不负责 steer、上下文或工具清理。
@@ -48,7 +48,7 @@ Harness 插件负责认证、授权变化流订阅/游标恢复、认领后启�
 
 Enter 幂等键由 EntryID、RoundID 以及步骤实际依赖的依据版本、候选交付修订、策略版本、前序证据版本构成；不要使用 Enter 自己写入后必变的 TaskVersion 造成重复循环。同键重复不得重复记录或 outbox；证据变化产生新记录并保留旧依据。检查只读，Enter 仅本地事务写入。重新提交后，同事务同步已到达步骤的新证据并重查；未来步骤不得提前 Enter，前序失效保留当前位置和等待原因。
 
-认领命令在同一事务锁定任务协调行、校验 expectedVersion/当前依据、调用 CheckOpen 重查已到达步骤与当前进入条件，再建立执行代次；不得在事务外检查后直接写入。State 不反向依赖 flow，CheckOpen 不变成通用动作执行器。
+认领命令在同一事务（当前由全局协调行串行化，见核心契约）校验 expectedRevision/当前依据、调用 CheckOpen 重查已到达步骤与当前进入条件，再建立执行代次；不得在事务外检查后直接写入。State 不反向依赖 flow，CheckOpen 不变成通用动作执行器。
 
 F02：文件版commit 时间线通过材料 ReferenceKeeper 固定 fileId/version，校验租户、任务读写范围、上传完成和保留状态；交付引用同事务固定commit及文件版本。链接只存地址，不冒充快照。删除与引用竞争以 SQL 锁/引用记录串行化，S3 删除走 outbox 和补偿；具体实现及真实存储验证归 M07。
 
@@ -68,7 +68,7 @@ M03 用真实 SQLite 文件数据库验证持久化、跨仓储回滚、并发�
 
 F07：迁移由已装配模块显式提交模块 ID、版本、校验和及依赖清单给 SQL 资源 owner；不用目录扫描或新 registry。启动服务前在独占迁移锁下检查顺序、重复、缺失依赖和已应用校验和，失败不开放业务流量；破坏性迁移单独部署，不在构造函数中执行。领域逻辑不能直接访问其他领域表。M03 验证迁移失败恢复及跨仓储回滚，M05 验证新增 State 的独立表与配置装配。
 
-通用 runtime/config 只管两层合并与 PluginKit 构建，不认识 task/catalog、FlowRef 或状态种类。未来流程目录 owner 验证所有挂载定义及内联 State、重复 ID/版本、默认引用及历史定义兼容；同版本内容变化拒绝启动/发布，缺失旧任务定义拒绝服务旧任务并明确故障。未实现的可达 kind 仍由 PluginKit 拒绝。移除旧检查不代表新流程校验已实现。
+通用 runtime/config 只管两层合并与 PluginKit 构建，不认识 task/catalog、FlowRef 或状态种类。流程目录（`flow/directory`）在构建时拒绝重复 ID/版本和缺失的默认定义；定义摘要在新建任务时由 EnsureDefinition 与已登记版本比对，同版本内容变化拒绝建任务，已绑定任务在读取时因摘要不符明确冲突。尚无启动前的全量摘要校验（目标：同版本内容变化拒绝启动/发布，缺失旧任务定义拒绝服务旧任务并明确故障）。未实现的可达 kind 仍由 PluginKit 拒绝。移除旧检查不代表新流程校验已实现。
 
 ## 验收边界
 

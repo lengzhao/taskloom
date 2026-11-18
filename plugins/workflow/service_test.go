@@ -100,7 +100,7 @@ func setup(t *testing.T, override map[string]any) *fixture {
 	return f
 }
 func basis(d workspace.Detail, s api.Snapshot) api.Basis {
-	return api.Basis{TaskID: d.Task.ID, RoundID: s.Position.RoundID, BasisVersion: d.Task.BasisVersion, ExpectedVersion: s.Position.Revision}
+	return api.Basis{TaskID: d.Task.ID, RoundID: s.Position.RoundID, BasisVersion: d.Task.BasisVersion, ExpectedRevision: s.Position.Revision}
 }
 func (f *fixture) create(t *testing.T) workspace.Detail {
 	t.Helper()
@@ -455,8 +455,8 @@ func TestLeaseRenewalKeepsRevisionAndPendingReviewValid(t *testing.T) {
 		if e != nil {
 			t.Fatal(e)
 		}
-		if renewed.Position.Revision != pending.ExpectedVersion {
-			t.Fatalf("heartbeat changed flow revision %d -> %d", pending.ExpectedVersion, renewed.Position.Revision)
+		if renewed.Position.Revision != pending.ExpectedRevision {
+			t.Fatalf("heartbeat changed flow revision %d -> %d", pending.ExpectedRevision, renewed.Position.Revision)
 		}
 	}
 	changes, e := feed.Changes(f.ctx, f.owner, start.Cursor)

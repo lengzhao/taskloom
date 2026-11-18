@@ -1,3 +1,5 @@
+> M01（2026-11-18）：本文为参考调研，不作为当前插件装配要求；涉及旧 core/work、D01/D02、flow 或 T 编号的映射均为历史。实际边界及顺序以[架构](architecture.md)和[清单](../todo.md)为准，代码复用仍为最低优先级。
+
 # Nex V2 能力参考与 Taskloom 查缺补漏
 
 整理日期：2026 年 11 月 17 日。来源：本地 Nex V2 `nex` 仓库，核对提交 `8895931a4`。本次是静态源码阅读，没有运行测试、压测或验证部署行为。
@@ -21,16 +23,16 @@
 | 能力与优点 | Taskloom 对应位置 | 源码入口 | 应检查或适配的边界 | 参考优先级 |
 | --- | --- | --- | --- | --- |
 | 事务内幂等回执：按租户、调用者、操作和键隔离，同键不同内容冲突 | `storage/sql` 的幂等仓储、`runtime/command`、`delivery/reply` 等正式写入 | [idempotency.go](/Users/rock.zheng/code/newnexv2/nex/internal/idempotency/idempotency.go:31) | 保持可信身份、请求摘要和原子提交；重试读取旧回执前仍需处理当前认证与数据读取权限，不能把“旧结果回放”当成撤销权限豁免；不带入多套历史摘要规则 | 高 |
-| 业务事件与状态同事务；企业内序号按提交顺序可见 | `event/sql`、`storage/sql`、所有正式业务写入 | [event.go](/Users/rock.zheng/code/newnexv2/nex/internal/event/event.go:94) | 参考计数行锁解决晚提交事件漏读；它会串行化同企业的编号写入，需按实际负载判断；Taskloom 自定事件类型、版本与负载，不复制 NEX 的 Types/Pushed 全局白名单 | 高 |
-| 通知只唤醒，事实从数据库补读；断线、丢失增量后重同步 | `task/feed`、`transport/websocket`、`event/worker` | [hub.go](/Users/rock.zheng/code/newnexv2/nex/internal/event/hub.go:34)、[stream.go](/Users/rock.zheng/code/newnexv2/nex/internal/conversation/stream.go:3) | NEX 浏览器流是 SSE，不能当成现成通用 WebSocket；保留 Taskloom 当前权限复查、动态订阅、游标过期及 HTTP owner 生命周期，去掉运行队列/执行会话专有类型 | 高 |
+| 业务事件与状态同事务；企业内序号按提交顺序可见 | SQL 事件端口与普通 worker、`storage/sql`、所有正式业务写入 | [event.go](/Users/rock.zheng/code/newnexv2/nex/internal/event/event.go:94) | 参考计数行锁解决晚提交事件漏读；它会串行化同企业的编号写入，需按实际负载判断；Taskloom 自定事件类型、版本与负载，不复制 NEX 的 Types/Pushed 全局白名单 | 高 |
+| 通知只唤醒，事实从数据库补读；断线、丢失增量后重同步 | 内联 task-events 模块的 feed/WS 与普通 worker | [hub.go](/Users/rock.zheng/code/newnexv2/nex/internal/event/hub.go:34)、[stream.go](/Users/rock.zheng/code/newnexv2/nex/internal/conversation/stream.go:3) | NEX 浏览器流是 SSE，不能当成现成通用 WebSocket；保留 Taskloom 当前权限复查、动态订阅、游标过期及 HTTP owner 生命周期，去掉运行队列/执行会话专有类型 | 高 |
 | 可信入口建立不可任意改写的操作者身份 | `identity/existing`、HTTP 认证及全部 API 模块 | [actor.go](/Users/rock.zheng/code/newnexv2/nex/internal/auth/actor.go:5) | 学习身份来源和日志不携带凭据值；不绑定 NEX 数据库凭据结构、ChatAutomon 或飞书登录；人、代理 Buddy、实例分别审计 | 高 |
 | 授权按当前事实判断，写入期间保护授权依据 | `authorization/default`、确认及领域写入 | [policy.go](/Users/rock.zheng/code/newnexv2/nex/internal/policy/policy.go) | 检查撤销与提交竞态、跨任务历史/附件权限、初始化管理员及恢复路径；不引入组织架构、AB Center 和 Automon 特例；不在 SQL 锁内等待远端身份服务 | 高 |
-| 文件版本、大小/摘要校验、重复发布与流式读取 | `artifact/default`、`storage/s3`、会话材料保留引用 | [artifact.go](/Users/rock.zheng/code/newnexv2/nex/internal/artifact/artifact.go:48)、[upload.go](/Users/rock.zheng/code/newnexv2/nex/internal/artifact/upload.go:119) | Taskloom 的文件归材料插件，正文归会话；NEX 的产物库和业务库分离、Run/Attempt 发布模型不能直接带入；核对 SQL/S3 补偿、引用保留与合规删除 | 高 |
-| 对象存储接口、临时文件原子发布及完整性检查 | `blob.Store`、本地测试后端及 `storage/s3` 的行为验证 | [objectstore.go](/Users/rock.zheng/code/newnexv2/nex/internal/artifactstore/objectstore.go:21)、[retention.go](/Users/rock.zheng/code/newnexv2/nex/internal/artifactstore/retention.go) | 已核对具体实现是 FileStore，不据此宣称已有 S3 后端；文件重命名原子性不能直接套到 S3，不能照搬构造时清理的生命周期 | 高 |
-| 验收检查统一覆盖多个入口、代理身份、自验收及子任务未完成 | `acceptance/default`、状态检查子插件、`task/completion-check` | [review.go](/Users/rock.zheng/code/newnexv2/nex/internal/workitem/review.go:12) | 保留 Taskloom flow 唯一状态写入者，验收绑定回复修订；不复制 closeTx 完成入口。明确人的负责人、执行 Buddy、实际操作者的自验收口径 | 高 |
-| 事务、解码、错误和幂等请求头辅助逻辑 | `runtime/*`、SQL 实现及 `api/*` | [pg.go](/Users/rock.zheng/code/newnexv2/nex/internal/pg/pg.go:17)、[httpjson.go](/Users/rock.zheng/code/newnexv2/nex/internal/httpjson/httpjson.go)、[apierror.go](/Users/rock.zheng/code/newnexv2/nex/internal/apierror/apierror.go) | 重点查统一错误与事务回滚；NEX 的死锁重试要求回调只写 SQL，不能重放带 S3/外部副作用的回调。工具函数无需一律配置成插件 | 高 |
-| 阶段稳定标识、顺序、删除在用阶段校验、子任务门槛 | `task/flow`、状态插件、`plan/default` | [stages.go](/Users/rock.zheng/code/newnexv2/nex/internal/workitem/stages.go:16) | NEX 阶段属于项目且子卡无阶段，Taskloom 每个任务绑定版本化状态链；借鉴迁移/在用校验，不照搬看板列与状态映射 | 中 |
-| 卡片详情聚合、可用操作、消息与系统事件时间线、附件入口 | `query/default`、任务/会话 API、后续前端 | [carddetail.go](/Users/rock.zheng/code/newnexv2/nex/internal/workitem/carddetail.go:17)、[CardTimeline.tsx](/Users/rock.zheng/code/newnexv2/nex/web/src/components/board/CardTimeline.tsx)、[cardTimeline.ts](/Users/rock.zheng/code/newnexv2/nex/web/src/lib/cardTimeline.ts) | 借鉴信息组织及禁止操作原因；过滤跨任务数据，不引入 NEX 运行控制、机器目录、Lark 等页面耦合；客户端提示不替代写入检查 | 中 |
+| 文件版本、大小/摘要校验、重复发布与流式读取 | artifacts 材料模块、`storage/blob`、会话材料保留引用 | [artifact.go](/Users/rock.zheng/code/newnexv2/nex/internal/artifact/artifact.go:48)、[upload.go](/Users/rock.zheng/code/newnexv2/nex/internal/artifact/upload.go:119) | Taskloom 的文件归材料插件，正文归会话；NEX 的产物库和业务库分离、Run/Attempt 发布模型不能直接带入；核对 SQL/S3 补偿、引用保留与合规删除 | 高 |
+| 对象存储接口、临时文件原子发布及完整性检查 | `blob.Store`、本地测试后端及 `storage/blob` 的行为验证 | [objectstore.go](/Users/rock.zheng/code/newnexv2/nex/internal/artifactstore/objectstore.go:21)、[retention.go](/Users/rock.zheng/code/newnexv2/nex/internal/artifactstore/retention.go) | 已核对具体实现是 FileStore，不据此宣称已有 S3 后端；文件重命名原子性不能直接套到 S3，不能照搬构造时清理的生命周期 | 高 |
+| 验收检查统一覆盖多个入口、代理身份、自验收及子任务未完成 | 人工验收状态、事实审核状态、完成状态内部检查 | [review.go](/Users/rock.zheng/code/newnexv2/nex/internal/workitem/review.go:12) | 保留 Taskloom flow 唯一状态写入者，验收绑定回复修订；不复制 closeTx 完成入口。明确人的负责人、执行 Buddy、实际操作者的自验收口径 | 高 |
+| 事务、解码、错误和幂等请求头辅助逻辑 | `runtime/*`、SQL 实现及 HTTP 内普通路由包 | [pg.go](/Users/rock.zheng/code/newnexv2/nex/internal/pg/pg.go:17)、[httpjson.go](/Users/rock.zheng/code/newnexv2/nex/internal/httpjson/httpjson.go)、[apierror.go](/Users/rock.zheng/code/newnexv2/nex/internal/apierror/apierror.go) | 重点查统一错误与事务回滚；NEX 的死锁重试要求回调只写 SQL，不能重放带 S3/外部副作用的回调。工具函数无需一律配置成插件 | 高 |
+| 阶段稳定标识、顺序、删除在用阶段校验、子任务门槛 | `task/flow`、状态插件、plan 插件 | [stages.go](/Users/rock.zheng/code/newnexv2/nex/internal/workitem/stages.go:16) | NEX 阶段属于项目且子卡无阶段，Taskloom 每个任务绑定版本化状态链；借鉴迁移/在用校验，不照搬看板列与状态映射 | 中 |
+| 卡片详情聚合、可用操作、消息与系统事件时间线、附件入口 | 内联 api/query、任务/会话 API、后续前端 | [carddetail.go](/Users/rock.zheng/code/newnexv2/nex/internal/workitem/carddetail.go:17)、[CardTimeline.tsx](/Users/rock.zheng/code/newnexv2/nex/web/src/components/board/CardTimeline.tsx)、[cardTimeline.ts](/Users/rock.zheng/code/newnexv2/nex/web/src/lib/cardTimeline.ts) | 借鉴信息组织及禁止操作原因；过滤跨任务数据，不引入 NEX 运行控制、机器目录、Lark 等页面耦合；客户端提示不替代写入检查 | 中 |
 | 新信息继续工作、提及和消息来源影响响应对象 | 已有 Agent 接入端的 steer；任务系统只提供事件与共用 API | [wake.go](/Users/rock.zheng/code/newnexv2/nex/internal/workitem/wake.go:95)、[本地唤醒](/Users/rock.zheng/code/newnexv2/nex/internal/localexec/wake.go:13) | 只吸取去重、自回复抑制、断线及控制信号语义；不把服务端派发/唤醒链引入 Taskloom。机器专用 WebSocket 的认证/Origin 规则不直接用于浏览器共用入口 | 中 |
 
 ## 不照搬的差异，也是检查清单
@@ -45,7 +47,7 @@
 
 ## 应反馈到 Taskloom 的缺口
 
-以下是设计核对项，不表示本记录已完成修复，也不自动创建插件或扩大首版范围：
+以下为原调研核对项，其中 T01—T05 的身份/保护/验收/公共写入及首版归属已在[核心契约](core-contracts.md)和[覆盖表](requirements-coverage.md)收敛；实现、测试及真实联调仍未完成。清单用于后续行为验证，不自动扩展范围：
 
 - 公共写入的幂等仓储与事务归属、认证/授权和回执读取顺序是否明确。
 - 事件提交顺序是否安全；序号锁争用、重试及锁顺序是否可解释。

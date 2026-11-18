@@ -1,23 +1,4 @@
-# L1: daily maintenance entry; overrides matching instances in base.yaml.
-# Example endpoints only. Replace with your deployment values.
-# Secrets come from TASKLOOM_SQL_DSN, TASKLOOM_S3_CREDENTIAL,
-# and TASKLOOM_IDENTITY_CREDENTIAL in the deployment environment.
-objects:
+# L1: override only deployment values. This is not a third configuration layer.
+http:
   config:
-    endpoint: https://s3.example.invalid
-    region: example-region
-    bucket: taskloom
-identity:
-  config:
-    baseURL: https://identity.example.invalid
-websocket:
-  config:
-    allowedOrigins:
-      - https://taskloom.example.invalid
-# Optional overrides:
-# http:
-#   config:
-#     listen: ":8080"
-# sql:
-#   config:
-#     maxOpenConns: 20
+    listen: 127.0.0.1:8080

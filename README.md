@@ -1,41 +1,27 @@
 # Taskloom
 
-面向人与 Buddy 协作的任务系统：把目标、协作过程和结果编织成可追溯的任务网络。
+面向人与 Buddy 协作的任务系统：人负责，Buddy 执行，以可追溯的任务、会话和结果证据组织工作。名称暂定，未核验商标或域名。
 
-Taskloom 为本项目暂定工作名，尚未核验商标、域名或名称唯一性。
+## 范围与架构
 
-## 项目范围
+只建设任务系统，复用已有身份/管理平台及 Agent 运行能力，不建设模型推理、工具执行、上下文组装或远端派发。
 
-本项目只建设任务系统，包括独立任务会话、任务树与依赖、状态、分配与交接、执行记录、版本历史、交付验收和权限审计。
+采用模块化单体：接口清晰的模块通过 Deps 与配置组合，一个 SQL 事务边界。所有流程步骤统一为状态插件，默认状态链由配置组合，任务绑定版本化流程定义与策略；同任务结果/评审/阶段原子更新，跨任务影响与通知异步处理。PluginKit 负责模块装配，新增流程步骤和 API 可通过新实现及配置接入，不修改原消费者逻辑。权威设计见 [M01 架构](docs/architecture.md)。
 
-软件分发与管理平台、Agent 执行层均已有能力，本项目直接复用，通过接口对接。软件包分发、安装升级、设备与实例管理，以及模型推理、工具调用和执行上下文管理，不属于本项目建设范围。Buddy 是接入任务系统的 Agent 执行主体，不是本项目需要重建的执行层。
+## 当前实现
 
-任务系统向人和不同职责的 Buddy 提供统一业务能力，通过操作权限和作用范围控制自主程度。
+已有 Go、PluginKit、真实两层加载、资源生命周期和 HTTP health；没有任务业务实现。根 base/config 现为实际可运行 health 图，与 examples/minimal 一致。health 不表示数据库或任务系统就绪。`sh scripts/check.sh all`、`sh scripts/check.sh race` 为实际检查入口，见[开发说明](docs/development.md)。
 
-## 配置
+## 资料入口
 
-采用 `base.yaml + config.yaml` 两层配置：base 随应用维护完整默认装配与全局值；日常维护者只需修改 config，按实例 ID 覆盖。不同流程示例位于 `examples/flows/`，作为 config 编辑片段使用。
+- [核心业务约束与 C01—C18](docs/core-contracts.md)
+- [状态模块与流程控制](docs/task-flow-plugins.md)与[回复交付](docs/reply-delivery.md)
+- [模块/插件边界](docs/plugin-contracts.md)与[功能模块](docs/task-system-modules.md)
+- [共用 API 与变化流](docs/shared-api-and-realtime.md)
+- [产品需求](docs/product-requirements.md)与[阶段覆盖](docs/requirements-coverage.md)
+- [两层配置](docs/configuration.md)与[开发清单](todo.md)
+- [外部参考](docs/open-source-references.md)与[Nex V2 参考](docs/nex-v2-references.md)
 
-## 开发清单
+第一阶段先交付薄界面与真实 Buddy 文本闭环，第二阶段文件/任务树协作，第三阶段历史恢复与治理。下一步 M02 核验真实外部边界；本次重设计未实现业务。D01/D02 为历史方案；M01 已按“插件即接口清晰、Deps 配置组合的模块”修订，不再限制业务模块只能代码装配。
 
-开发顺序、依赖和验收条件见 [todo.md](todo.md)。当前尚无业务实现，先收敛关键契约，再打通最小闭环。
-
-## 文档
-
-- [产品需求草案](docs/product-requirements.md)
-- [任务系统模块划分与功能参考](docs/task-system-modules.md)
-- [插件能力、Config 与 Deps 草案](docs/plugin-contracts.md)
-- [默认交付：Agent 结果回复](docs/reply-delivery.md)
-- [任务流转：状态子插件列表与 Hook](docs/task-flow-plugins.md)
-- [共用业务 API、WebSocket 与 Agent steer](docs/shared-api-and-realtime.md)
-- [两层配置说明](docs/configuration.md)
-- [base：完整默认装配](base.yaml)
-- [config：日常部署覆盖](config.yaml)
-- [项目调研：设计优点与查缺补漏](docs/open-source-references.md)
-- [Nex V2 能力对照与源码入口](docs/nex-v2-references.md)
-
-当前处于需求与设计阶段，尚无实现代码。需求文档中的建议与待决策项不代表最终设计。
-
-## 名称
-
-Task 表示任务，loom 表示织机，对应将任务、参与者与过程连接成完整工作网络的产品定位。
+具体插件清单、各接口/Deps、依赖图及尚未闭合的扩展点见[插件依赖审查](docs/plugin-inventory-review.md)；这是设计基线，非已实现业务图。

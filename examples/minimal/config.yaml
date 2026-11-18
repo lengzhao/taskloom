@@ -1,0 +1,4 @@
+# L1: override only deployment values. This is not a third configuration layer.
+http:
+  config:
+    listen: 127.0.0.1:8080

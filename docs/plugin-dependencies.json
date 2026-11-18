@@ -1,0 +1,1938 @@
+{
+  "status": "design-audit-proposal-not-runtime-config",
+  "date": "2026-11-18",
+  "scope": "state-step design baseline; default human acceptance owns its records; additional fact-review is an extension example, not enabled",
+  "nodes": [
+    {
+      "id": "sql",
+      "kind": "storage/sql",
+      "phase": "I",
+      "responsibility": "SQL 连接、迁移及各领域独立仓储实现；不含业务判断",
+      "provides": [
+        "lifecycle.Resource",
+        "各领域 Repository",
+        "UnitOfWork / Idempotency / Revision / Audit / Event / Cursor"
+      ],
+      "deps": [],
+      "owner": "root Resource"
+    },
+    {
+      "id": "identity",
+      "kind": "identity/existing",
+      "phase": "I",
+      "responsibility": "认证及可信人/Buddy/实例目录；远端读取在事务外",
+      "provides": [
+        "identity.Authenticator.Authenticate",
+        "identity.Directory.Resolve / Validate"
+      ],
+      "deps": [],
+      "owner": "无后台"
+    },
+    {
+      "id": "access",
+      "kind": "access/default",
+      "phase": "I→II",
+      "responsibility": "当前作用域授权；第二阶段精确确认事实与消费",
+      "provides": [
+        "authorization.Authorizer.Check / CheckBatch",
+        "grant.Editor.Grant / Revoke",
+        "confirmation.Propose / Confirm / Consume"
+      ],
+      "deps": [
+        {
+          "field": "grants",
+          "interface": "grant.Repository",
+          "targets": [
+            "sql"
+          ]
+        },
+        {
+          "field": "scopes",
+          "interface": "authorization.ScopeReader",
+          "targets": [
+            "sql"
+          ]
+        },
+        {
+          "field": "confirmations",
+          "interface": "confirmation.Repository",
+          "targets": [
+            "sql"
+          ]
+        },
+        {
+          "field": "identity",
+          "interface": "identity.Directory",
+          "targets": [
+            "identity"
+          ]
+        }
+      ],
+      "owner": "无后台"
+    },
+    {
+      "id": "tasks",
+      "kind": "task/facts",
+      "phase": "I",
+      "responsibility": "目标、负责人、依据、项目与验收人策略；不写轮次/阶段",
+      "provides": [
+        "task.Reader.Get / List / GetPolicy",
+        "task.Editor.Create / UpdateDetails / AssignOwner / SetPolicy",
+        "project.Reader / Editor"
+      ],
+      "deps": [
+        {
+          "field": "tasks",
+          "interface": "task.Repository",
+          "targets": [
+            "sql"
+          ]
+        },
+        {
+          "field": "projects",
+          "interface": "project.Repository",
+          "targets": [
+            "sql"
+          ]
+        },
+        {
+          "field": "policies",
+          "interface": "task.PolicyRepository",
+          "targets": [
+            "sql"
+          ]
+        }
+      ],
+      "owner": "无后台"
+    },
+    {
+      "id": "conversation",
+      "kind": "conversation/versioned",
+      "phase": "I",
+      "responsibility": "消息修订、阻塞问题及精确回复引用；文本版明确拒绝附件",
+      "provides": [
+        "conversation.Reader.GetRevision / List",
+        "conversation.Editor.Append / Edit",
+        "conversation.ResultReplies.AppendResultReply / PinRevision",
+        "decision.Reader / Editor"
+      ],
+      "deps": [
+        {
+          "field": "messages",
+          "interface": "conversation.Repository",
+          "targets": [
+            "sql"
+          ]
+        },
+        {
+          "field": "decisions",
+          "interface": "decision.Repository",
+          "targets": [
+            "sql"
+          ]
+        }
+      ],
+      "owner": "无后台"
+    },
+    {
+      "id": "execution",
+      "kind": "execution/facts",
+      "phase": "I",
+      "responsibility": "分配/认领/代次/保活/结束/停止事实与退出判断",
+      "provides": [
+        "execution.Reader.GetCurrent / CheckExit",
+        "execution.Editor.Assign / Open / Renew / End / RequestStop / AcknowledgeStop / Invalidate"
+      ],
+      "deps": [
+        {
+          "field": "store",
+          "interface": "execution.Repository",
+          "targets": [
+            "sql"
+          ]
+        }
+      ],
+      "owner": "无后台"
+    },
+    {
+      "id": "results",
+      "kind": "delivery/reply",
+      "phase": "I",
+      "responsibility": "回复交付登记与按轮次的当前候选；不管理验收记录",
+      "provides": [
+        "delivery.Reader.GetCurrent / GetSubmission",
+        "delivery.Editor.Register / Withdraw / InvalidateCandidate"
+      ],
+      "deps": [
+        {
+          "field": "submissions",
+          "interface": "delivery.Repository",
+          "targets": [
+            "sql"
+          ]
+        }
+      ],
+      "owner": "无后台"
+    },
+    {
+      "id": "ready",
+      "kind": "state/ready",
+      "phase": "I",
+      "responsibility": "首状态进入及就绪检查；业务条件读取由调用证据和本地接口组成",
+      "provides": [
+        "flow.State.Key / Describe / CheckEnter / Enter / CheckComplete"
+      ],
+      "deps": [
+        {
+          "field": "tasks",
+          "interface": "task.Reader",
+          "targets": [
+            "tasks"
+          ]
+        },
+        {
+          "field": "decisions",
+          "interface": "decision.Reader",
+          "targets": [
+            "conversation"
+          ]
+        }
+      ],
+      "owner": "无后台"
+    },
+    {
+      "id": "working",
+      "kind": "state/executing",
+      "phase": "I",
+      "responsibility": "执行阶段进入/结果就绪判断，不启动 Agent",
+      "provides": [
+        "flow.State"
+      ],
+      "deps": [
+        {
+          "field": "tasks",
+          "interface": "task.Reader",
+          "targets": [
+            "tasks"
+          ]
+        },
+        {
+          "field": "executions",
+          "interface": "execution.Reader",
+          "targets": [
+            "execution"
+          ]
+        },
+        {
+          "field": "deliveries",
+          "interface": "delivery.Reader",
+          "targets": [
+            "results"
+          ]
+        },
+        {
+          "field": "decisions",
+          "interface": "decision.Reader",
+          "targets": [
+            "conversation"
+          ]
+        }
+      ],
+      "owner": "无后台"
+    },
+    {
+      "id": "accepting",
+      "kind": "state/accepting",
+      "phase": "I",
+      "responsibility": "人工验收步骤：本地幂等准备当前评审、校验结论及职责分离，不调用 flow",
+      "provides": [
+        "flow.State.Describe / CheckEnter / Enter / CheckComplete",
+        "acceptance.Actions.RecordVerdict"
+      ],
+      "deps": [
+        {
+          "field": "tasks",
+          "interface": "task.Reader",
+          "targets": [
+            "tasks"
+          ]
+        },
+        {
+          "field": "deliveries",
+          "interface": "delivery.Reader",
+          "targets": [
+            "results"
+          ]
+        },
+        {
+          "field": "store",
+          "interface": "acceptance.Repository",
+          "targets": [
+            "sql"
+          ]
+        },
+        {
+          "field": "executions",
+          "interface": "execution.Reader",
+          "targets": [
+            "execution"
+          ]
+        },
+        {
+          "field": "subjects",
+          "interface": "identity.TrustedLocalReader",
+          "targets": [
+            "sql"
+          ]
+        }
+      ],
+      "owner": "无后台"
+    },
+    {
+      "id": "completed",
+      "kind": "state/completed",
+      "phase": "I",
+      "responsibility": "完成步骤：当前目标/结果、阻塞及必要子任务检查；不读取通用评审服务",
+      "provides": [
+        "flow.State"
+      ],
+      "deps": [
+        {
+          "field": "tasks",
+          "interface": "task.Reader",
+          "targets": [
+            "tasks"
+          ]
+        },
+        {
+          "field": "deliveries",
+          "interface": "delivery.Reader",
+          "targets": [
+            "results"
+          ]
+        },
+        {
+          "field": "decisions",
+          "interface": "decision.Reader",
+          "targets": [
+            "conversation"
+          ]
+        }
+      ],
+      "owner": "无后台"
+    },
+    {
+      "id": "flow-standard",
+      "kind": "task/flow",
+      "phase": "I",
+      "responsibility": "流程位置/轮次、有序步骤推进及已到达步骤重查；公共执行安全保护，不理解审核业务",
+      "provides": [
+        "flow.Definition.Describe",
+        "flow.Controller.Initialize / Evaluate / CheckAction / Cancel / Return / Reopen",
+        "flow.Reader.GetPosition"
+      ],
+      "deps": [
+        {
+          "field": "store",
+          "interface": "flow.PositionRepository",
+          "targets": [
+            "sql"
+          ]
+        },
+        {
+          "field": "tasks",
+          "interface": "task.Reader",
+          "targets": [
+            "tasks"
+          ]
+        },
+        {
+          "field": "executions",
+          "interface": "execution.Reader",
+          "targets": [
+            "execution"
+          ]
+        },
+        {
+          "field": "executionControl",
+          "interface": "execution.Invalidator",
+          "targets": [
+            "execution"
+          ]
+        },
+        {
+          "field": "events",
+          "interface": "event.Writer",
+          "targets": [
+            "sql"
+          ]
+        },
+        {
+          "field": "states",
+          "interface": "[]flow.State",
+          "targets": [
+            "ready",
+            "working",
+            "accepting",
+            "completed"
+          ]
+        }
+      ],
+      "owner": "无后台"
+    },
+    {
+      "id": "flows",
+      "kind": "flow/directory",
+      "phase": "I",
+      "responsibility": "按 FlowRef 路由；发布及校验不可变定义；不查任意服务",
+      "provides": [
+        "flow.Router.Initialize / Evaluate / CheckAction / Cancel / Return / Reopen",
+        "flow.DefinitionReader.Get",
+        "flow.PositionReader.Get",
+        "lifecycle.Resource"
+      ],
+      "deps": [
+        {
+          "field": "definitions",
+          "interface": "flow.DefinitionRepository",
+          "targets": [
+            "sql"
+          ]
+        },
+        {
+          "field": "flows",
+          "interface": "[]flow.DefinitionController",
+          "targets": [
+            "flow-standard"
+          ]
+        }
+      ],
+      "owner": "root Resource；管理定义发布，子 flow 无独立后台"
+    },
+    {
+      "id": "task-commands",
+      "kind": "commands/tasks",
+      "phase": "I",
+      "responsibility": "任务创建/修订/负责人、采用新要求；组合初始化而非事实层自行写轮次",
+      "provides": [
+        "task.Commands.Create / Update / AssignOwner / ApplyRequirements"
+      ],
+      "deps": [
+        {
+          "field": "tx",
+          "interface": "persistence.UnitOfWork",
+          "targets": [
+            "sql"
+          ]
+        },
+        {
+          "field": "requests",
+          "interface": "idempotency.Repository",
+          "targets": [
+            "sql"
+          ]
+        },
+        {
+          "field": "changes",
+          "interface": "revision.Writer",
+          "targets": [
+            "sql"
+          ]
+        },
+        {
+          "field": "audit",
+          "interface": "audit.Writer",
+          "targets": [
+            "sql"
+          ]
+        },
+        {
+          "field": "events",
+          "interface": "event.Writer",
+          "targets": [
+            "sql"
+          ]
+        },
+        {
+          "field": "authz",
+          "interface": "authorization.Authorizer",
+          "targets": [
+            "access"
+          ]
+        },
+        {
+          "field": "tasks",
+          "interface": "task.Editor",
+          "targets": [
+            "tasks"
+          ]
+        },
+        {
+          "field": "flows",
+          "interface": "flow.Router",
+          "targets": [
+            "flows"
+          ]
+        },
+        {
+          "field": "identity",
+          "interface": "identity.Directory",
+          "targets": [
+            "identity"
+          ]
+        }
+      ],
+      "owner": "无后台"
+    },
+    {
+      "id": "conversation-commands",
+      "kind": "commands/conversation",
+      "phase": "I",
+      "responsibility": "发消息、编辑、阻塞问答；解决后同步核对",
+      "provides": [
+        "conversation.Commands.Post / Edit",
+        "decision.Commands.Open / Answer / Resolve"
+      ],
+      "deps": [
+        {
+          "field": "tx",
+          "interface": "persistence.UnitOfWork",
+          "targets": [
+            "sql"
+          ]
+        },
+        {
+          "field": "requests",
+          "interface": "idempotency.Repository",
+          "targets": [
+            "sql"
+          ]
+        },
+        {
+          "field": "changes",
+          "interface": "revision.Writer",
+          "targets": [
+            "sql"
+          ]
+        },
+        {
+          "field": "audit",
+          "interface": "audit.Writer",
+          "targets": [
+            "sql"
+          ]
+        },
+        {
+          "field": "events",
+          "interface": "event.Writer",
+          "targets": [
+            "sql"
+          ]
+        },
+        {
+          "field": "authz",
+          "interface": "authorization.Authorizer",
+          "targets": [
+            "access"
+          ]
+        },
+        {
+          "field": "messages",
+          "interface": "conversation.Editor",
+          "targets": [
+            "conversation"
+          ]
+        },
+        {
+          "field": "decisions",
+          "interface": "decision.Editor",
+          "targets": [
+            "conversation"
+          ]
+        },
+        {
+          "field": "tasks",
+          "interface": "task.Reader",
+          "targets": [
+            "tasks"
+          ]
+        },
+        {
+          "field": "flows",
+          "interface": "flow.Router",
+          "targets": [
+            "flows"
+          ]
+        }
+      ],
+      "owner": "无后台"
+    },
+    {
+      "id": "execution-commands",
+      "kind": "commands/execution",
+      "phase": "I",
+      "responsibility": "执行分配/认领/续用/结束/停止；验证可信实例和阶段",
+      "provides": [
+        "execution.Commands.Assign / Open / Renew / Report / End / RequestStop / AcknowledgeStop / Replace"
+      ],
+      "deps": [
+        {
+          "field": "tx",
+          "interface": "persistence.UnitOfWork",
+          "targets": [
+            "sql"
+          ]
+        },
+        {
+          "field": "requests",
+          "interface": "idempotency.Repository",
+          "targets": [
+            "sql"
+          ]
+        },
+        {
+          "field": "changes",
+          "interface": "revision.Writer",
+          "targets": [
+            "sql"
+          ]
+        },
+        {
+          "field": "audit",
+          "interface": "audit.Writer",
+          "targets": [
+            "sql"
+          ]
+        },
+        {
+          "field": "events",
+          "interface": "event.Writer",
+          "targets": [
+            "sql"
+          ]
+        },
+        {
+          "field": "authz",
+          "interface": "authorization.Authorizer",
+          "targets": [
+            "access"
+          ]
+        },
+        {
+          "field": "executions",
+          "interface": "execution.Editor",
+          "targets": [
+            "execution"
+          ]
+        },
+        {
+          "field": "tasks",
+          "interface": "task.Reader",
+          "targets": [
+            "tasks"
+          ]
+        },
+        {
+          "field": "decisions",
+          "interface": "decision.Reader",
+          "targets": [
+            "conversation"
+          ]
+        },
+        {
+          "field": "flows",
+          "interface": "flow.Router",
+          "targets": [
+            "flows"
+          ]
+        },
+        {
+          "field": "positions",
+          "interface": "flow.PositionReader",
+          "targets": [
+            "flows"
+          ]
+        },
+        {
+          "field": "identity",
+          "interface": "identity.Directory",
+          "targets": [
+            "identity"
+          ]
+        }
+      ],
+      "owner": "无后台"
+    },
+    {
+      "id": "delivery-commands",
+      "kind": "commands/delivery",
+      "phase": "I",
+      "responsibility": "登记/撤回回复交付，校验权限/依据/代次；随后核对流程，业务审核不在登记前执行",
+      "provides": [
+        "delivery.Commands.SubmitReply / Withdraw"
+      ],
+      "deps": [
+        {
+          "field": "tx",
+          "interface": "persistence.UnitOfWork",
+          "targets": [
+            "sql"
+          ]
+        },
+        {
+          "field": "requests",
+          "interface": "idempotency.Repository",
+          "targets": [
+            "sql"
+          ]
+        },
+        {
+          "field": "changes",
+          "interface": "revision.Writer",
+          "targets": [
+            "sql"
+          ]
+        },
+        {
+          "field": "audit",
+          "interface": "audit.Writer",
+          "targets": [
+            "sql"
+          ]
+        },
+        {
+          "field": "events",
+          "interface": "event.Writer",
+          "targets": [
+            "sql"
+          ]
+        },
+        {
+          "field": "authz",
+          "interface": "authorization.Authorizer",
+          "targets": [
+            "access"
+          ]
+        },
+        {
+          "field": "tasks",
+          "interface": "task.Reader",
+          "targets": [
+            "tasks"
+          ]
+        },
+        {
+          "field": "executions",
+          "interface": "execution.Reader",
+          "targets": [
+            "execution"
+          ]
+        },
+        {
+          "field": "replies",
+          "interface": "conversation.ResultReplies",
+          "targets": [
+            "conversation"
+          ]
+        },
+        {
+          "field": "deliveries",
+          "interface": "delivery.Editor",
+          "targets": [
+            "results"
+          ]
+        },
+        {
+          "field": "flows",
+          "interface": "flow.Router",
+          "targets": [
+            "flows"
+          ]
+        }
+      ],
+      "owner": "无后台"
+    },
+    {
+      "id": "acceptance-commands",
+      "kind": "commands/acceptance",
+      "phase": "I",
+      "responsibility": "人工验收动作的事务/授权适配，调用状态提供的 RecordVerdict；策略更新后核对流程",
+      "provides": [
+        "acceptance.Commands.RecordVerdict / SetPolicy"
+      ],
+      "deps": [
+        {
+          "field": "tx",
+          "interface": "persistence.UnitOfWork",
+          "targets": [
+            "sql"
+          ]
+        },
+        {
+          "field": "requests",
+          "interface": "idempotency.Repository",
+          "targets": [
+            "sql"
+          ]
+        },
+        {
+          "field": "changes",
+          "interface": "revision.Writer",
+          "targets": [
+            "sql"
+          ]
+        },
+        {
+          "field": "audit",
+          "interface": "audit.Writer",
+          "targets": [
+            "sql"
+          ]
+        },
+        {
+          "field": "events",
+          "interface": "event.Writer",
+          "targets": [
+            "sql"
+          ]
+        },
+        {
+          "field": "authz",
+          "interface": "authorization.Authorizer",
+          "targets": [
+            "access"
+          ]
+        },
+        {
+          "field": "tasks",
+          "interface": "task.PolicyEditor",
+          "targets": [
+            "tasks"
+          ]
+        },
+        {
+          "field": "acceptance",
+          "interface": "acceptance.Actions",
+          "targets": [
+            "accepting"
+          ]
+        },
+        {
+          "field": "flows",
+          "interface": "flow.Router",
+          "targets": [
+            "flows"
+          ]
+        }
+      ],
+      "owner": "无后台"
+    },
+    {
+      "id": "flow-commands",
+      "kind": "commands/flow",
+      "phase": "I",
+      "responsibility": "受权取消/退回/重开/重查外部边界",
+      "provides": [
+        "flow.Commands.Cancel / Return / Reopen / Recheck"
+      ],
+      "deps": [
+        {
+          "field": "tx",
+          "interface": "persistence.UnitOfWork",
+          "targets": [
+            "sql"
+          ]
+        },
+        {
+          "field": "requests",
+          "interface": "idempotency.Repository",
+          "targets": [
+            "sql"
+          ]
+        },
+        {
+          "field": "changes",
+          "interface": "revision.Writer",
+          "targets": [
+            "sql"
+          ]
+        },
+        {
+          "field": "audit",
+          "interface": "audit.Writer",
+          "targets": [
+            "sql"
+          ]
+        },
+        {
+          "field": "events",
+          "interface": "event.Writer",
+          "targets": [
+            "sql"
+          ]
+        },
+        {
+          "field": "authz",
+          "interface": "authorization.Authorizer",
+          "targets": [
+            "access"
+          ]
+        },
+        {
+          "field": "tasks",
+          "interface": "task.Reader",
+          "targets": [
+            "tasks"
+          ]
+        },
+        {
+          "field": "flows",
+          "interface": "flow.Router",
+          "targets": [
+            "flows"
+          ]
+        }
+      ],
+      "owner": "无后台"
+    },
+    {
+      "id": "access-commands",
+      "kind": "commands/access",
+      "phase": "I→II",
+      "responsibility": "授权管理及第二阶段精确确认；禁止公开管理员自举",
+      "provides": [
+        "access.Commands.Grant / Revoke / Propose / Confirm / Reject"
+      ],
+      "deps": [
+        {
+          "field": "tx",
+          "interface": "persistence.UnitOfWork",
+          "targets": [
+            "sql"
+          ]
+        },
+        {
+          "field": "requests",
+          "interface": "idempotency.Repository",
+          "targets": [
+            "sql"
+          ]
+        },
+        {
+          "field": "changes",
+          "interface": "revision.Writer",
+          "targets": [
+            "sql"
+          ]
+        },
+        {
+          "field": "audit",
+          "interface": "audit.Writer",
+          "targets": [
+            "sql"
+          ]
+        },
+        {
+          "field": "events",
+          "interface": "event.Writer",
+          "targets": [
+            "sql"
+          ]
+        },
+        {
+          "field": "authz",
+          "interface": "authorization.Authorizer",
+          "targets": [
+            "access"
+          ]
+        },
+        {
+          "field": "grants",
+          "interface": "grant.Editor",
+          "targets": [
+            "access"
+          ]
+        },
+        {
+          "field": "confirmations",
+          "interface": "confirmation.Editor",
+          "targets": [
+            "access"
+          ]
+        },
+        {
+          "field": "identity",
+          "interface": "identity.Directory",
+          "targets": [
+            "identity"
+          ]
+        }
+      ],
+      "owner": "无后台"
+    },
+    {
+      "id": "query",
+      "kind": "query/tasks",
+      "phase": "I→III",
+      "responsibility": "授权任务/会话/历史聚合；步骤审核详情由各步骤 API 暴露，不假定 SQL 提供通用审核服务",
+      "provides": [
+        "query.Reader.GetTask / List / Timeline / History"
+      ],
+      "deps": [
+        {
+          "field": "queries",
+          "interface": "query.Repository",
+          "targets": [
+            "sql"
+          ]
+        },
+        {
+          "field": "authz",
+          "interface": "authorization.Authorizer",
+          "targets": [
+            "access"
+          ]
+        }
+      ],
+      "owner": "无后台"
+    },
+    {
+      "id": "recheck-handler",
+      "kind": "event/task-recheck",
+      "phase": "I",
+      "responsibility": "continuation/补偿事件逐目标核对；不直接写状态",
+      "provides": [
+        "event.Handler.Topics / Handle"
+      ],
+      "deps": [
+        {
+          "field": "commands",
+          "interface": "flow.Commands",
+          "targets": [
+            "flow-commands"
+          ]
+        }
+      ],
+      "owner": "无后台"
+    },
+    {
+      "id": "worker",
+      "kind": "event/worker",
+      "phase": "I→II",
+      "responsibility": "持久消费调度、部分进度/重试与失败队列；不硬编码 topic 业务",
+      "provides": [
+        "lifecycle.Component.Run / Stop"
+      ],
+      "deps": [
+        {
+          "field": "events",
+          "interface": "event.Reader",
+          "targets": [
+            "sql"
+          ]
+        },
+        {
+          "field": "cursors",
+          "interface": "event.ConsumerStore",
+          "targets": [
+            "sql"
+          ]
+        },
+        {
+          "field": "handlers",
+          "interface": "[]event.Handler",
+          "targets": [
+            "recheck-handler",
+            "impact-handler",
+            "notification-handler"
+          ]
+        }
+      ],
+      "owner": "root Component"
+    },
+    {
+      "id": "reconciler",
+      "kind": "flow/reconciler",
+      "phase": "I",
+      "responsibility": "周期扫描待继续/待核对任务，通过受限命令重查",
+      "provides": [
+        "lifecycle.Component"
+      ],
+      "deps": [
+        {
+          "field": "pending",
+          "interface": "flow.PendingReader",
+          "targets": [
+            "sql"
+          ]
+        },
+        {
+          "field": "commands",
+          "interface": "flow.Commands",
+          "targets": [
+            "flow-commands"
+          ]
+        }
+      ],
+      "owner": "root Component"
+    },
+    {
+      "id": "api-tasks",
+      "kind": "api/tasks",
+      "phase": "I",
+      "responsibility": "协议适配，只调用对应命名命令",
+      "provides": [
+        "httpapi.Module.Routes"
+      ],
+      "deps": [
+        {
+          "field": "commands",
+          "interface": "tasks.Commands",
+          "targets": [
+            "task-commands"
+          ]
+        }
+      ],
+      "owner": "无后台"
+    },
+    {
+      "id": "api-conversation",
+      "kind": "api/conversation",
+      "phase": "I",
+      "responsibility": "协议适配，只调用对应命名命令",
+      "provides": [
+        "httpapi.Module.Routes"
+      ],
+      "deps": [
+        {
+          "field": "commands",
+          "interface": "conversation.Commands",
+          "targets": [
+            "conversation-commands"
+          ]
+        }
+      ],
+      "owner": "无后台"
+    },
+    {
+      "id": "api-execution",
+      "kind": "api/execution",
+      "phase": "I",
+      "responsibility": "协议适配，只调用对应命名命令",
+      "provides": [
+        "httpapi.Module.Routes"
+      ],
+      "deps": [
+        {
+          "field": "commands",
+          "interface": "execution.Commands",
+          "targets": [
+            "execution-commands"
+          ]
+        }
+      ],
+      "owner": "无后台"
+    },
+    {
+      "id": "api-delivery",
+      "kind": "api/delivery",
+      "phase": "I",
+      "responsibility": "协议适配，只调用对应命名命令",
+      "provides": [
+        "httpapi.Module.Routes"
+      ],
+      "deps": [
+        {
+          "field": "commands",
+          "interface": "delivery.Commands",
+          "targets": [
+            "delivery-commands"
+          ]
+        }
+      ],
+      "owner": "无后台"
+    },
+    {
+      "id": "api-acceptance",
+      "kind": "api/acceptance",
+      "phase": "I",
+      "responsibility": "协议适配，只调用对应命名命令",
+      "provides": [
+        "httpapi.Module.Routes"
+      ],
+      "deps": [
+        {
+          "field": "commands",
+          "interface": "acceptance.Commands",
+          "targets": [
+            "acceptance-commands"
+          ]
+        }
+      ],
+      "owner": "无后台"
+    },
+    {
+      "id": "api-flow",
+      "kind": "api/flow",
+      "phase": "I",
+      "responsibility": "协议适配，只调用对应命名命令",
+      "provides": [
+        "httpapi.Module.Routes"
+      ],
+      "deps": [
+        {
+          "field": "commands",
+          "interface": "flow.Commands",
+          "targets": [
+            "flow-commands"
+          ]
+        }
+      ],
+      "owner": "无后台"
+    },
+    {
+      "id": "api-access",
+      "kind": "api/access",
+      "phase": "I",
+      "responsibility": "协议适配，只调用对应命名命令",
+      "provides": [
+        "httpapi.Module.Routes"
+      ],
+      "deps": [
+        {
+          "field": "commands",
+          "interface": "access.Commands",
+          "targets": [
+            "access-commands"
+          ]
+        }
+      ],
+      "owner": "无后台"
+    },
+    {
+      "id": "api-plan",
+      "kind": "api/plan",
+      "phase": "II",
+      "responsibility": "协议适配，只调用对应命名命令",
+      "provides": [
+        "httpapi.Module.Routes"
+      ],
+      "deps": [
+        {
+          "field": "commands",
+          "interface": "plan.Commands",
+          "targets": [
+            "plan-commands"
+          ]
+        }
+      ],
+      "owner": "无后台"
+    },
+    {
+      "id": "api-artifacts",
+      "kind": "api/artifacts",
+      "phase": "II",
+      "responsibility": "协议适配，只调用对应命名命令",
+      "provides": [
+        "httpapi.Module.Routes"
+      ],
+      "deps": [
+        {
+          "field": "commands",
+          "interface": "artifacts.Commands",
+          "targets": [
+            "artifact-commands"
+          ]
+        }
+      ],
+      "owner": "无后台"
+    },
+    {
+      "id": "api-query",
+      "kind": "api/query",
+      "phase": "I",
+      "responsibility": "读接口协议适配",
+      "provides": [
+        "httpapi.Module.Routes"
+      ],
+      "deps": [
+        {
+          "field": "queries",
+          "interface": "query.Reader",
+          "targets": [
+            "query"
+          ]
+        }
+      ],
+      "owner": "无后台"
+    },
+    {
+      "id": "feed",
+      "kind": "transport/task-events",
+      "phase": "I",
+      "responsibility": "授权 HTTP changes/WS、游标与背压；不暴露内部 outbox",
+      "provides": [
+        "httpapi.Module",
+        "httpapi.ModuleLifecycle"
+      ],
+      "deps": [
+        {
+          "field": "events",
+          "interface": "event.Reader",
+          "targets": [
+            "sql"
+          ]
+        },
+        {
+          "field": "cursors",
+          "interface": "feed.CursorStore",
+          "targets": [
+            "sql"
+          ]
+        },
+        {
+          "field": "scopes",
+          "interface": "authorization.ScopeReader",
+          "targets": [
+            "sql"
+          ]
+        },
+        {
+          "field": "authz",
+          "interface": "authorization.Authorizer",
+          "targets": [
+            "access"
+          ]
+        }
+      ],
+      "owner": "HTTP ModuleLifecycle"
+    },
+    {
+      "id": "health",
+      "kind": "api/health",
+      "phase": "现有",
+      "responsibility": "进程存活，不代表业务就绪",
+      "provides": [
+        "httpapi.Module.Routes"
+      ],
+      "deps": [],
+      "owner": "无后台"
+    },
+    {
+      "id": "http",
+      "kind": "transport/http",
+      "phase": "现有→I",
+      "responsibility": "监听、路由、认证/Origin、受管模块；当前仅 modules 已实现",
+      "provides": [
+        "lifecycle.Component.Run / Stop"
+      ],
+      "deps": [
+        {
+          "field": "identity",
+          "interface": "identity.Authenticator",
+          "targets": [
+            "identity"
+          ]
+        },
+        {
+          "field": "modules",
+          "interface": "[]httpapi.Module",
+          "targets": [
+            "health",
+            "api-tasks",
+            "api-conversation",
+            "api-execution",
+            "api-delivery",
+            "api-acceptance",
+            "api-flow",
+            "api-access",
+            "api-query",
+            "feed",
+            "api-plan",
+            "api-artifacts",
+            "api-inbox"
+          ]
+        }
+      ],
+      "owner": "root Component"
+    },
+    {
+      "id": "plan",
+      "kind": "plan/tree",
+      "phase": "II",
+      "responsibility": "单父树、依赖、成组关系及影响读取；不调用任务命令",
+      "provides": [
+        "plan.Reader.CheckDependencies",
+        "plan.Editor.ApplyRelations",
+        "plan.ImpactReader.ListAffected"
+      ],
+      "deps": [
+        {
+          "field": "store",
+          "interface": "plan.Repository",
+          "targets": [
+            "sql"
+          ]
+        }
+      ],
+      "owner": "无后台"
+    },
+    {
+      "id": "plan-commands",
+      "kind": "commands/plan",
+      "phase": "II→III",
+      "responsibility": "计划成组修改/子任务创建/后续恢复；不写其他模块仓储",
+      "provides": [
+        "plan.Commands.ApplyChangeSet / Restore"
+      ],
+      "deps": [
+        {
+          "field": "tx",
+          "interface": "persistence.UnitOfWork",
+          "targets": [
+            "sql"
+          ]
+        },
+        {
+          "field": "requests",
+          "interface": "idempotency.Repository",
+          "targets": [
+            "sql"
+          ]
+        },
+        {
+          "field": "changes",
+          "interface": "revision.Writer",
+          "targets": [
+            "sql"
+          ]
+        },
+        {
+          "field": "audit",
+          "interface": "audit.Writer",
+          "targets": [
+            "sql"
+          ]
+        },
+        {
+          "field": "events",
+          "interface": "event.Writer",
+          "targets": [
+            "sql"
+          ]
+        },
+        {
+          "field": "authz",
+          "interface": "authorization.Authorizer",
+          "targets": [
+            "access"
+          ]
+        },
+        {
+          "field": "plan",
+          "interface": "plan.Editor",
+          "targets": [
+            "plan"
+          ]
+        },
+        {
+          "field": "tasks",
+          "interface": "task.Editor",
+          "targets": [
+            "tasks"
+          ]
+        },
+        {
+          "field": "flows",
+          "interface": "flow.Router",
+          "targets": [
+            "flows"
+          ]
+        },
+        {
+          "field": "identity",
+          "interface": "identity.Directory",
+          "targets": [
+            "identity"
+          ]
+        },
+        {
+          "field": "confirmation",
+          "interface": "confirmation.Consumer",
+          "targets": [
+            "access"
+          ]
+        }
+      ],
+      "owner": "无后台"
+    },
+    {
+      "id": "impact-handler",
+      "kind": "event/plan-impact",
+      "phase": "II",
+      "responsibility": "前后影响并集分页定位，逐目标重查",
+      "provides": [
+        "event.Handler"
+      ],
+      "deps": [
+        {
+          "field": "impacts",
+          "interface": "plan.ImpactReader",
+          "targets": [
+            "plan"
+          ]
+        },
+        {
+          "field": "commands",
+          "interface": "flow.Commands",
+          "targets": [
+            "flow-commands"
+          ]
+        }
+      ],
+      "owner": "无后台"
+    },
+    {
+      "id": "objects",
+      "kind": "storage/blob",
+      "phase": "II",
+      "responsibility": "S3 字节适配，不含业务权限/元数据规则",
+      "provides": [
+        "blob.Store.Put / Head / Open / Delete",
+        "lifecycle.Resource"
+      ],
+      "deps": [],
+      "owner": "root Resource"
+    },
+    {
+      "id": "artifacts",
+      "kind": "artifact/versioned",
+      "phase": "II",
+      "responsibility": "文件元数据、可用版本和引用保留；不反查会话/交付",
+      "provides": [
+        "artifact.Reader",
+        "artifact.Editor.Begin / Complete / MarkDelete",
+        "artifact.ReferenceKeeper.Retain / Release"
+      ],
+      "deps": [
+        {
+          "field": "store",
+          "interface": "artifact.Repository",
+          "targets": [
+            "sql"
+          ]
+        },
+        {
+          "field": "tasks",
+          "interface": "task.Reader",
+          "targets": [
+            "tasks"
+          ]
+        }
+      ],
+      "owner": "无后台"
+    },
+    {
+      "id": "artifact-commands",
+      "kind": "commands/artifacts",
+      "phase": "II",
+      "responsibility": "上传/下载/删除授权，事务外对象操作和本地状态转换",
+      "provides": [
+        "artifact.Commands.BeginUpload / CompleteUpload / Download / Delete"
+      ],
+      "deps": [
+        {
+          "field": "tx",
+          "interface": "persistence.UnitOfWork",
+          "targets": [
+            "sql"
+          ]
+        },
+        {
+          "field": "requests",
+          "interface": "idempotency.Repository",
+          "targets": [
+            "sql"
+          ]
+        },
+        {
+          "field": "changes",
+          "interface": "revision.Writer",
+          "targets": [
+            "sql"
+          ]
+        },
+        {
+          "field": "audit",
+          "interface": "audit.Writer",
+          "targets": [
+            "sql"
+          ]
+        },
+        {
+          "field": "events",
+          "interface": "event.Writer",
+          "targets": [
+            "sql"
+          ]
+        },
+        {
+          "field": "authz",
+          "interface": "authorization.Authorizer",
+          "targets": [
+            "access"
+          ]
+        },
+        {
+          "field": "artifacts",
+          "interface": "artifact.Editor",
+          "targets": [
+            "artifacts"
+          ]
+        },
+        {
+          "field": "objects",
+          "interface": "blob.Store",
+          "targets": [
+            "objects"
+          ]
+        },
+        {
+          "field": "tasks",
+          "interface": "task.Reader",
+          "targets": [
+            "tasks"
+          ]
+        },
+        {
+          "field": "flows",
+          "interface": "flow.Router",
+          "targets": [
+            "flows"
+          ]
+        },
+        {
+          "field": "confirmation",
+          "interface": "confirmation.Consumer",
+          "targets": [
+            "access"
+          ]
+        }
+      ],
+      "owner": "无后台"
+    },
+    {
+      "id": "artifact-maintenance",
+      "kind": "artifact/maintenance",
+      "phase": "II",
+      "responsibility": "未完成上传/删除补偿；按版本/保留引用重查",
+      "provides": [
+        "lifecycle.Component"
+      ],
+      "deps": [
+        {
+          "field": "store",
+          "interface": "artifact.MaintenanceRepository",
+          "targets": [
+            "sql"
+          ]
+        },
+        {
+          "field": "objects",
+          "interface": "blob.Store",
+          "targets": [
+            "objects"
+          ]
+        },
+        {
+          "field": "tx",
+          "interface": "persistence.UnitOfWork",
+          "targets": [
+            "sql"
+          ]
+        },
+        {
+          "field": "audit",
+          "interface": "audit.Writer",
+          "targets": [
+            "sql"
+          ]
+        },
+        {
+          "field": "events",
+          "interface": "event.Writer",
+          "targets": [
+            "sql"
+          ]
+        }
+      ],
+      "owner": "root Component"
+    },
+    {
+      "id": "inbox",
+      "kind": "notification/inbox",
+      "phase": "II",
+      "responsibility": "站内提醒与逐渠道投递事实，不决定业务完成",
+      "provides": [
+        "notification.Inbox.List / MarkRead",
+        "notification.Writer.Record",
+        "notification.DeliveryStore"
+      ],
+      "deps": [
+        {
+          "field": "store",
+          "interface": "notification.Repository",
+          "targets": [
+            "sql"
+          ]
+        }
+      ],
+      "owner": "无后台"
+    },
+    {
+      "id": "inbox-commands",
+      "kind": "commands/inbox",
+      "phase": "II",
+      "responsibility": "授权已读/偏好更新",
+      "provides": [
+        "inbox.Commands.MarkRead / SetPreferences"
+      ],
+      "deps": [
+        {
+          "field": "tx",
+          "interface": "persistence.UnitOfWork",
+          "targets": [
+            "sql"
+          ]
+        },
+        {
+          "field": "requests",
+          "interface": "idempotency.Repository",
+          "targets": [
+            "sql"
+          ]
+        },
+        {
+          "field": "changes",
+          "interface": "revision.Writer",
+          "targets": [
+            "sql"
+          ]
+        },
+        {
+          "field": "audit",
+          "interface": "audit.Writer",
+          "targets": [
+            "sql"
+          ]
+        },
+        {
+          "field": "events",
+          "interface": "event.Writer",
+          "targets": [
+            "sql"
+          ]
+        },
+        {
+          "field": "authz",
+          "interface": "authorization.Authorizer",
+          "targets": [
+            "access"
+          ]
+        },
+        {
+          "field": "inbox",
+          "interface": "notification.Editor",
+          "targets": [
+            "inbox"
+          ]
+        }
+      ],
+      "owner": "无后台"
+    },
+    {
+      "id": "api-inbox",
+      "kind": "api/inbox",
+      "phase": "II",
+      "responsibility": "收件箱读写协议适配",
+      "provides": [
+        "httpapi.Module"
+      ],
+      "deps": [
+        {
+          "field": "commands",
+          "interface": "inbox.Commands",
+          "targets": [
+            "inbox-commands"
+          ]
+        },
+        {
+          "field": "reader",
+          "interface": "notification.Inbox",
+          "targets": [
+            "inbox"
+          ]
+        },
+        {
+          "field": "authz",
+          "interface": "authorization.Authorizer",
+          "targets": [
+            "access"
+          ]
+        }
+      ],
+      "owner": "无后台"
+    },
+    {
+      "id": "notification-handler",
+      "kind": "event/notification",
+      "phase": "II",
+      "responsibility": "业务事件转站内提醒及投递意图，同事务幂等记录，不直接发送",
+      "provides": [
+        "event.Handler"
+      ],
+      "deps": [
+        {
+          "field": "inbox",
+          "interface": "notification.Writer",
+          "targets": [
+            "inbox"
+          ]
+        },
+        {
+          "field": "tasks",
+          "interface": "task.Reader",
+          "targets": [
+            "tasks"
+          ]
+        },
+        {
+          "field": "decisions",
+          "interface": "decision.Reader",
+          "targets": [
+            "conversation"
+          ]
+        },
+        {
+          "field": "authz",
+          "interface": "authorization.Authorizer",
+          "targets": [
+            "access"
+          ]
+        },
+        {
+          "field": "tx",
+          "interface": "persistence.UnitOfWork",
+          "targets": [
+            "sql"
+          ]
+        }
+      ],
+      "owner": "无后台"
+    },
+    {
+      "id": "reminder",
+      "kind": "notification/reminder",
+      "phase": "II",
+      "responsibility": "期限扫描生成持久提醒，不能推定同意或重派",
+      "provides": [
+        "lifecycle.Component"
+      ],
+      "deps": [
+        {
+          "field": "due",
+          "interface": "notification.DueReader",
+          "targets": [
+            "sql"
+          ]
+        },
+        {
+          "field": "inbox",
+          "interface": "notification.Writer",
+          "targets": [
+            "inbox"
+          ]
+        },
+        {
+          "field": "authz",
+          "interface": "authorization.Authorizer",
+          "targets": [
+            "access"
+          ]
+        },
+        {
+          "field": "tx",
+          "interface": "persistence.UnitOfWork",
+          "targets": [
+            "sql"
+          ]
+        }
+      ],
+      "owner": "root Component"
+    },
+    {
+      "id": "notification-dispatch",
+      "kind": "notification/dispatch",
+      "phase": "II",
+      "responsibility": "逐渠道投递与重试，发送前重查权限；无默认外部渠道",
+      "provides": [
+        "lifecycle.Component"
+      ],
+      "deps": [
+        {
+          "field": "deliveries",
+          "interface": "notification.DeliveryStore",
+          "targets": [
+            "inbox"
+          ]
+        },
+        {
+          "field": "authz",
+          "interface": "authorization.Authorizer",
+          "targets": [
+            "access"
+          ]
+        },
+        {
+          "field": "channels",
+          "interface": "[]notification.Channel",
+          "targets": []
+        }
+      ],
+      "owner": "root Component"
+    },
+    {
+      "id": "server",
+      "kind": "server",
+      "phase": "现有→II",
+      "responsibility": "根资源与组件生命周期，不编排业务",
+      "provides": [
+        "lifecycle.App"
+      ],
+      "deps": [
+        {
+          "field": "resources",
+          "interface": "[]lifecycle.Resource",
+          "targets": [
+            "sql",
+            "objects",
+            "flows"
+          ]
+        },
+        {
+          "field": "components",
+          "interface": "[]lifecycle.Component",
+          "targets": [
+            "http",
+            "worker",
+            "reconciler",
+            "artifact-maintenance",
+            "reminder",
+            "notification-dispatch"
+          ]
+        }
+      ],
+      "owner": "cmd"
+    }
+  ]
+}

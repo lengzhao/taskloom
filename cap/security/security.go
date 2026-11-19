@@ -18,7 +18,8 @@ type Administration interface {
 	SetPassword(ctx context.Context, credential, key string, value PasswordInput) error
 	ChangePassword(ctx context.Context, credential, key string, value ChangePasswordInput) error
 	Login(ctx context.Context, value LoginInput) (Issued, error)
-	HasPassword(ctx context.Context, tenant, subject string) (bool, error)
+	// Logout revokes the credential it is called with, ending that session only.
+	Logout(ctx context.Context, credential string) error
 	MemberCommands
 	Create(ctx context.Context, credential, idempotencyKey string, value identity.Principal) error
 	Issue(ctx context.Context, credential, idempotencyKey string, value IssueInput) (Issued, error)

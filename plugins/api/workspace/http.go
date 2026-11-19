@@ -2,12 +2,7 @@ package workspace
 
 import (
 	"context"
-	"crypto/aes"
-	"crypto/cipher"
-	"crypto/rand"
 	"embed"
-	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"github.com/lengzhao/taskloom/cap/fault"
 	"github.com/lengzhao/taskloom/runtime/httpx"
@@ -15,7 +10,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/lengzhao/pluginkit"
 	"github.com/lengzhao/taskloom/cap/authorization"
@@ -29,11 +23,12 @@ import (
 //go:embed app.html
 var assets embed.FS
 
+// Origin and CSRF checks belong to the HTTP transport; this module only needs
+// the tenant to log into when one database holds several.
 type Config struct {
-	Origin      string `json:"origin"`
 	LoginTenant string `json:"loginTenant"`
-	LocalHTTP   bool   `json:"localHTTP"`
 }
+
 type Deps struct {
 	Catalog  catalog.Service         `json:"catalog"`
 	Commands api.Commands            `json:"commands"`
@@ -45,33 +40,16 @@ type Deps struct {
 type Module struct {
 	c             Config
 	d             Deps
-	aead          cipher.AEAD
 	mu            sync.Mutex
-	sessions      map[string]int64
 	loginAttempts map[string]loginWindow
 }
 
 func init() { pluginkit.Register("api/workspace", New) }
 func New(c Config, d Deps) (*Module, error) {
-	if d.Catalog == nil || c.Origin == "" || d.Commands == nil || d.Queries == nil || d.Changes == nil || d.Identity == nil || d.Security == nil {
-		return nil, errors.New("workspace origin and capabilities required")
+	if d.Catalog == nil || d.Commands == nil || d.Queries == nil || d.Changes == nil || d.Identity == nil || d.Security == nil {
+		return nil, errors.New("workspace capabilities required")
 	}
-	if c.LocalHTTP && c.Origin != "http://127.0.0.1:8080" && c.Origin != "http://localhost:8080" {
-		return nil, errors.New("localHTTP restricted to loopback origins")
-	}
-	key := make([]byte, 32)
-	if _, e := rand.Read(key); e != nil {
-		return nil, e
-	}
-	block, e := aes.NewCipher(key)
-	if e != nil {
-		return nil, e
-	}
-	aead, e := cipher.NewGCM(block)
-	if e != nil {
-		return nil, e
-	}
-	return &Module{c: c, d: d, aead: aead, sessions: map[string]int64{}, loginAttempts: map[string]loginWindow{}}, nil
+	return &Module{c: c, d: d, loginAttempts: map[string]loginWindow{}}, nil
 }
 func (m *Module) Routes() []httpapi.Route {
 	routes := []httpapi.Route{}
@@ -82,44 +60,24 @@ func (m *Module) Routes() []httpapi.Route {
 	return routes
 }
 
-type session struct {
-	Token   string
-	Expires int64
+// setSession writes the session cookie. It is Secure except on a loopback
+// host, where traffic never leaves the machine and plain HTTP is allowed.
+func (m *Module) setSession(w http.ResponseWriter, r *http.Request, value string, maxAge int) {
+	http.SetCookie(w, &http.Cookie{Name: httpx.SessionCookie, Value: value, Path: "/", HttpOnly: true, Secure: !httpx.LoopbackHost(r.Host), SameSite: http.SameSiteStrictMode, MaxAge: maxAge})
 }
 
-func (m *Module) token(r *http.Request) string {
-	if h := r.Header.Get("Authorization"); strings.HasPrefix(h, "Bearer ") {
-		return strings.TrimPrefix(h, "Bearer ")
+// current answers a task command with the caller's current task detail. The
+// receipt keeps only the command's Ref, so a replay also shows current facts.
+func (m *Module) current(ctx context.Context, token string) func(api.Ref, error) (any, error) {
+	return func(ref api.Ref, err error) (any, error) {
+		if err != nil {
+			return nil, err
+		}
+		return m.d.Queries.Get(ctx, token, ref.TaskID, 0)
 	}
-	cookie, e := r.Cookie("taskloom_session")
-	if e != nil {
-		return ""
-	}
-	m.mu.Lock()
-	expires, active := m.sessions[cookie.Value]
-	m.mu.Unlock()
-	if !active || expires < time.Now().Unix() {
-		return ""
-	}
-	b, e := base64.RawURLEncoding.DecodeString(cookie.Value)
-	if e != nil || len(b) < m.aead.NonceSize() {
-		return ""
-	}
-	plain, e := m.aead.Open(nil, b[:m.aead.NonceSize()], b[m.aead.NonceSize():], nil)
-	if e != nil {
-		return ""
-	}
-	var s session
-	if json.Unmarshal(plain, &s) != nil || s.Expires < time.Now().Unix() {
-		return ""
-	}
-	return s.Token
 }
 func (m *Module) serve(w http.ResponseWriter, r *http.Request) {
-	token, ok := m.Credential(w, r)
-	if !ok {
-		return
-	}
+	token := httpx.Credential(r)
 	path := r.URL.Path
 	if strings.HasSuffix(path, "/app") {
 		b, _ := assets.ReadFile("app.html")
@@ -128,47 +86,7 @@ func (m *Module) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if strings.HasSuffix(path, "/session") {
-		if r.Method == "DELETE" {
-			if cookie, e := r.Cookie("taskloom_session"); e == nil {
-				m.mu.Lock()
-				delete(m.sessions, cookie.Value)
-				m.mu.Unlock()
-			}
-			http.SetCookie(w, &http.Cookie{Name: "taskloom_session", Value: "", Path: "/", HttpOnly: true, Secure: !m.c.LocalHTTP, SameSite: http.SameSiteStrictMode, MaxAge: -1})
-			httpx.Write(w, map[string]bool{"ok": true})
-			return
-		}
-		var e error
-		token, e = m.loginToken(w, r, token)
-		if e != nil {
-			if e != errDecoded {
-				httpx.Fail(w, e)
-			}
-			return
-		}
-		plain, _ := json.Marshal(session{token, time.Now().Add(time.Hour).Unix()})
-		nonce := make([]byte, m.aead.NonceSize())
-		if _, e := rand.Read(nonce); e != nil {
-			httpx.Fail(w, e)
-			return
-		}
-		sealed := m.aead.Seal(nonce, nonce, plain, nil)
-		value := base64.RawURLEncoding.EncodeToString(sealed)
-		m.mu.Lock()
-		for k, expires := range m.sessions {
-			if expires < time.Now().Unix() {
-				delete(m.sessions, k)
-			}
-		}
-		if len(m.sessions) >= 10000 {
-			m.mu.Unlock()
-			httpx.Fail(w, errors.New("session capacity reached"))
-			return
-		}
-		m.sessions[value] = time.Now().Add(time.Hour).Unix()
-		m.mu.Unlock()
-		http.SetCookie(w, &http.Cookie{Name: "taskloom_session", Value: value, Path: "/", HttpOnly: true, Secure: !m.c.LocalHTTP, SameSite: http.SameSiteStrictMode, MaxAge: 3600})
-		httpx.Write(w, map[string]bool{"ok": true})
+		m.session(w, r)
 		return
 	}
 	ctx := r.Context()
@@ -185,7 +103,9 @@ func (m *Module) serve(w http.ResponseWriter, r *http.Request) {
 			if !httpx.Decode(w, r, &in) {
 				return
 			}
-			result, err = m.d.Catalog.EditSpace(ctx, token, key, in)
+			if err = m.d.Catalog.EditSpace(ctx, token, key, in); err == nil {
+				result, err = m.d.Catalog.Space(ctx, token)
+			}
 		}
 	case strings.HasSuffix(path, "/project-members"):
 		result, err = m.d.Catalog.People(ctx, token)
@@ -206,15 +126,13 @@ func (m *Module) serve(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			in.ID = taskID
-			result, err = m.d.Catalog.SaveProject(ctx, token, key, in)
+			var id string
+			if id, err = m.d.Catalog.SaveProject(ctx, token, key, in); err == nil {
+				result, err = m.d.Catalog.Project(ctx, token, id)
+			}
 		}
 	case strings.HasSuffix(path, "/me"):
-		var view api.Viewer
-		view, err = m.d.Queries.Viewer(ctx, token)
-		if err == nil && view.Kind == "human" {
-			view.PasswordSet, err = m.d.Security.HasPassword(ctx, view.Tenant, view.Subject)
-		}
-		result = view
+		result, err = m.d.Queries.Viewer(ctx, token)
 	case strings.HasSuffix(path, "/members") && r.Method == "GET":
 		result, err = m.d.Queries.Members(ctx, token)
 	case strings.HasSuffix(path, "/password"), strings.HasSuffix(path, "/identities"), strings.HasSuffix(path, "/credentials"), strings.HasSuffix(path, "/credentials/revoke"):
@@ -267,7 +185,7 @@ func (m *Module) serve(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		in.TaskID = taskID
-		result, err = m.d.Commands.Edit(ctx, token, key, in)
+		result, err = m.current(ctx, token)(m.d.Commands.Edit(ctx, token, key, in))
 	case r.Method == "GET":
 		result, err = m.d.Queries.List(ctx, token)
 	case r.Method == "POST":
@@ -275,33 +193,11 @@ func (m *Module) serve(w http.ResponseWriter, r *http.Request) {
 		if !httpx.Decode(w, r, &in) {
 			return
 		}
-		result, err = m.d.Commands.Create(ctx, token, key, in)
+		result, err = m.current(ctx, token)(m.d.Commands.Create(ctx, token, key, in))
 	}
 	if err != nil {
 		httpx.Fail(w, err)
 		return
 	}
 	httpx.Write(w, result)
-}
-func (m *Module) Open(context.Context) error { return nil }
-func (m *Module) Close(context.Context) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	clear(m.sessions)
-	return nil
-}
-
-func (m *Module) Credential(w http.ResponseWriter, r *http.Request) (string, bool) {
-	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set("X-Content-Type-Options", "nosniff")
-	w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; frame-ancestors 'none'")
-	if origin := r.Header.Get("Origin"); origin != "" && origin != m.c.Origin {
-		http.Error(w, "origin rejected", 403)
-		return "", false
-	}
-	if r.Method != "GET" && r.Header.Get("Authorization") == "" && r.Header.Get("X-Taskloom-Request") != "1" {
-		http.Error(w, "request header required", 403)
-		return "", false
-	}
-	return m.token(r), true
 }

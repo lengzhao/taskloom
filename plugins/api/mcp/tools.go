@@ -61,12 +61,13 @@ func parseBasis(taskID, token string) (basis, error) {
 	return b, nil
 }
 
-// next derives the follow-up basis from a command's snapshot. Writes never
-// change the task basis version, so it is carried over.
-func (b basis) next(s work.Snapshot) basis {
-	n := basis{TaskID: b.TaskID, RoundID: s.Position.RoundID, BasisVersion: b.BasisVersion}
-	if s.Execution != nil {
-		n.ExecutionID = s.Execution.ID
+// next derives the follow-up basis from what the command itself fixed, never
+// from a later read that another writer may have changed. Writes never change
+// the task basis version, and an execution the command did not open is kept.
+func (b basis) next(r work.Ref) basis {
+	n := basis{TaskID: b.TaskID, RoundID: r.RoundID, BasisVersion: b.BasisVersion, ExecutionID: b.ExecutionID}
+	if r.ExecutionID != "" {
+		n.ExecutionID = r.ExecutionID
 	}
 	return n
 }
@@ -183,11 +184,11 @@ func (m *Module) call(ctx context.Context, c call, name string, rawArgs json.Raw
 		if err := required(args, "task_id", "text"); err != nil {
 			return "", err
 		}
-		cm, err := m.d.Comments.Comment(ctx, c.token, c.key(name, args), workspace.Comment{TaskID: args["task_id"], Body: args["text"]})
+		ref, err := m.d.Comments.Comment(ctx, c.token, c.key(name, args), workspace.Comment{TaskID: args["task_id"], Body: args["text"]})
 		if err != nil {
 			return "", err
 		}
-		return "已留言（" + cm.ID + "）。", nil
+		return "已留言（" + ref.CommitID + "）。", nil
 	case "answer_question":
 		if err := required(args, "task_id", "question_id", "text"); err != nil {
 			return "", err
@@ -236,11 +237,15 @@ func (m *Module) call(ctx context.Context, c call, name string, rawArgs json.Raw
 		if b.ExecutionID == "" {
 			return "", invalid("还没有执行：先 start_work 认领，再用它返回的 basis 提交")
 		}
-		s, err := m.d.Results.Submit(ctx, c.token, key, work.Submit{TaskID: b.TaskID, ExecutionID: b.ExecutionID, Body: args["result"]})
+		r, err := m.d.Results.Submit(ctx, c.token, key, work.Submit{TaskID: b.TaskID, ExecutionID: b.ExecutionID, Body: args["result"]})
 		if err != nil {
 			return "", err
 		}
-		return pretty(map[string]any{"message": "结果已提交，等待负责人处理。", "next_actor": s.NextActor, "basis": b.next(s).token()}), nil
+		s, err := m.d.Workflow.Read(ctx, c.token, b.TaskID)
+		if err != nil {
+			return "", err
+		}
+		return pretty(map[string]any{"message": "结果已提交，等待负责人处理。", "next_actor": s.NextActor, "basis": b.next(r).token()}), nil
 	}
 }
 

@@ -13,8 +13,8 @@
 
 ## 运行
 
-- 本地：先用 `taskloom-admin` 初始化管理员，再 `go run ./cmd/taskloom`，打开 `http://127.0.0.1:8080/v1/app`，步骤见[开发说明](docs/development.md#初始化与-agent-登记)。healthz 只表示进程存活。
-- Docker：`docker build -t taskloom:local .`，再 `docker run -d --name taskloom -p 8899:8899 -v taskloom-data:/data taskloom:local`，访问 `http://localhost:8899/v1/app`。端口由 `TASKLOOM_PORT`（默认 8899）决定，Origin 默认 `http://localhost:端口`，可用 `TASKLOOM_ORIGIN` 覆盖；非 localhost 访问须走 HTTPS。首次启动前用同一数据卷执行 `docker run --rm -v taskloom-data:/data taskloom:local taskloom-admin -base /app/base.yaml -config /app/config.yaml -mode bootstrap ... -credential-file /data/admin.json`。需要内部 Go 模块代理时传 `--build-arg GOPROXY="$(go env GOPROXY)" --build-arg GOSUMDB="$(go env GOSUMDB)"`（也支持 `GOPRIVATE`）；离线构建可先 `go mod vendor`。
+- 本地：先用 `taskloom-admin` 初始化管理员并设置密码，再 `go run ./cmd/taskloom`，打开 `http://127.0.0.1:8080/v1/app`，步骤见[开发说明](docs/development.md#初始化与-agent-登记)。healthz 只表示进程存活。
+- Docker：`docker build -t taskloom:local .`，再 `docker run -d --name taskloom -p 8899:8899 -v taskloom-data:/data taskloom:local`，访问 `http://localhost:8899/v1/app`。端口由 `TASKLOOM_PORT`（默认 8899）决定，Origin 默认 `http://localhost:端口`，可用 `TASKLOOM_ORIGIN` 覆盖；非 localhost 访问须走 HTTPS。首次启动前用同一数据卷执行 `docker run --rm -i -v taskloom-data:/data taskloom:local taskloom-admin -base /app/base.yaml -config /app/config.yaml -mode bootstrap -password-stdin ...`，从 stdin 输入管理员密码；不会生成管理员凭据文件。需要内部 Go 模块代理时传 `--build-arg GOPROXY="$(go env GOPROXY)" --build-arg GOSUMDB="$(go env GOSUMDB)"`（也支持 `GOPRIVATE`）；离线构建可先 `go mod vendor`。
 - Agent：服务内置 MCP 端点 `POST /v1/mcp`，Agent 只需配置 URL 和凭据，见 [MCP 接入](docs/mcp-adapter.md)。
 - 检查：`sh scripts/check.sh all`、`sh scripts/check.sh race`。
 

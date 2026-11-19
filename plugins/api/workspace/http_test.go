@@ -16,12 +16,11 @@ import (
 	"time"
 
 	"github.com/lengzhao/pluginkit/build"
-	"github.com/lengzhao/taskloom/cap/httpapi"
 	"github.com/lengzhao/taskloom/cap/identity"
 	"github.com/lengzhao/taskloom/cap/lifecycle"
 	"github.com/lengzhao/taskloom/cap/unitofwork"
-	"github.com/lengzhao/taskloom/domain/security"
 	_ "github.com/lengzhao/taskloom/plugins"
+	"github.com/lengzhao/taskloom/plugins/security"
 	"github.com/lengzhao/taskloom/runtime/config"
 )
 
@@ -46,16 +45,15 @@ func TestHTTPAuthenticatedWorkspaceLoop(t *testing.T) {
 	}
 	defer storage.Close(ctx)
 	sec, _ := build.GetByID[*security.Service](graph, "security")
-	issued, e := sec.Bootstrap(ctx, security.BootstrapInput{Tenant: "t", Subject: "u", Operator: "test", Reason: "test", ExpiresAt: time.Now().Add(time.Hour)})
+	if e := sec.Bootstrap(ctx, security.AdminInput{Tenant: "t", Subject: "u", Operator: "test", Reason: "test", Password: "UserPassword123!"}); e != nil {
+		t.Fatal(e)
+	}
+	issued, e := sec.Login(ctx, capsecurity.LoginInput{Tenant: "t", Username: "u", Password: "UserPassword123!"})
 	if e != nil {
 		t.Fatal(e)
 	}
 
-	module, _ := build.GetByID[httpapi.Module](graph, "workspace-api")
-	mux := http.NewServeMux()
-	for _, r := range module.Routes() {
-		mux.Handle(r.Method+" /v1"+r.Path, r.Handler)
-	}
+	mux, _ := build.GetByID[http.Handler](graph, "http")
 	var cookie *http.Cookie
 	request := func(method, path string, body any, key string, bearer bool) *httptest.ResponseRecorder {
 		t.Helper()
@@ -79,7 +77,7 @@ func TestHTTPAuthenticatedWorkspaceLoop(t *testing.T) {
 	if w := request("POST", "/v1/grants", map[string]any{"Action": "task.read"}, "old-api", true); w.Code != 404 {
 		t.Fatal("legacy grant route exists", w.Code)
 	}
-	if e = sec.Create(ctx, issued.Secret, "new-member", identity.Principal{Tenant: "t", ID: "member", Kind: "human"}); e != nil {
+	if e = sec.CreateUser(ctx, issued.Secret, "new-member", capsecurity.UserInput{Tenant: "t", Username: "member", Password: "UserPassword123!"}); e != nil {
 		t.Fatal(e)
 	}
 	if w := request("POST", "/v1/members", map[string]any{"Tenant": "t", "Subject": "member", "Role": "member", "Active": false}, "deactivate", true); w.Code != 200 {
@@ -91,7 +89,11 @@ func TestHTTPAuthenticatedWorkspaceLoop(t *testing.T) {
 	if w := request("GET", "/v1/tasks", nil, "", false); w.Code != 401 {
 		t.Fatalf("anonymous %d", w.Code)
 	}
-	w := request("POST", "/v1/session", nil, "", true)
+	// A credential issued elsewhere never becomes a browser session.
+	if w := request("POST", "/v1/session", nil, "", true); w.Code != 400 || len(w.Result().Cookies()) != 0 {
+		t.Fatal("credential login accepted", w.Code)
+	}
+	w := request("POST", "/v1/session", map[string]string{"Username": "u", "Password": "UserPassword123!"}, "", false)
 	if w.Code != 200 {
 		t.Fatal(w.Code, w.Body.String())
 	}
@@ -128,9 +130,12 @@ func TestHTTPAuthenticatedWorkspaceLoop(t *testing.T) {
 	if e = sec.Revoke(ctx, issued.Secret, "revoke", capsecurity.RevokeInput{Tenant: "t", CredentialID: issued.ID}); e != nil {
 		t.Fatal(e)
 	}
-	w = request("GET", path, nil, "", false)
-	if w.Code != 401 {
+	if w = request("GET", path, nil, "", true); w.Code != 401 {
 		t.Fatal("revoked credential", w.Code)
+	}
+	// The session is its own credential: revoking another one leaves it alone.
+	if w = request("GET", path, nil, "", false); w.Code != 200 {
+		t.Fatal("session depended on another credential", w.Code)
 	}
 
 	oldCookie := cookie
@@ -139,9 +144,13 @@ func TestHTTPAuthenticatedWorkspaceLoop(t *testing.T) {
 		t.Fatal("logout", w.Code)
 	}
 	cookie = oldCookie
+	// Logout revoked the credential itself, not just a server-side entry.
 	w = request("GET", path, nil, "", false)
 	if w.Code != 401 {
 		t.Fatal("logged out cookie reusable", w.Code)
+	}
+	if w = request("DELETE", "/v1/session", nil, "", false); w.Code != 200 {
+		t.Fatal("logout of an ended session", w.Code)
 	}
 	r := httptest.NewRequest("POST", "/v1/tasks", io.NopCloser(bytes.NewReader([]byte(`{"Title":"csrf"}`))))
 	r.AddCookie(cookie)
@@ -177,17 +186,14 @@ func TestHTTPMemberAdministration(t *testing.T) {
 	}
 	defer storage.Close(ctx)
 	sec, _ := build.GetByID[*security.Service](graph, "security")
-	admin, e := sec.Bootstrap(ctx, security.BootstrapInput{Tenant: "t", Subject: "admin", Operator: "test", Reason: "fixture", ExpiresAt: time.Now().Add(time.Hour)})
+	if e := sec.Bootstrap(ctx, security.AdminInput{Tenant: "t", Subject: "admin", Operator: "test", Reason: "fixture", Password: "AdminPassword123!"}); e != nil {
+		t.Fatal(e)
+	}
+	admin, e := sec.Login(ctx, capsecurity.LoginInput{Tenant: "t", Username: "admin", Password: "AdminPassword123!"})
 	if e != nil {
 		t.Fatal(e)
 	}
-	mux := http.NewServeMux()
-	for _, id := range []string{"workspace-api", "audit-api"} {
-		module, _ := build.GetByID[httpapi.Module](graph, id)
-		for _, r := range module.Routes() {
-			mux.Handle(r.Method+" /v1"+r.Path, r.Handler)
-		}
-	}
+	mux, _ := build.GetByID[http.Handler](graph, "http")
 	request := func(token, method, path, key string, body any) *httptest.ResponseRecorder {
 		t.Helper()
 		b, _ := json.Marshal(body)
@@ -293,7 +299,10 @@ func TestHTTPMemberAdministration(t *testing.T) {
 	}); e != nil {
 		t.Fatal(e)
 	}
-	foreign, e := sec.Recover(ctx, security.BootstrapInput{Tenant: "other", Subject: "foreign", Operator: "test", Reason: "isolation", ExpiresAt: expires})
+	if e := sec.Recover(ctx, security.AdminInput{Tenant: "other", Subject: "foreign", Operator: "test", Reason: "isolation", Password: "ForeignPassword123!"}); e != nil {
+		t.Fatal(e)
+	}
+	foreign, e := sec.Login(ctx, capsecurity.LoginInput{Tenant: "other", Username: "foreign", Password: "ForeignPassword123!"})
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -304,7 +313,7 @@ func TestHTTPMemberAdministration(t *testing.T) {
 	}
 }
 
-func TestPasswordLoginCreationResetAndLegacyAdminTransition(t *testing.T) {
+func TestPasswordLoginCreationAndReset(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
 	overlay := filepath.Join(dir, "config.json")
@@ -322,15 +331,14 @@ func TestPasswordLoginCreationResetAndLegacyAdminTransition(t *testing.T) {
 	}
 	defer storage.Close(ctx)
 	sec, _ := build.GetByID[*security.Service](graph, "security")
-	admin, e := sec.Bootstrap(ctx, security.BootstrapInput{Tenant: "t", Subject: "admin", Operator: "test", Reason: "fixture", ExpiresAt: time.Now().Add(time.Hour)})
+	if e := sec.Bootstrap(ctx, security.AdminInput{Tenant: "t", Subject: "admin", Operator: "test", Reason: "fixture", Password: "AdminPassword123!"}); e != nil {
+		t.Fatal(e)
+	}
+	admin, e := sec.Login(ctx, capsecurity.LoginInput{Tenant: "t", Username: "admin", Password: "AdminPassword123!"})
 	if e != nil {
 		t.Fatal(e)
 	}
-	module, _ := build.GetByID[httpapi.Module](graph, "workspace-api")
-	mux := http.NewServeMux()
-	for _, r := range module.Routes() {
-		mux.Handle(r.Method+" /v1"+r.Path, r.Handler)
-	}
+	mux, _ := build.GetByID[http.Handler](graph, "http")
 	request := func(method, path, key string, body any, token string, cookie *http.Cookie) *httptest.ResponseRecorder {
 		t.Helper()
 		b, _ := json.Marshal(body)
@@ -354,12 +362,7 @@ func TestPasswordLoginCreationResetAndLegacyAdminTransition(t *testing.T) {
 			t.Fatalf("status %d, expected %d", w.Code, code)
 		}
 	}
-	legacy := request("POST", "/session", "", nil, admin.Secret, nil)
-	must(legacy, 200)
-	oldAdminCookie := legacy.Result().Cookies()[0]
-	must(request("POST", "/account/password", "initial", map[string]string{"Password": "AdminPassword123!"}, "", oldAdminCookie), 200)
-	must(request("GET", "/me", "", nil, "", oldAdminCookie), 401)
-	must(request("POST", "/session", "", nil, admin.Secret, nil), 401)
+	must(request("POST", "/session", "", nil, admin.Secret, nil), 400)
 	login := func(username, password string) *httptest.ResponseRecorder {
 		return request("POST", "/session", "", map[string]string{"Username": username, "Password": password}, "", nil)
 	}

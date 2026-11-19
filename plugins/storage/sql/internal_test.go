@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	capsecurity "github.com/lengzhao/taskloom/cap/security"
 	"os"
 	"path/filepath"
 	"testing"
@@ -12,8 +13,8 @@ import (
 	"github.com/lengzhao/taskloom/cap/fault"
 	"github.com/lengzhao/taskloom/cap/identity"
 	"github.com/lengzhao/taskloom/cap/unitofwork"
-	"github.com/lengzhao/taskloom/domain/security"
 	local "github.com/lengzhao/taskloom/plugins/identity/local"
+	"github.com/lengzhao/taskloom/plugins/security"
 )
 
 func TestMigrationRejectsDriftAndRecoversAfterRepair(t *testing.T) {
@@ -142,7 +143,10 @@ func TestCredentialPersistenceContainsOnlyDigestAndExpiryIsChecked(t *testing.T)
 		t.Fatal(err)
 	}
 	svc := security.New(security.Deps{Passwords: s, Transactions: s, Principals: s, Credentials: s, Bootstrap: s, Members: s, Audit: s, Events: s})
-	issued, err := svc.Bootstrap(ctx, security.BootstrapInput{Tenant: "t", Subject: "admin", Operator: "op", Reason: "test", ExpiresAt: time.Now().Add(time.Hour)})
+	if err := svc.Bootstrap(ctx, security.AdminInput{Tenant: "t", Subject: "admin", Operator: "op", Reason: "test", Password: "AdminPassword123!"}); err != nil {
+		t.Fatal(err)
+	}
+	issued, err := svc.Login(ctx, capsecurity.LoginInput{Tenant: "t", Username: "admin", Password: "AdminPassword123!"})
 	if err != nil {
 		t.Fatal(err)
 	}

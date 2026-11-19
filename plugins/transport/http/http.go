@@ -1,10 +1,12 @@
-// Package http owns an HTTP listener and optional module lifecycle, without task rules.
+// Package http owns an HTTP listener and mounts module routes, without task rules.
 package http
 
 import (
+	"net/url"
+
 	"context"
 	"errors"
-	"fmt"
+	"github.com/lengzhao/taskloom/runtime/httpx"
 	"net"
 	stdhttp "net/http"
 	"strconv"
@@ -17,8 +19,11 @@ import (
 )
 
 type Config struct {
-	Listen       string `json:"listen"`
-	APIPrefix    string `json:"apiPrefix"`
+	Listen    string `json:"listen"`
+	APIPrefix string `json:"apiPrefix"`
+	// Origin is the one browser origin allowed to call the API. Plain http is
+	// accepted only for a loopback host; anything reachable elsewhere uses https.
+	Origin       string `json:"origin"`
 	ReadTimeout  string `json:"readTimeout"`
 	WriteTimeout string `json:"writeTimeout"`
 }
@@ -29,6 +34,9 @@ func (c *Config) SetDefaults() {
 	}
 	if c.APIPrefix == "" {
 		c.APIPrefix = "/v1"
+	}
+	if c.Origin == "" {
+		c.Origin = "http://127.0.0.1:8080"
 	}
 	if c.ReadTimeout == "" {
 		c.ReadTimeout = "30s"
@@ -48,6 +56,13 @@ func (c *Config) Validate() error {
 	}
 	if !strings.HasPrefix(c.APIPrefix, "/") || strings.ContainsAny(c.APIPrefix, "?#{} ") || strings.Contains(c.APIPrefix, "..") {
 		return errors.New("invalid apiPrefix")
+	}
+	u, err := url.Parse(c.Origin)
+	if err != nil || u.Host == "" || c.Origin != u.Scheme+"://"+u.Host {
+		return errors.New("origin must be scheme://host[:port]")
+	}
+	if u.Scheme != "https" && (u.Scheme != "http" || !httpx.LoopbackHost(u.Host)) {
+		return errors.New("origin must use https unless its host is loopback")
 	}
 	for _, value := range []string{c.ReadTimeout, c.WriteTimeout} {
 		d, err := time.ParseDuration(value)
@@ -86,12 +101,36 @@ func New(c Config, d Deps) (*Server, error) {
 	mux := stdhttp.NewServeMux()
 	operations := map[string]bool{}
 	// ServeMux panics on overlapping patterns. Convert startup errors, never crash a process.
-	if err := mount(mux, strings.TrimRight(c.APIPrefix, "/"), d.Modules, operations); err != nil {
+	if err := mount(mux, strings.TrimRight(c.APIPrefix, "/"), c.Origin, d.Modules, operations); err != nil {
 		return nil, err
 	}
 	return &Server{cfg: c, modules: d.Modules, mux: mux, ready: make(chan struct{}), stopDone: make(chan struct{})}, nil
 }
-func mount(mux *stdhttp.ServeMux, prefix string, modules []httpapi.Module, operations map[string]bool) (err error) {
+
+// guard applies the request envelope every route shares: no caching or
+// sniffing, only the configured browser origin, and a custom header on
+// cookie-authenticated writes so another site cannot forge them.
+func guard(origin string, next stdhttp.Handler) stdhttp.Handler {
+	return stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; frame-ancestors 'none'")
+		if o := r.Header.Get("Origin"); o != "" && o != origin {
+			stdhttp.Error(w, "origin rejected", 403)
+			return
+		}
+		if r.Method != "GET" && r.Header.Get("Authorization") == "" && r.Header.Get("X-Taskloom-Request") != "1" {
+			stdhttp.Error(w, "request header required", 403)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// ServeHTTP serves the mounted routes; the listener in Run uses the same mux.
+func (s *Server) ServeHTTP(w stdhttp.ResponseWriter, r *stdhttp.Request) { s.mux.ServeHTTP(w, r) }
+
+func mount(mux *stdhttp.ServeMux, prefix, origin string, modules []httpapi.Module, operations map[string]bool) (err error) {
 	defer func() {
 		if recover() != nil {
 			err = errors.New("conflicting or invalid HTTP route")
@@ -111,7 +150,7 @@ func mount(mux *stdhttp.ServeMux, prefix string, modules []httpapi.Module, opera
 				return errors.New("invalid route method")
 			}
 			operations[route.Operation] = true
-			mux.Handle(route.Method+" "+prefix+route.Path, route.Handler)
+			mux.Handle(route.Method+" "+prefix+route.Path, guard(origin, route.Handler))
 		}
 	}
 	return nil
@@ -135,28 +174,11 @@ func (s *Server) Run(parent context.Context) (result error) {
 	s.cancel = cancel
 	s.mu.Unlock()
 	defer cancel()
-	opened := []httpapi.ModuleLifecycle{}
 	defer func() {
 		if s.isStopped() {
 			<-s.stopDone
 		}
-		cleanup, stop := context.WithTimeout(context.Background(), 10*time.Second)
-		defer stop()
-		for i := len(opened) - 1; i >= 0; i-- {
-			result = errors.Join(result, opened[i].Close(cleanup))
-		}
 	}()
-	for _, m := range s.modules {
-		if ctx.Err() != nil || s.isStopped() {
-			return nil
-		}
-		if managed, ok := m.(httpapi.ModuleLifecycle); ok {
-			if err := managed.Open(ctx); err != nil {
-				return fmt.Errorf("open HTTP module: %w", err)
-			}
-			opened = append(opened, managed)
-		}
-	}
 	listener, err := (&net.ListenConfig{}).Listen(ctx, "tcp", s.cfg.Listen)
 	if err != nil {
 		if ctx.Err() != nil {

@@ -2,7 +2,6 @@ package workflow_test
 
 import (
 	"errors"
-	"github.com/lengzhao/pluginkit/build"
 	"github.com/lengzhao/taskloom/cap/acceptance"
 	az "github.com/lengzhao/taskloom/cap/authorization"
 	"github.com/lengzhao/taskloom/cap/fault"
@@ -13,7 +12,7 @@ import (
 
 func TestOpenQuestionWaitsOnOwnerAndHoldsCompletion(t *testing.T) {
 	f := setup(t, nil)
-	qs, ok := build.GetByID[api.QuestionCommands](f.graph, "question-commands")
+	qs, ok := f.questions(), true
 	if !ok {
 		t.Fatal("question-commands missing")
 	}
@@ -78,7 +77,7 @@ func TestOpenQuestionWaitsOnOwnerAndHoldsCompletion(t *testing.T) {
 
 func TestQuestionFromOldRoundIsObsolete(t *testing.T) {
 	f := setup(t, nil)
-	qs, _ := build.GetByID[api.QuestionCommands](f.graph, "question-commands")
+	qs := f.questions()
 	d := f.create(t)
 	s := f.open(t, d)
 	s, e := qs.Ask(f.ctx, f.agent, "ask", api.Ask{TaskID: d.Task.ID, RoundID: s.Position.RoundID, Body: "?"})
@@ -112,7 +111,7 @@ func TestQuestionFromOldRoundIsObsolete(t *testing.T) {
 // inbox, only they can answer, and completion waits for them like for the owner.
 func TestQuestionToParticipantWaitsOnThem(t *testing.T) {
 	f := setup(t, nil)
-	qs, _ := build.GetByID[api.QuestionCommands](f.graph, "question-commands")
+	qs := f.questions()
 	helper := f.human(t, "helper")
 	f.human(t, "outsider")
 	d := f.create(t)

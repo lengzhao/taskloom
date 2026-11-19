@@ -19,11 +19,11 @@ import (
 	api "github.com/lengzhao/taskloom/cap/workflow"
 )
 
-// QuestionDeps has nine fields: the command lifecycle, the task and its flow
+// QuestionDeps has eight fields: the command lifecycle, the task and its flow
 // position, the timeline that holds the text, the question records, the
 // executor's progress, the relations that validate an addressee, and the
-// snapshot/event pair every task command returns and publishes. Splitting them
-// would only move the same transaction coordination elsewhere.
+// change event. Splitting them would only move the same transaction
+// coordination elsewhere.
 type QuestionDeps struct {
 	Commands  command.Handler    `json:"commands"`
 	Tasks     task.Reader        `json:"tasks"`
@@ -32,34 +32,28 @@ type QuestionDeps struct {
 	Questions question.Store     `json:"questions"`
 	Progress  execution.Progress `json:"progress"`
 	Relations az.Relations       `json:"relations"`
-	Snapshots api.FactsReader    `json:"snapshots"`
 	Events    record.EventWriter `json:"events"`
 }
-type QuestionModule struct {
-	s *Service
-	q question.Store
-	p execution.Progress
-	r az.Relations
-}
+type QuestionModule struct{ d QuestionDeps }
 
 func init() { pluginkit.Register("commands/question", NewQuestions) }
 
 func NewQuestions(_ struct{}, d QuestionDeps) (*QuestionModule, error) {
-	if d.Commands == nil || d.Tasks == nil || d.Flow == nil || d.Commits == nil || d.Questions == nil || d.Progress == nil || d.Relations == nil || d.Snapshots == nil || d.Events == nil {
+	if d.Commands == nil || d.Tasks == nil || d.Flow == nil || d.Commits == nil || d.Questions == nil || d.Progress == nil || d.Relations == nil || d.Events == nil {
 		return nil, fault.ErrInput
 	}
-	return &QuestionModule{&Service{d: dependencies{Commands: d.Commands, Tasks: d.Tasks, Flow: d.Flow, Commits: d.Commits, Snapshots: d.Snapshots, Events: d.Events}}, d.Questions, d.Progress, d.Relations}, nil
+	return &QuestionModule{d}, nil
 }
 
 func validText(body string) bool { return strings.TrimSpace(body) != "" && len(body) <= 20000 }
 
 // activeRound loads the task and requires its current active round.
 func (m *QuestionModule) activeRound(ctx context.Context, p identity.Principal, taskID string) (task.Task, flow.Position, error) {
-	t, e := m.s.d.Tasks.GetTask(ctx, p.Tenant, taskID)
+	t, e := m.d.Tasks.GetTask(ctx, p.Tenant, taskID)
 	if e != nil {
 		return t, flow.Position{}, e
 	}
-	pos, e := m.s.d.Flow.Read(ctx, t)
+	pos, e := m.d.Flow.Read(ctx, t)
 	if e != nil {
 		return t, pos, e
 	}
@@ -71,7 +65,7 @@ func (m *QuestionModule) activeRound(ctx context.Context, p identity.Principal, 
 
 func (m *QuestionModule) appendCommit(ctx context.Context, p identity.Principal, t task.Task, kind, body, ref string) (commit.Commit, error) {
 	c := commit.Commit{Tenant: t.Tenant, TaskID: t.ID, ID: id(), Kind: kind, Body: body, RefID: ref, Author: p.ID, OwnerID: p.OwnerID, BasisVersion: t.BasisVersion}
-	return c, m.s.d.Commits.Append(ctx, c)
+	return c, m.d.Commits.Append(ctx, c)
 }
 
 // addressee resolves who a question is asked of: the owner by default, or a
@@ -87,76 +81,76 @@ func (m *QuestionModule) addressee(ctx context.Context, p identity.Principal, t 
 	if to == t.Owner {
 		return to, nil
 	}
-	member, e := m.r.GetMember(ctx, t.Tenant, to)
+	member, e := m.d.Relations.GetMember(ctx, t.Tenant, to)
 	if e != nil || !member.Active {
 		return "", fault.ErrInput
 	}
-	if in, e := m.r.HasParticipant(ctx, az.Participant{Tenant: t.Tenant, TaskID: t.ID, Subject: to}); e != nil || !in {
+	if in, e := m.d.Relations.HasParticipant(ctx, az.Participant{Tenant: t.Tenant, TaskID: t.ID, Subject: to}); e != nil || !in {
 		return "", fault.ErrInput
 	}
 	return to, nil
 }
 
 // Ask is open to any task participant; it waits on the addressee.
-func (m *QuestionModule) Ask(ctx context.Context, token, key string, in api.Ask) (api.Snapshot, error) {
-	return run(ctx, m.s, token, key, "commit.append", in.TaskID, in, func(tx context.Context, p identity.Principal) ([]byte, error) {
+func (m *QuestionModule) Ask(ctx context.Context, token, key string, in api.Ask) (api.Ref, error) {
+	return run(ctx, m.d.Commands, token, key, "commit.append", in.TaskID, in, func(tx context.Context, p identity.Principal) (api.Ref, error) {
 		if !validText(in.Body) {
-			return nil, fault.ErrInput
+			return api.Ref{}, fault.ErrInput
 		}
 		t, pos, e := m.activeRound(tx, p, in.TaskID)
 		if e != nil {
-			return nil, e
+			return api.Ref{}, e
 		}
 		if pos.RoundID != in.RoundID {
-			return nil, fault.ErrConflict
+			return api.Ref{}, fault.ErrConflict
 		}
 		to, e := m.addressee(tx, p, t, in.Addressee)
 		if e != nil {
-			return nil, e
+			return api.Ref{}, e
 		}
 		c, e := m.appendCommit(tx, p, t, "question", in.Body, "")
 		if e != nil {
-			return nil, e
+			return api.Ref{}, e
 		}
-		if e = m.q.CreateQuestion(tx, question.Question{Tenant: t.Tenant, TaskID: t.ID, ID: id(), RoundID: pos.RoundID, CommitID: c.ID, Asker: p.ID, Addressee: to, Status: question.StatusOpen, CreatedAt: time.Now()}); e != nil {
-			return nil, e
+		if e = m.d.Questions.CreateQuestion(tx, question.Question{Tenant: t.Tenant, TaskID: t.ID, ID: id(), RoundID: pos.RoundID, CommitID: c.ID, Asker: p.ID, Addressee: to, Status: question.StatusOpen, CreatedAt: time.Now()}); e != nil {
+			return api.Ref{}, e
 		}
-		if e = m.p.RecordProgress(tx, p, t.Tenant, t.ID); e != nil {
-			return nil, e
+		if e = m.d.Progress.RecordProgress(tx, p, t.Tenant, t.ID); e != nil {
+			return api.Ref{}, e
 		}
-		return m.s.finish(tx, t)
+		return finish(tx, m.d.Flow, m.d.Events, t)
 	})
 }
 
 // Answer is reserved to the addressee and only for the current round.
 // The flow is refreshed afterwards, so a completion held by the question can proceed.
-func (m *QuestionModule) Answer(ctx context.Context, token, key string, in api.Answer) (api.Snapshot, error) {
-	return run(ctx, m.s, token, key, "commit.append", in.TaskID, in, func(tx context.Context, p identity.Principal) ([]byte, error) {
+func (m *QuestionModule) Answer(ctx context.Context, token, key string, in api.Answer) (api.Ref, error) {
+	return run(ctx, m.d.Commands, token, key, "commit.append", in.TaskID, in, func(tx context.Context, p identity.Principal) (api.Ref, error) {
 		if !validText(in.Body) {
-			return nil, fault.ErrInput
+			return api.Ref{}, fault.ErrInput
 		}
 		t, pos, e := m.activeRound(tx, p, in.TaskID)
 		if e != nil {
-			return nil, e
+			return api.Ref{}, e
 		}
-		q, e := m.q.GetQuestion(tx, t.Tenant, t.ID, in.QuestionID)
+		q, e := m.d.Questions.GetQuestion(tx, t.Tenant, t.ID, in.QuestionID)
 		if e != nil {
-			return nil, e
+			return api.Ref{}, e
 		}
 		if p.ID != q.Addressee {
-			return nil, az.ErrForbidden
+			return api.Ref{}, az.ErrForbidden
 		}
 		if q.Status != question.StatusOpen || q.RoundID != pos.RoundID {
-			return nil, fault.ErrConflict
+			return api.Ref{}, fault.ErrConflict
 		}
 		c, e := m.appendCommit(tx, p, t, "answer", in.Body, q.CommitID)
 		if e != nil {
-			return nil, e
+			return api.Ref{}, e
 		}
 		q.Status, q.AnswerCommitID, q.AnsweredBy = question.StatusAnswered, c.ID, p.ID
-		if e = m.q.AnswerQuestion(tx, q); e != nil {
-			return nil, e
+		if e = m.d.Questions.AnswerQuestion(tx, q); e != nil {
+			return api.Ref{}, e
 		}
-		return m.s.finish(tx, t)
+		return finish(tx, m.d.Flow, m.d.Events, t)
 	})
 }

@@ -10,6 +10,7 @@ import (
 	"github.com/lengzhao/taskloom/cap/delivery"
 	"github.com/lengzhao/taskloom/cap/execution"
 	"github.com/lengzhao/taskloom/cap/fault"
+	"github.com/lengzhao/taskloom/cap/flow"
 	"github.com/lengzhao/taskloom/cap/identity"
 	"github.com/lengzhao/taskloom/cap/lifecycle"
 	"github.com/lengzhao/taskloom/cap/record"
@@ -17,8 +18,8 @@ import (
 	"github.com/lengzhao/taskloom/cap/unitofwork"
 	api "github.com/lengzhao/taskloom/cap/workflow"
 	workspace "github.com/lengzhao/taskloom/cap/workspace"
-	"github.com/lengzhao/taskloom/domain/security"
 	_ "github.com/lengzhao/taskloom/plugins"
+	"github.com/lengzhao/taskloom/plugins/security"
 	"github.com/lengzhao/taskloom/runtime/config"
 	"os"
 	"path/filepath"
@@ -30,11 +31,11 @@ import (
 type fixture struct {
 	graph        *build.Result
 	ctx          context.Context
-	tasks        workspace.Commands
+	tasks        taskCommands
 	taskQueries  workspace.Queries
-	ex           api.ExecutionCommands
-	results      api.ResultCommands
-	controls     api.ControlCommands
+	ex           executionCommands
+	results      resultCommands
+	controls     controlCommands
 	query        api.Queries
 	security     *security.Service
 	owner, agent string
@@ -68,19 +69,26 @@ func setup(t *testing.T, override map[string]any) *fixture {
 	}
 	t.Cleanup(func() { resource.Close(ctx) })
 	f := &fixture{ctx: ctx, graph: graph}
-	f.tasks, _ = build.GetByID[workspace.Commands](graph, "workspace")
+	commands, _ := build.GetByID[workspace.Commands](graph, "workspace")
 	f.taskQueries, _ = build.GetByID[workspace.Queries](graph, "workspace")
-	f.ex, _ = build.GetByID[api.ExecutionCommands](graph, "execution-commands")
-	f.results, _ = build.GetByID[api.ResultCommands](graph, "result-commands")
-	f.controls, _ = build.GetByID[api.ControlCommands](graph, "flow-commands")
+	f.tasks = taskCommands{commands, f.taskQueries}
 	f.query, _ = build.GetByID[api.Queries](graph, "workflow-query")
+	ex, _ := build.GetByID[api.ExecutionCommands](graph, "execution-commands")
+	results, _ := build.GetByID[api.ResultCommands](graph, "result-commands")
+	controls, _ := build.GetByID[api.ControlCommands](graph, "flow-commands")
+	f.ex = executionCommands{ex, readBack{f.query}}
+	f.results = resultCommands{results, readBack{f.query}}
+	f.controls = controlCommands{controls, readBack{f.query}}
 	f.security, _ = build.GetByID[*security.Service](graph, "security")
 	f.tx, _ = build.GetByID[unitofwork.Manager](graph, "sql")
 	f.exStore, _ = build.GetByID[execution.Store](graph, "sql")
 	f.commits, _ = build.GetByID[commit.Log](graph, "sql")
 	f.deliveries, _ = build.GetByID[delivery.Reader](graph, "sql")
 	f.reviews, _ = build.GetByID[acceptance.Reader](graph, "sql")
-	issued, e := f.security.Bootstrap(ctx, security.BootstrapInput{Tenant: "t", Subject: "owner", Operator: "test", Reason: "fixture", ExpiresAt: time.Now().Add(time.Hour)})
+	if e := f.security.Bootstrap(ctx, security.AdminInput{Tenant: "t", Subject: "owner", Operator: "test", Reason: "fixture", Password: "AdminPassword123!"}); e != nil {
+		t.Fatal(e)
+	}
+	issued, e := f.security.Login(ctx, capsecurity.LoginInput{Tenant: "t", Username: "owner", Password: "AdminPassword123!"})
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -366,5 +374,47 @@ func TestSameRoundRetryFencesOldExecutionAndReturnAdoptsBasis(t *testing.T) {
 	}
 	if edited.Task.Owner != d.Task.Owner || edited.Task.BasisVersion != 2 {
 		t.Fatal("owner changed or basis not versioned")
+	}
+}
+
+// The receipt keeps only the command's Ref: a replay returns that Ref, while
+// facts are read at the time of the replay, never the stale state of the write.
+func TestReplayReturnsSameRefAndCurrentFacts(t *testing.T) {
+	f := setup(t, nil)
+	d := f.create(t)
+	s := f.open(t, d)
+	results, _ := build.GetByID[api.ResultCommands](f.graph, "result-commands")
+	in := api.Submit{TaskID: d.Task.ID, ExecutionID: s.Execution.ID, Body: "result"}
+	first, e := results.Submit(f.ctx, f.agent, "submit", in)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if first.TaskID != d.Task.ID || first.RoundID != s.Position.RoundID {
+		t.Fatal("ref does not name the task and round", first)
+	}
+	submitted := f.read(t, d.Task.ID).Submission
+	if _, e = f.results.Review(f.ctx, f.owner, "approve", api.Review{TaskID: d.Task.ID, Verdict: acceptance.Verdict{SubmissionID: submitted.ID, CommitID: submitted.CommitID, Outcome: "approved"}}); e != nil {
+		t.Fatal(e)
+	}
+	replayed, e := results.Submit(f.ctx, f.agent, "submit", in)
+	if e != nil || replayed != first {
+		t.Fatal("replay changed the ref", replayed, first, e)
+	}
+	if now := f.read(t, d.Task.ID); now.Position.Status != flow.PhaseCompleted {
+		t.Fatal("current facts not visible after replay", now.Position)
+	}
+	receipts, _ := build.GetByID[record.Receipts](f.graph, "sql")
+	stored, e := receipts.FindReceipt(f.ctx, record.RequestKey{Tenant: "t", Subject: "agent", Operation: "result.submit", Key: "submit"})
+	if e != nil {
+		t.Fatal(e)
+	}
+	var fields map[string]any
+	if e = json.Unmarshal(stored.Result, &fields); e != nil {
+		t.Fatal(e)
+	}
+	for k := range fields {
+		if k != "TaskID" && k != "RoundID" && k != "ExecutionID" {
+			t.Fatal("receipt stores derivable facts", k)
+		}
 	}
 }

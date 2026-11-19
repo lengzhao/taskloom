@@ -75,16 +75,29 @@ func (s *Service) Projects(ctx context.Context, token string) ([]api.Project, er
 	})
 	return out, e
 }
+
+// Project reads one project of the caller's tenant, visible like Projects.
+func (s *Service) Project(ctx context.Context, token, id string) (api.Project, error) {
+	var out api.Project
+	e := s.d.Transactions.Do(ctx, func(tx context.Context) error {
+		p, e := s.actor(tx, token)
+		if e != nil {
+			return e
+		}
+		out, e = s.d.Store.GetProject(tx, p.Tenant, id)
+		return e
+	})
+	return out, e
+}
 func valid(name, description string) bool {
 	return strings.TrimSpace(name) != "" && len(name) <= 200 && len(description) <= 20000
 }
-func (s *Service) EditSpace(ctx context.Context, token, key string, in api.SpaceEdit) (api.Space, error) {
-	var out api.Space
+func (s *Service) EditSpace(ctx context.Context, token, key string, in api.SpaceEdit) error {
 	p, e := s.actor(ctx, token)
 	if e != nil {
-		return out, e
+		return e
 	}
-	b, e := command.Run(ctx, s.d.Commands, cmd.Request{Token: token, Key: key, Operation: "space.edit", Resource: p.Tenant}, in, func(tx context.Context, p identity.Principal) ([]byte, error) {
+	_, e = command.Run(ctx, s.d.Commands, cmd.Request{Token: token, Key: key, Operation: "space.edit", Resource: p.Tenant}, in, func(tx context.Context, p identity.Principal) ([]byte, error) {
 		if !valid(in.Name, in.Description) {
 			return nil, fault.ErrInput
 		}
@@ -95,25 +108,18 @@ func (s *Service) EditSpace(ctx context.Context, token, key string, in api.Space
 		if old.Version != in.ExpectedVersion {
 			return nil, fault.ErrConflict
 		}
-		out = api.Space{Tenant: p.Tenant, Name: strings.TrimSpace(in.Name), Description: in.Description, Version: old.Version + 1}
-		if e = s.d.Store.SaveSpace(tx, out); e != nil {
+		space := api.Space{Tenant: p.Tenant, Name: strings.TrimSpace(in.Name), Description: in.Description, Version: old.Version + 1}
+		if e = s.d.Store.SaveSpace(tx, space); e != nil {
 			return nil, e
 		}
-		if e = s.d.Events.AppendEvent(tx, record.Event{Tenant: p.Tenant, Resource: p.Tenant, Kind: record.EventAccessChanged}); e != nil {
-			return nil, e
-		}
-		return json.Marshal(out)
+		return nil, s.d.Events.AppendEvent(tx, record.Event{Tenant: p.Tenant, Resource: p.Tenant, Kind: record.EventAccessChanged})
 	})
-	if e == nil {
-		e = json.Unmarshal(b, &out)
-	}
-	return out, e
+	return e
 }
-func (s *Service) SaveProject(ctx context.Context, token, key string, in api.ProjectEdit) (api.Project, error) {
-	var out api.Project
+func (s *Service) SaveProject(ctx context.Context, token, key string, in api.ProjectEdit) (string, error) {
 	p, e := s.actor(ctx, token)
 	if e != nil {
-		return out, e
+		return "", e
 	}
 	op := "project.edit"
 	if in.ID == "" {
@@ -179,19 +185,20 @@ func (s *Service) SaveProject(ctx context.Context, token, key string, in api.Pro
 			}
 			id = hex.EncodeToString(b[:])
 		}
-		out = api.Project{Tenant: p.Tenant, ID: id, Name: strings.TrimSpace(in.Name), Description: in.Description, Owner: owner, Archived: in.Archived, Version: old.Version + 1}
-		if e = s.d.Store.SaveProject(tx, out); e != nil {
+		project := api.Project{Tenant: p.Tenant, ID: id, Name: strings.TrimSpace(in.Name), Description: in.Description, Owner: owner, Archived: in.Archived, Version: old.Version + 1}
+		if e = s.d.Store.SaveProject(tx, project); e != nil {
 			return nil, e
 		}
-		if e = s.d.Events.AppendEvent(tx, record.Event{Tenant: p.Tenant, Resource: out.ID, Kind: record.EventAccessChanged}); e != nil {
+		if e = s.d.Events.AppendEvent(tx, record.Event{Tenant: p.Tenant, Resource: id, Kind: record.EventAccessChanged}); e != nil {
 			return nil, e
 		}
-		return json.Marshal(out)
+		return json.Marshal(id)
 	})
+	var id string
 	if e == nil {
-		e = json.Unmarshal(b, &out)
+		e = json.Unmarshal(b, &id)
 	}
-	return out, e
+	return id, e
 }
 
 func (s *Service) People(ctx context.Context, token string) ([]az.MemberOption, error) {

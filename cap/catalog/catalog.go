@@ -39,10 +39,15 @@ type Store interface {
 	SaveSpace(context.Context, Space) error
 	SaveProject(context.Context, Project) error
 }
+
+// Commands return only what they fixed and their receipts store only that:
+// a space is identified by the tenant, a project by its ID. Callers read
+// current facts through Space and Project, so a replay never shows stale ones.
 type Service interface {
 	People(context.Context, string) ([]az.MemberOption, error)
 	Space(context.Context, string) (Space, error)
-	EditSpace(context.Context, string, string, SpaceEdit) (Space, error)
+	EditSpace(context.Context, string, string, SpaceEdit) error
 	Projects(context.Context, string) ([]Project, error)
-	SaveProject(context.Context, string, string, ProjectEdit) (Project, error)
+	Project(ctx context.Context, credential, id string) (Project, error)
+	SaveProject(context.Context, string, string, ProjectEdit) (projectID string, err error)
 }

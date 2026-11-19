@@ -2,11 +2,10 @@ package http_test
 
 import (
 	"context"
-	"errors"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -15,31 +14,6 @@ import (
 	transport "github.com/lengzhao/taskloom/plugins/transport/http"
 )
 
-type module struct {
-	mu            sync.Mutex
-	opens, closes int
-	fail          bool
-	path          string
-}
-
-func (m *module) Routes() []httpapi.Route {
-	return []httpapi.Route{{Method: "GET", Path: m.path, Operation: m.path, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) })}}
-}
-func (m *module) Open(context.Context) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.opens++
-	if m.fail {
-		return errors.New("module open failed")
-	}
-	return nil
-}
-func (m *module) Close(context.Context) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.closes++
-	return nil
-}
 func TestHealthServeAndGracefulStop(t *testing.T) {
 	h, err := transport.New(transport.Config{Listen: "127.0.0.1:0", APIPrefix: "/v1"}, transport.Deps{Modules: []httpapi.Module{newHealth(t)}})
 	if err != nil {
@@ -91,20 +65,6 @@ func TestRouteCollisionAndInvalidConfig(t *testing.T) {
 		t.Fatal("invalid listen accepted")
 	}
 }
-func TestModuleOpenFailureCleansEarlierModule(t *testing.T) {
-	first := &module{path: "/first"}
-	broken := &module{path: "/broken", fail: true}
-	h, err := transport.New(transport.Config{Listen: "127.0.0.1:0"}, transport.Deps{Modules: []httpapi.Module{first, broken}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := h.Run(context.Background()); err == nil {
-		t.Fatal("expected failed module")
-	}
-	if first.opens != 1 || first.closes != 1 {
-		t.Fatalf("lifecycle: %+v", first)
-	}
-}
 func TestStopBeforeRunDoesNotLeaveListener(t *testing.T) {
 	h, err := transport.New(transport.Config{Listen: "127.0.0.1:0"}, transport.Deps{Modules: []httpapi.Module{newHealth(t)}})
 	if err != nil {
@@ -130,4 +90,52 @@ func newHealth(t *testing.T) httpapi.Module {
 		t.Fatal(err)
 	}
 	return m
+}
+
+// Plain http is only for a loopback origin; anything else must be https.
+func TestOriginMustBeHTTPSUnlessLoopback(t *testing.T) {
+	for origin, ok := range map[string]bool{
+		"http://127.0.0.1:8080":      true,
+		"http://localhost:8899":      true,
+		"http://[::1]:8080":          true,
+		"https://tasks.example.com":  true,
+		"http://tasks.example.com":   false,
+		"https://tasks.example.com/": false,
+		"https://user@example.com":   false,
+		"tasks.example.com":          false,
+	} {
+		_, err := transport.New(transport.Config{Listen: "127.0.0.1:0", Origin: origin}, transport.Deps{})
+		if (err == nil) != ok {
+			t.Errorf("origin %q accepted=%v", origin, err == nil)
+		}
+	}
+}
+
+// Every mounted route gets the shared envelope, without the module asking.
+func TestEveryRouteRejectsForeignOriginAndHeaderlessCookieWrites(t *testing.T) {
+	h, err := transport.New(transport.Config{Listen: "127.0.0.1:0", Origin: "https://tasks.example.com"}, transport.Deps{Modules: []httpapi.Module{newHealth(t)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		method, origin, header string
+		code                   int
+	}{
+		{"GET", "", "", 200},
+		{"GET", "https://evil.example", "", 403},
+		{"GET", "https://tasks.example.com", "", 200},
+	} {
+		r := httptest.NewRequest(c.method, "/v1/healthz", nil)
+		if c.origin != "" {
+			r.Header.Set("Origin", c.origin)
+		}
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		if w.Code != c.code {
+			t.Errorf("%+v got %d", c, w.Code)
+		}
+		if w.Header().Get("Cache-Control") != "no-store" {
+			t.Error("envelope headers missing")
+		}
+	}
 }

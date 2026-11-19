@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"github.com/lengzhao/pluginkit"
 	capcommand "github.com/lengzhao/taskloom/cap/command"
 	capsecurity "github.com/lengzhao/taskloom/cap/security"
 	"strings"
@@ -37,11 +38,18 @@ type Deps struct {
 }
 type Service struct{ d Deps }
 
+func init() {
+	pluginkit.Register("commands/security", func(_ struct{}, d Deps) (*Service, error) { return New(d), nil })
+}
+
 func New(d Deps) *Service { return &Service{d} }
 
-type BootstrapInput struct {
+// AdminInput is an offline operator's request to create or recover a tenant
+// administrator. People authenticate only with a password, so no credential
+// is issued here: the administrator logs in to get one.
+type AdminInput struct {
 	Tenant, Subject, Operator, Reason string
-	ExpiresAt                         time.Time
+	Password                          string
 }
 
 func valid(s string) bool {
@@ -61,23 +69,23 @@ func credential(p identity.Principal, expires time.Time) (identity.Credential, c
 	id := digest[:32]
 	return identity.Credential{ID: id, Principal: p, Digest: digest, ExpiresAt: expires.UTC()}, capsecurity.Issued{ID: id, Secret: secret}, nil
 }
-func (s *Service) Bootstrap(ctx context.Context, in BootstrapInput) (capsecurity.Issued, error) {
+func (s *Service) Bootstrap(ctx context.Context, in AdminInput) error {
 	if !valid(in.Tenant) || !valid(in.Subject) || !valid(in.Operator) || !valid(in.Reason) {
-		return capsecurity.Issued{}, errors.New("bootstrap requires tenant, subject, operator and reason")
+		return errors.New("bootstrap requires tenant, subject, operator and reason")
 	}
 	p := identity.Principal{Tenant: in.Tenant, ID: in.Subject, Kind: "human"}
-	c, issued, err := credential(p, in.ExpiresAt)
+	hash, err := passwordHash(in.Password)
 	if err != nil {
-		return capsecurity.Issued{}, err
+		return err
 	}
-	err = s.d.Transactions.Do(ctx, func(tx context.Context) error {
+	return s.d.Transactions.Do(ctx, func(tx context.Context) error {
 		if err := s.d.Bootstrap.ClaimBootstrap(tx); err != nil {
 			return err
 		}
 		if err := s.d.Principals.CreatePrincipal(tx, p); err != nil {
 			return err
 		}
-		if err := s.d.Credentials.SaveCredential(tx, c); err != nil {
+		if err := s.d.Passwords.SetPasswordHash(tx, p.Tenant, p.ID, hash); err != nil {
 			return err
 		}
 		if err := s.d.Members.SetMember(tx, authorization.Member{Tenant: p.Tenant, Subject: p.ID, Role: "admin", Active: true}); err != nil {
@@ -85,10 +93,6 @@ func (s *Service) Bootstrap(ctx context.Context, in BootstrapInput) (capsecurity
 		}
 		return s.d.Audit.AppendAudit(tx, record.Audit{Tenant: p.Tenant, Subject: in.Operator, Operation: "identity.bootstrap", Resource: p.ID, Outcome: "committed", Reason: in.Reason})
 	})
-	if err != nil {
-		return capsecurity.Issued{}, err
-	}
-	return issued, nil
 }
 func request(token, key, op, tenant string) capcommand.Request {
 	return capcommand.Request{Token: token, Key: key, Operation: op, Resource: tenant}
@@ -98,24 +102,18 @@ func (s *Service) Create(ctx context.Context, token, key string, p identity.Prin
 		if p.Tenant != actor.Tenant {
 			return nil, authorization.ErrForbidden
 		}
-		if !valid(p.ID) || (p.Kind != "human" && p.Kind != "agent") {
+		// Humans are created with a password (CreateUser); this creates Agents,
+		// which authenticate only with issued credentials.
+		if !valid(p.ID) || p.Kind != "agent" || p.CredentialID != "" || !valid(p.OwnerID) {
 			return nil, fault.ErrInput
 		}
-		if p.CredentialID != "" || (p.Kind == "human" && p.OwnerID != "") {
-			return nil, fault.ErrInput
+		owner, err := s.d.Principals.Resolve(tx, p.Tenant, p.OwnerID)
+		if err != nil || owner.Kind != "human" {
+			return nil, authorization.ErrForbidden
 		}
-		if p.Kind == "agent" {
-			if !valid(p.OwnerID) {
-				return nil, fault.ErrInput
-			}
-			owner, err := s.d.Principals.Resolve(tx, p.Tenant, p.OwnerID)
-			if err != nil || owner.Kind != "human" {
-				return nil, authorization.ErrForbidden
-			}
-			member, err := s.d.Members.GetMember(tx, p.Tenant, owner.ID)
-			if err != nil || !member.Active {
-				return nil, authorization.ErrForbidden
-			}
+		member, err := s.d.Members.GetMember(tx, p.Tenant, owner.ID)
+		if err != nil || !member.Active {
+			return nil, authorization.ErrForbidden
 		}
 		if e := s.d.Principals.CreatePrincipal(tx, p); e != nil {
 			return nil, e
@@ -135,6 +133,10 @@ func (s *Service) Issue(ctx context.Context, token, key string, in capsecurity.I
 		subject, err := s.d.Principals.Resolve(tx, in.Tenant, in.Subject)
 		if err != nil {
 			return nil, err
+		}
+		// Only Agents hold issued credentials; people sign in with a password.
+		if subject.Kind != "agent" {
+			return nil, fault.ErrInput
 		}
 		member, err := s.d.Members.GetMember(tx, in.Tenant, in.Subject)
 		if err != nil || !member.Active {
@@ -171,6 +173,19 @@ func (s *Service) Revoke(ctx context.Context, token, key string, in capsecurity.
 	return err
 }
 
+// Logout revokes exactly the caller's own credential. The idempotency key is
+// the credential ID, so each session ends once and a later login is not
+// mistaken for a replay.
+func (s *Service) Logout(ctx context.Context, token string) error {
+	sum := sha256.Sum256([]byte(token))
+	id := hex.EncodeToString(sum[:])[:32]
+	req := capcommand.Request{Token: token, Key: id, Operation: "session.logout", Resource: id, Authorize: func(context.Context, identity.Principal) error { return nil }}
+	_, err := command.Run(ctx, s.d.Commands, req, struct{}{}, func(tx context.Context, p identity.Principal) ([]byte, error) {
+		return nil, s.d.Credentials.RevokeCredential(tx, p.Tenant, p.CredentialID)
+	})
+	return err
+}
+
 // SetMember changes a concrete tenant relationship. Revocation applies to all
 // task reads/writes/replays without deleting historic authorship or ownership.
 func (s *Service) SetMember(ctx context.Context, token, key string, in authorization.Member) error {
@@ -197,14 +212,17 @@ func (s *Service) SetMember(ctx context.Context, token, key string, in authoriza
 }
 
 // Recover is an offline operator capability, never callable by an ordinary API.
-// Every old credential of this human is revoked atomically with issuing the new
-// credential and restoring this human’s tenant administrator membership.
-func (s *Service) Recover(ctx context.Context, in BootstrapInput) (capsecurity.Issued, error) {
+// Every old credential of this human is revoked atomically with replacing the
+// password and restoring this human’s tenant administrator membership.
+func (s *Service) Recover(ctx context.Context, in AdminInput) error {
 	if !valid(in.Tenant) || !valid(in.Subject) || !valid(in.Operator) || !valid(in.Reason) {
-		return capsecurity.Issued{}, errors.New("recovery requires tenant, subject, operator and reason")
+		return errors.New("recovery requires tenant, subject, operator and reason")
 	}
-	var issued capsecurity.Issued
-	err := s.d.Transactions.Do(ctx, func(tx context.Context) error {
+	hash, err := passwordHash(in.Password)
+	if err != nil {
+		return err
+	}
+	return s.d.Transactions.Do(ctx, func(tx context.Context) error {
 		p, err := s.d.Principals.Resolve(tx, in.Tenant, in.Subject)
 		if err != nil {
 			return err
@@ -212,41 +230,24 @@ func (s *Service) Recover(ctx context.Context, in BootstrapInput) (capsecurity.I
 		if p.Kind != "human" {
 			return authorization.ErrForbidden
 		}
-		c, out, err := credential(p, in.ExpiresAt)
-		if err != nil {
-			return err
-		}
 		if err = s.d.Credentials.RevokeSubjectCredentials(tx, p.Tenant, p.ID); err != nil {
 			return err
 		}
-		if s.d.Passwords != nil {
-			if err = s.d.Passwords.SetPasswordHash(tx, p.Tenant, p.ID, ""); err != nil {
-				return err
-			}
-		}
-		if err = s.d.Credentials.SaveCredential(tx, c); err != nil {
+		if err = s.d.Passwords.SetPasswordHash(tx, p.Tenant, p.ID, hash); err != nil {
 			return err
 		}
 		if err := s.d.Members.SetMember(tx, authorization.Member{Tenant: p.Tenant, Subject: p.ID, Role: "admin", Active: true}); err != nil {
 			return err
 		}
-		if err = s.d.Audit.AppendAudit(tx, record.Audit{Tenant: p.Tenant, Subject: in.Operator, Operation: "identity.recover", Resource: p.ID, Outcome: "committed", Reason: in.Reason}); err != nil {
-			return err
-		}
-		issued = out
-		return nil
+		return s.d.Audit.AppendAudit(tx, record.Audit{Tenant: p.Tenant, Subject: in.Operator, Operation: "identity.recover", Resource: p.ID, Outcome: "committed", Reason: in.Reason})
 	})
-	if err != nil {
-		return capsecurity.Issued{}, err
-	}
-	return issued, nil
 }
 
 // EnrollAgent is an explicitly invoked offline operator capability. Each
 // credential it issues identifies one running instance of the Agent.
 type AgentEnrollment struct {
-	BootstrapInput
-	Owner string
+	Tenant, Subject, Owner, Operator, Reason string
+	ExpiresAt                                time.Time
 }
 
 func (s *Service) EnrollAgent(ctx context.Context, in AgentEnrollment) (capsecurity.Issued, error) {

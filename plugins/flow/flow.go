@@ -26,6 +26,18 @@ type Config struct {
 	Acceptance capflow.Acceptance `json:"acceptance"`
 }
 
+func (c *Config) SetDefaults() {
+	if c.Acceptance == "" {
+		c.Acceptance = capflow.AcceptanceManual
+	}
+}
+func (c *Config) Validate() error {
+	if !knownAcceptance(c.Acceptance) {
+		return fmt.Errorf("unknown acceptance %q", c.Acceptance)
+	}
+	return nil
+}
+
 // Deps are the facts completion depends on, plus the stored position.
 type Deps struct {
 	Positions  capflow.PositionStore `json:"positions"`
@@ -42,11 +54,9 @@ type Controller struct {
 func init() { pluginkit.Register("task/flow", New) }
 
 func New(c Config, d Deps) (*Controller, error) {
-	if c.Acceptance == "" {
-		c.Acceptance = capflow.AcceptanceManual
-	}
-	if !knownAcceptance(c.Acceptance) {
-		return nil, fmt.Errorf("unknown acceptance %q", c.Acceptance)
+	c.SetDefaults()
+	if err := c.Validate(); err != nil {
+		return nil, err
 	}
 	if d.Positions == nil || d.Results == nil || d.Reviews == nil || d.Questions == nil || d.Executions == nil {
 		return nil, errors.New("flow requires positions, results, reviews, questions and executions")

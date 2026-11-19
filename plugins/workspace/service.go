@@ -81,8 +81,8 @@ func (s *Service) append(ctx context.Context, p identity.Principal, t task.Task,
 func (s *Service) event(ctx context.Context, t task.Task) error {
 	return s.d.Events.AppendEvent(ctx, record.Event{Tenant: t.Tenant, Resource: t.ID, Kind: record.EventTaskChanged})
 }
-func (s *Service) Create(ctx context.Context, token, key string, in api.Create) (api.Detail, error) {
-	var out api.Detail
+func (s *Service) Create(ctx context.Context, token, key string, in api.Create) (api.Ref, error) {
+	var out api.Ref
 	p, e := s.actor(ctx, token)
 	if e != nil {
 		return out, e
@@ -98,29 +98,25 @@ func (s *Service) Create(ctx context.Context, token, key string, in api.Create) 
 		if e := s.d.Tasks.CreateTask(tx, t); e != nil {
 			return nil, e
 		}
-		position, e := s.d.Flow.Initialize(tx, t)
-		if e != nil {
+		if _, e := s.d.Flow.Initialize(tx, t); e != nil {
 			return nil, e
 		}
-		if _, e = s.append(tx, p, t, "task.created", in.Title, ""); e != nil {
+		if _, e := s.append(tx, p, t, "task.created", in.Title, ""); e != nil {
 			return nil, e
 		}
-		if e = s.event(tx, t); e != nil {
+		if e := s.event(tx, t); e != nil {
 			return nil, e
 		}
-		return json.Marshal(api.Detail{Task: t, Position: position})
+		return json.Marshal(api.Ref{TaskID: t.ID})
 	})
 	if e == nil {
 		e = json.Unmarshal(b, &out)
 	}
 	return out, e
 }
-func (s *Service) Edit(ctx context.Context, token, key string, in api.Edit) (api.Detail, error) {
-	var out api.Detail
+func (s *Service) Edit(ctx context.Context, token, key string, in api.Edit) (api.Ref, error) {
+	var out api.Ref
 	b, e := command.Run(ctx, s.d.Commands, capcommand.Request{Token: token, Key: key, Operation: "task.edit", ReadOperation: "task.read", Resource: in.TaskID}, in, func(tx context.Context, p identity.Principal) ([]byte, error) {
-		if !s.allowed(tx, p, "task.read", in.TaskID) {
-			return nil, az.ErrForbidden
-		}
 		t, e := s.d.Tasks.GetTask(tx, p.Tenant, in.TaskID)
 		if e != nil {
 			return nil, e
@@ -142,8 +138,7 @@ func (s *Service) Edit(ctx context.Context, token, key string, in api.Edit) (api
 		if e != nil {
 			return nil, e
 		}
-		pos, e := s.d.Flow.Refresh(tx, t)
-		if e != nil {
+		if _, e = s.d.Flow.Refresh(tx, t); e != nil {
 			return nil, e
 		}
 		body, _ := json.Marshal(in)
@@ -153,19 +148,16 @@ func (s *Service) Edit(ctx context.Context, token, key string, in api.Edit) (api
 		if e = s.event(tx, t); e != nil {
 			return nil, e
 		}
-		return json.Marshal(api.Detail{Task: t, Position: pos})
+		return json.Marshal(api.Ref{TaskID: t.ID})
 	})
 	if e == nil {
 		e = json.Unmarshal(b, &out)
 	}
 	return out, e
 }
-func (s *Service) Comment(ctx context.Context, token, key string, in api.Comment) (commit.Commit, error) {
-	var out commit.Commit
+func (s *Service) Comment(ctx context.Context, token, key string, in api.Comment) (api.Ref, error) {
+	var out api.Ref
 	b, e := command.Run(ctx, s.d.Commands, capcommand.Request{Token: token, Key: key, Operation: "commit.append", ReadOperation: "task.read", Resource: in.TaskID}, in, func(tx context.Context, p identity.Principal) ([]byte, error) {
-		if !s.allowed(tx, p, "task.read", in.TaskID) {
-			return nil, az.ErrForbidden
-		}
 		if strings.TrimSpace(in.Body) == "" || len(in.Body) > 20000 {
 			return nil, fault.ErrInput
 		}
@@ -192,7 +184,7 @@ func (s *Service) Comment(ctx context.Context, token, key string, in api.Comment
 		if e = s.event(tx, t); e != nil {
 			return nil, e
 		}
-		return json.Marshal(c)
+		return json.Marshal(api.Ref{TaskID: t.ID, CommitID: c.ID})
 	})
 	if e == nil {
 		e = json.Unmarshal(b, &out)

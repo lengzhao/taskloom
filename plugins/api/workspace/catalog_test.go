@@ -9,13 +9,13 @@ import (
 	az "github.com/lengzhao/taskloom/cap/authorization"
 	"github.com/lengzhao/taskloom/cap/catalog"
 	"github.com/lengzhao/taskloom/cap/fault"
-	"github.com/lengzhao/taskloom/cap/httpapi"
 	"github.com/lengzhao/taskloom/cap/identity"
 	"github.com/lengzhao/taskloom/cap/lifecycle"
+	"github.com/lengzhao/taskloom/cap/record"
 	cs "github.com/lengzhao/taskloom/cap/security"
 	"github.com/lengzhao/taskloom/cap/unitofwork"
 	api "github.com/lengzhao/taskloom/cap/workspace"
-	"github.com/lengzhao/taskloom/domain/security"
+	"github.com/lengzhao/taskloom/plugins/security"
 	"github.com/lengzhao/taskloom/runtime/config"
 	"net/http"
 	"net/http/httptest"
@@ -44,7 +44,10 @@ func TestWorkspaceProjectsLifecycle(t *testing.T) {
 	}
 	defer storage.Close(ctx)
 	sec, _ := build.GetByID[*security.Service](graph, "security")
-	admin, e := sec.Bootstrap(ctx, security.BootstrapInput{Tenant: "t", Subject: "admin", Operator: "test", Reason: "test", ExpiresAt: time.Now().Add(time.Hour)})
+	if e := sec.Bootstrap(ctx, security.AdminInput{Tenant: "t", Subject: "admin", Operator: "test", Reason: "test", Password: "AdminPassword123!"}); e != nil {
+		t.Fatal(e)
+	}
+	admin, e := sec.Login(ctx, cs.LoginInput{Tenant: "t", Username: "admin", Password: "AdminPassword123!"})
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -55,11 +58,7 @@ func TestWorkspaceProjectsLifecycle(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	mod, _ := build.GetByID[httpapi.Module](graph, "workspace-api")
-	mux := http.NewServeMux()
-	for _, r := range mod.Routes() {
-		mux.Handle(r.Method+" /v1"+r.Path, r.Handler)
-	}
+	mux, _ := build.GetByID[http.Handler](graph, "http")
 	call := func(token, method, path, key string, body any, code int) []byte {
 		t.Helper()
 		b, _ := json.Marshal(body)
@@ -130,7 +129,7 @@ func TestWorkspaceProjectsLifecycle(t *testing.T) {
 	errs := make(chan error, 2)
 	for _, key := range []string{"race-a", "race-b"} {
 		go func(key string) {
-			_, err := svc.SaveProject(ctx, admin.Secret, key, catalog.ProjectEdit{ID: concurrent.ID, Name: key, Owner: "admin", ExpectedVersion: 1})
+			_, err := svc.SaveProject(ctx, admin.Secret, key, catalog.ProjectEdit{ID: concurrent, Name: key, Owner: "admin", ExpectedVersion: 1})
 			errs <- err
 		}(key)
 	}
@@ -147,6 +146,25 @@ func TestWorkspaceProjectsLifecycle(t *testing.T) {
 	}
 	if wins != 1 || conflicts != 1 {
 		t.Fatalf("concurrent edits: wins=%d conflicts=%d", wins, conflicts)
+	}
+	// Receipts keep only the identifier: replaying the create returns the same
+	// ID, and reading it shows the edit that won, not the state at creation.
+	replayed, e := svc.SaveProject(ctx, admin.Secret, "race-create", catalog.ProjectEdit{Name: "Race"})
+	if e != nil || replayed != concurrent {
+		t.Fatal("replay changed the project ID", replayed, e)
+	}
+	if now, e := svc.Project(ctx, admin.Secret, replayed); e != nil || now.Version != 2 || now.Name == "Race" {
+		t.Fatal("current project not visible after replay", now, e)
+	}
+	receipts, _ := build.GetByID[record.Receipts](graph, "sql")
+	for op, key := range map[string]string{"project.create": "race-create", "space.edit": "s1"} {
+		stored, e := receipts.FindReceipt(ctx, record.RequestKey{Tenant: "t", Subject: "admin", Operation: op, Key: key})
+		if e != nil {
+			t.Fatal(op, e)
+		}
+		if bytes.Contains(stored.Result, []byte("Name")) || bytes.Contains(stored.Result, []byte("Version")) {
+			t.Fatal("receipt stores derivable facts", op, string(stored.Result))
+		}
 	}
 	// A project belonging to another tenant is neither listed nor usable as a task reference.
 	store, _ := build.GetByID[catalog.Store](graph, "sql")

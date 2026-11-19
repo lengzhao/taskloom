@@ -7,7 +7,9 @@ import (
 	"github.com/lengzhao/taskloom/cap/fault"
 	"github.com/lengzhao/taskloom/cap/identity"
 	"io"
+	"net"
 	"net/http"
+	"strings"
 )
 
 func Decode(w http.ResponseWriter, r *http.Request, v any) bool {
@@ -49,4 +51,34 @@ func Fail(w http.ResponseWriter, e error) {
 		msg = "输入或游标无效，请刷新同步"
 	}
 	http.Error(w, msg, status)
+}
+
+// SessionCookie names the browser session cookie. Its value is the credential
+// a password login issued; the credential store alone decides its validity.
+const SessionCookie = "taskloom_session"
+
+// Credential returns the request's credential: a Bearer token, else the
+// session cookie. The HTTP transport has already checked Origin and CSRF.
+func Credential(r *http.Request) string {
+	if h := r.Header.Get("Authorization"); strings.HasPrefix(h, "Bearer ") {
+		return strings.TrimPrefix(h, "Bearer ")
+	}
+	if c, e := r.Cookie(SessionCookie); e == nil {
+		return c.Value
+	}
+	return ""
+}
+
+// LoopbackHost reports whether host (optionally with a port) names this
+// machine. Loopback traffic never leaves it, so plain HTTP is acceptable there.
+func LoopbackHost(host string) bool {
+	if h, _, e := net.SplitHostPort(host); e == nil {
+		host = h
+	}
+	host = strings.Trim(host, "[]")
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }

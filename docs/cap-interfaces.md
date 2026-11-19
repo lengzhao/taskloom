@@ -69,3 +69,5 @@ workspace 不再自行构造第二个 Runner：配置将 commands 指向现有 c
 - commit.Lookup、identity.PrincipalReader、flow.PositionReader 为新增只读消费者收窄权限；State 使用 Context，目录按固定 DefinitionRef 路由。
 - checkpoint.Records/Actions 只在可选步骤示例挂载；httpapi.RequestSecurity 复用会话、Origin 与 CSRF 协议处理。
 - 具体方法以 cap 源码为准；Deps、超过五字段的保留理由和授权回调的可信边界见 [M05](m05-workflow.md)。
+
+人工处理复用 workflow 的分配/执行/交付命令；execution.Reader.Assignee 和 Store.AssignSubject 使用中性处理人命名。ResultAccess 只在 Reader 上增加 SaveExecution，供交付事务结束人工执行；其余只读消费者仍使用 Reader。authorization.Relations 增加 IsAssigned 用于人工处理人的有限转交资格；字段数量、配置及插件数量不变。公共 Snapshot 增加 CanAssign/ViewerKind，Assignee 和 NextActor=assignee 同时服务用户与 Agent。

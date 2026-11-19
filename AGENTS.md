@@ -5,7 +5,7 @@
 ## 项目范围与资料入口
 
 - 本项目只建设任务系统；软件分发、管理平台、Agent 运行时复用已有能力，不重新建设模型推理、工具执行、远端派发或上下文组装。
-- 人是默认负责人，Agent（Buddy）是执行者；任务、commit 时间线、执行记录、实例及执行代次分别表达，更换 Buddy/实例不自动更换负责人。
+- 人是默认负责人，处理人可以是人或 Agent（Buddy），人工处理人可以再转交给 Agent；任务、commit 时间线、执行记录、实例及执行代次分别表达，更换 Buddy/实例不自动更换负责人。
 - 先读 [README](README.md)；涉及能力边界读 [模块化单体](docs/architecture.md)及[插件边界](docs/plugin-contracts.md)；流转读 [状态模块与流程控制](docs/task-flow-plugins.md)；交付读 [结果回复契约](docs/reply-delivery.md)；API/推送读 [通信契约](docs/shared-api-and-realtime.md)；配置读 [两层配置](docs/configuration.md)。
 - 已初始化 go.mod，核心行为以 [核心契约](docs/core-contracts.md)及[阶段覆盖表](docs/requirements-coverage.md)为准；已实现 M03 的 GORM/SQLite 存储与身份/安全命令基础，见 [M03 实现](docs/m03-storage.md)，M04 已有本地任务/commit/准备流程闭环，见 [M04 实现](docs/m04-workspace.md)，M05 已有本地执行/结果/验收/取消闭环，见 [M05 实现](docs/m05-workflow.md)，真实运行时验证仍属 M06；工作前检查实际文件，不把文档中的 kind、接口或默认值视为已经实现。待决策项和已确认约束分开，发现冲突先指出，不自行扩大范围。
 

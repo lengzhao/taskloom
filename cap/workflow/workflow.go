@@ -56,7 +56,7 @@ type Actor string
 
 const (
 	ActorOwner    Actor = "owner"
-	ActorAgent    Actor = "agent"
+	ActorAssignee Actor = "assignee"
 	ActorReviewer Actor = "reviewer"
 )
 
@@ -84,17 +84,18 @@ const (
 )
 
 type Snapshot struct {
-	ResultCommit  *commit.Commit
-	AssignedAgent string
-	NextActor     Actor
+	ResultCommit *commit.Commit
+	Assignee     string
+	NextActor    Actor
 	// Blocked holds, for actions relevant to this viewer, why each is not allowed now.
-	Blocked                                                        map[string]string `json:",omitempty"`
-	CanOpen, CanSubmit, CanReview, CanManage, CanIsolate, CanRenew bool
-	SafeToExit                                                     bool
-	Position                                                       flow.Position
-	Execution                                                      *execution.Execution
-	Submission                                                     *delivery.Submission
-	Review                                                         *acceptance.Review
+	Blocked                                                                   map[string]string `json:",omitempty"`
+	CanOpen, CanSubmit, CanReview, CanManage, CanIsolate, CanRenew, CanAssign bool
+	ViewerKind                                                                string
+	SafeToExit                                                                bool
+	Position                                                                  flow.Position
+	Execution                                                                 *execution.Execution
+	Submission                                                                *delivery.Submission
+	Review                                                                    *acceptance.Review
 	// Questions are the open requests for input of the current active round.
 	Questions []question.Question `json:",omitempty"`
 }

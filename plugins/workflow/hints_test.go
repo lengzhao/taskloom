@@ -29,7 +29,7 @@ func TestSnapshotExplainsBlockedActionsAndNextActor(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	if s = f.read(t, d.Task.ID); s.NextActor != api.ActorAgent {
+	if s = f.read(t, d.Task.ID); s.NextActor != api.ActorAssignee {
 		t.Fatal("assigned task should wait on agent", s.NextActor)
 	}
 	if a := asAgent(); !a.CanOpen || a.Blocked != nil {
@@ -39,7 +39,7 @@ func TestSnapshotExplainsBlockedActionsAndNextActor(t *testing.T) {
 		t.Fatal(e)
 	}
 	a := asAgent()
-	if !a.CanSubmit || a.Blocked[api.ActionOpen] != api.ReasonExecutionInProgress || a.NextActor != api.ActorAgent {
+	if !a.CanSubmit || a.Blocked[api.ActionOpen] != api.ReasonExecutionInProgress || a.NextActor != api.ActorAssignee {
 		t.Fatal("running execution", a.CanSubmit, a.Blocked, a.NextActor)
 	}
 	v := *a.Execution
@@ -68,7 +68,7 @@ func TestSnapshotExplainsBlockedActionsAndNextActor(t *testing.T) {
 	if s, e = f.controls.Cancel(f.ctx, f.owner, "cancel", basis(d, s)); e != nil {
 		t.Fatal(e)
 	}
-	if a = asAgent(); a.NextActor != api.ActorAgent || a.CanSubmit || a.Blocked[api.ActionSubmit] != api.ReasonTaskNotActive {
+	if a = asAgent(); a.NextActor != api.ActorAssignee || a.CanSubmit || a.Blocked[api.ActionSubmit] != api.ReasonTaskNotActive {
 		t.Fatal("cancelled task waits for stop proof", a.NextActor, a.Blocked)
 	}
 }
@@ -102,7 +102,7 @@ func TestInboxListsOnlyTasksWaitingOnCaller(t *testing.T) {
 	if got := inbox(f.owner); len(got) != 1 || got[other.Task.ID] != api.ActorOwner {
 		t.Fatal("running task leaves owner inbox", got)
 	}
-	if got := inbox(f.agent); len(got) != 1 || got[d.Task.ID] != api.ActorAgent {
+	if got := inbox(f.agent); len(got) != 1 || got[d.Task.ID] != api.ActorAssignee {
 		t.Fatal("agent sees only its running task", got)
 	}
 	v := s.Execution
@@ -119,7 +119,7 @@ func TestInboxListsOnlyTasksWaitingOnCaller(t *testing.T) {
 	if _, e = f.controls.Cancel(f.ctx, f.owner, "cancel", basis(d, s)); e != nil {
 		t.Fatal(e)
 	}
-	if got := inbox(f.agent); got[d.Task.ID] != api.ActorAgent {
+	if got := inbox(f.agent); got[d.Task.ID] != api.ActorAssignee {
 		t.Fatal("cancelled running execution waits on agent stop proof", got)
 	}
 	if got := inbox(f.owner); got[d.Task.ID] != "" {

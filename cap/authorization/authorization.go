@@ -25,6 +25,7 @@ type MemberWriter interface {
 // Relations is the read-only set consumed by business access checks.
 type Relations interface {
 	MemberReader
+	IsAssigned(ctx context.Context, tenant, taskID, subject string) (bool, error)
 	HasParticipant(ctx context.Context, value Participant) (bool, error)
 }
 type ParticipantWriter interface {

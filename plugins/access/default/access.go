@@ -80,11 +80,26 @@ func (s *Service) Check(ctx context.Context, p identity.Principal, op, resource 
 			}
 			return az.ErrForbidden
 		}
-		if (op == "execution.open" || op == "execution.renew" || op == "execution.end" || op == "result.submit") && p.Kind != "agent" {
+		if (op == "execution.renew" || op == "execution.end") && p.Kind != "agent" {
 			return az.ErrForbidden
 		}
 		if p.Kind == "human" && (m.Role == "admin" || t.Owner == p.ID) {
 			return nil
+		}
+		if op == "execution.assign" && p.Kind == "human" {
+			assigned, err := s.d.Store.IsAssigned(ctx, p.Tenant, t.ID, p.ID)
+			if err != nil {
+				return err
+			}
+			if assigned {
+				participating, err := s.d.Store.HasParticipant(ctx, az.Participant{Tenant: p.Tenant, TaskID: t.ID, Subject: p.ID})
+				if err != nil {
+					return err
+				}
+				if participating {
+					return nil
+				}
+			}
 		}
 		if op == "task.edit" || op == "participant.set" || op == "execution.assign" || op == "task.cancel" || op == "task.return" || op == "task.reopen" {
 			return az.ErrForbidden

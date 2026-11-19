@@ -152,7 +152,7 @@ details[open] > summary { margin-bottom: 4px }
 <script>
 // ---------- Labels (display only; flow rules stay on the server) ----------
 const STATE_LABEL = { ready: '准备', executing: '执行中', accepting: '验收中', checkpoint: '待确认', factcheck: '检查中' };
-const ACTOR_LABEL = { owner: '负责人', agent: '执行 Agent', reviewer: '验收人' };
+const ACTOR_LABEL = { owner: '负责人', assignee: '处理人', reviewer: '验收人' };
 const ACTION_LABEL = { open: '认领执行', renew: '续期执行', submit: '提交结果', review: '验收' };
 const REASON_LABEL = {
   task_not_active: '任务已结束或已取消',
@@ -305,7 +305,7 @@ async function show() {
     if (page.Commits.length < 100) break;
   }
   const ctx = makeContext(d, w, path);
-  ctx.candidates = d.CanEdit ? await api(path + "/candidates") : [];
+  ctx.candidates = (d.CanEdit || w.CanAssign) ? await api(path + "/candidates") : [];
   ctx.commits = new Map(commits.map(c => [c.ID, c]));
   $('detail').replaceChildren(
     renderHead(ctx),
@@ -324,7 +324,7 @@ function makeContext(d, w, path) {
     ref: ex ? { ExecutionID: ex.ID, Generation: ex.Generation } : {},
     running: !!ex && !ex.Safe,
     // Blocked only lists agent actions for agent viewers, so this marks an agent session.
-    isAgent: w.CanOpen || w.CanRenew || w.CanSubmit || AGENT_ACTIONS.some(a => (w.Blocked || {})[a]),
+    isAgent: w.ViewerKind === 'agent',
     // Refresh the list first: it decides which tasks are waiting on me.
     async send(route, input) { await api(path + route, 'POST', input); await list(); await show() },
   };
@@ -347,11 +347,20 @@ function renderNext(ctx) {
   else if (w.NextActor) title = '下一步等待：' + ACTOR_LABEL[w.NextActor];
   else title = w.Position.Complete ? '当前步骤已完成' : '暂无需要处理的事项';
   panel.append(h('div', 'head', el('h3', title), pill(s)));
-  if (w.Questions?.length) panel.append(el('p', '执行 Agent 提出了问题，回答前任务不能完成。', 'muted'));
+  if (w.Questions?.length) panel.append(el('p', '处理人提出了问题，回答前任务不能完成。', 'muted'));
   else if (w.Position.Waiting) panel.append(el('p', w.Position.Waiting, 'muted'));
   if (w.Blocked?.review && !ctx.isAgent) panel.append(el('p', '暂不能验收：' + (REASON_LABEL[w.Blocked.review] || w.Blocked.review), 'muted'));
 
   renderQuestions(ctx, panel);
+  if (!ctx.isAgent && w.ViewerKind === 'human') {
+    if (w.CanOpen) panel.append(h('div', 'actions', button('开始处理', () => ctx.send('/execution/open', base), 'primary')));
+    if (w.CanSubmit) {
+      const body = textarea('Body', true, '填写本次任务的处理结果');
+      const form = h('form', null, field('提交处理结果', body), h('div', 'actions', el('button', '提交结果', 'primary')));
+      form.onsubmit = handle(() => ctx.send('/results', { ...base, ...ctx.ref, Body: body.value }));
+      panel.append(form);
+    }
+  }
   const actions = h('div', 'actions');
   // Review is the main human decision; it lives here, next to the result summary.
   if (w.CanReview && w.Submission && w.Review?.Outcome === 'pending') {
@@ -368,9 +377,9 @@ function renderNext(ctx) {
     actions.append(button('验收通过', () => verdict('approved'), 'primary'), button('不通过，退回修改', () => verdict('rejected'), 'danger'));
   }
   // Assigning an executor is the owner's next step when nobody is assigned yet.
-  if (w.CanManage && active && w.SafeToExit && !w.AssignedAgent && w.NextActor === 'owner') {
+  if (w.CanAssign && active && w.SafeToExit && !w.Assignee && w.NextActor === 'owner') {
     panel.classList.add('mine');
-    panel.append(assignForm(ctx, '分配执行 Agent'));
+    panel.append(assignForm(ctx, '选择处理人'));
   }
   if (!active && w.CanManage && w.SafeToExit) actions.append(button('重开任务', () => confirmThen('重开会开始新一轮，旧结果保留在历史中。继续？', () => ctx.send('/reopen', base))));
   if (actions.children.length) panel.append(actions);
@@ -382,14 +391,14 @@ function renderNext(ctx) {
 function renderQuestions(ctx, panel) {
   const qs = ctx.w.Questions || [];
   if (!qs.length) return;
-  const canAnswer = inboxIDs.has(ctx.d.Task.ID) && !ctx.isAgent;
+  const canAnswer = ctx.w.NextActor === 'owner' && inboxIDs.has(ctx.d.Task.ID) && !ctx.isAgent;
   for (const q of qs) {
     const asked = ctx.commits?.get(q.CommitID);
     const box = h('div', 'result',
       el('div', q.Asker + ' 提问 · ' + time(q.CreatedAt), 'muted small'),
       el('p', asked ? asked.Body : '（问题正文见时间线）'));
     if (canAnswer) {
-      const body = textarea('Body', true, '回答后执行 Agent 会收到通知');
+      const body = textarea('Body', true, '回答后处理人可在任务中查看');
       const f = h('form', null, body, h('div', 'actions', el('button', '回答', 'primary')));
       f.onsubmit = handle(() => ctx.send('/questions/' + encodeURIComponent(q.ID) + '/answer', { Body: body.value }));
       box.append(f);
@@ -412,10 +421,10 @@ function memberSelect(members, placeholder) {
 }
 
 function assignForm(ctx, text) {
-  const agents = ctx.candidates.filter(m => m.Kind === 'agent');
-  if (!agents.length) return el('p', '暂无可分配的 Agent。请联系管理员登记并启用 Agent，然后刷新页面。', 'muted');
-  if (!ctx.d.Task.Goal.trim() || !ctx.d.Task.Criteria.trim()) return el('p', '请先在「任务约定」中补充目标和验收标准，再选择执行 Agent。', 'muted');
-  const input = memberSelect(agents, '请选择执行 Agent');
+  const members = ctx.candidates;
+  if (!members.length) return el('p', '暂无可分配的用户或 Agent。请联系管理员登记并启用成员，然后刷新页面。', 'muted');
+  if (!ctx.d.Task.Goal.trim() || !ctx.d.Task.Criteria.trim()) return el('p', '请先在「任务约定」中补充目标和验收标准，再选择处理人。', 'muted');
+  const input = memberSelect(members, '请选择用户或 Agent');
   const f = h('form', null, field(text, input), h('div', 'actions', el('button', '分配', 'primary')));
   f.onsubmit = handle(() => ctx.send('/execution/assign', { ...ctx.base, Subject: input.value }));
   return f;
@@ -426,7 +435,7 @@ function confirmThen(message, fn) { if (confirm(message)) return fn() }
 function renderResult({ w, active, base, send, ...ctx }) {
   const panel = h('div', 'panel', el('h3', '当前结果'));
   if (!w.Submission) {
-    panel.append(el('p', '还没有提交结果。执行 Agent 明确提交后会显示在这里；普通评论不算交付。', 'muted'));
+    panel.append(el('p', '还没有提交结果。处理人明确提交后会显示在这里；普通评论不算交付。', 'muted'));
     return panel;
   }
   const sub = w.Submission;
@@ -445,7 +454,7 @@ function renderTimeline({ d, path }, commits) {
   if (d.CanComment) {
     const ref = el('input'); ref.name = 'RefID'; ref.type = 'hidden';
     const f = h('form', null,
-      field('给执行 Agent 留言 / 引导', textarea('Body', true, '补充说明、纠正方向或提出要求，执行 Agent 会收到通知；留言不算交付结果')),
+      field('给处理人留言 / 引导', textarea('Body', true, '补充说明、纠正方向或提出要求，处理人可在任务中查看；留言不算交付结果')),
       ref, h('div', 'actions', el('button', '发送留言', 'primary')));
     f.id = 'comment';
     f.onsubmit = handle(async () => { await api(path + '/commits', 'POST', formdata(f)); await show() });
@@ -504,16 +513,16 @@ function renderExecution(ctx) {
   const { w, ex } = ctx;
   const dl = el('dl', undefined, 'kv');
   const add = (k, v) => dl.append(el('dt', k), el('dd', v));
-  add('执行者', w.AssignedAgent || '待分配');
+  add('处理人', w.Assignee || '待分配');
   if (ex) {
-    add('状态', (EXEC_LABEL[ex.Status] || ex.Status) + (ex.Safe ? ' · 已安全退出' : ''));
+    add('状态', (EXEC_LABEL[ex.Status] || ex.Status) + (ex.Manual ? ' · 人工处理' : ex.Safe ? ' · 已安全退出' : ''));
     add('代次', '第 ' + ex.Generation + ' 代');
-    if (ex.Status === 'active') add('保活至', time(ex.LeaseUntil));
+    if (!ex.Manual && ex.Status === 'active') add('保活至', time(ex.LeaseUntil));
   }
   const live = el('div', undefined, 'muted small'); live.id = 'execution-live-status';
   const panel = h('div', 'panel', el('h3', '执行'), dl, live);
   if (ctx.running) panel.append(el('p', '停止证据尚未完整确认；执行结束或断线都不会自动解除等待。', 'muted small'));
-  if (w.CanManage && ctx.active && w.SafeToExit && w.AssignedAgent) panel.append(h('details', null, el('summary', '更换执行 Agent'), assignForm(ctx, '选择新的执行 Agent')));
+  if (w.CanAssign && ctx.active && w.SafeToExit && w.Assignee && !w.Submission) panel.append(h('details', null, el('summary', '转交处理（用户或 Agent）'), assignForm(ctx, '选择新的处理人')));
   return panel;
 }
 
@@ -618,7 +627,7 @@ setInterval(async () => {
     } else if (selected) {
       const state = await api('/tasks/' + encodeURIComponent(selected) + '/workflow');
       const live = $('execution-live-status');
-      if (live) live.textContent = '实时：' + (state.AssignedAgent || '待分配') + (state.Execution ? ' · 第 ' + state.Execution.Generation + ' 代 · ' + (EXEC_LABEL[state.Execution.Status] || state.Execution.Status) : '');
+      if (live) live.textContent = '实时：' + (state.Assignee || '待分配') + (state.Execution ? ' · 第 ' + state.Execution.Generation + ' 代 · ' + (EXEC_LABEL[state.Execution.Status] || state.Execution.Status) : '');
       if (pendingRefresh && editing) notice('任务有新变化，已保留你的输入；完成编辑后刷新。');
     }
   } catch (e) {

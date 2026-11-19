@@ -11,16 +11,18 @@ type Execution struct {
 	Status, StopRequestID, EndEvidenceID                          string
 	LeaseUntil                                                    time.Time
 	Writable, Safe                                                bool
+	// Manual means human work, without a managed Agent runtime or lease.
+	Manual bool
 }
 type Reader interface {
-	AssignedAgent(ctx context.Context, tenant, taskID string) (string, error)
+	Assignee(ctx context.Context, tenant, taskID string) (string, error)
 	Current(ctx context.Context, tenant, taskID string) (Execution, error)
 	GetExecution(ctx context.Context, tenant, id string) (Execution, error)
 	SafeToExit(ctx context.Context, tenant, taskID string) (bool, error)
 }
 type Store interface {
 	RecordStopEvidence(ctx context.Context, value StopEvidence) error
-	AssignAgent(ctx context.Context, tenant, taskID, subject string) error
+	AssignSubject(ctx context.Context, tenant, taskID, subject string) error
 	Reader
 	OpenExecution(ctx context.Context, value Execution) (Execution, error)
 	SaveExecution(ctx context.Context, value Execution) error
@@ -32,4 +34,10 @@ type StopEvidence struct {
 	Generation                                                                   int64
 	MainStopped, ChildrenStopped, ExternalSettled                                bool
 	ReceivedAt                                                                   time.Time
+}
+
+// ResultAccess lets submission mark a human's work ended in the same transaction.
+type ResultAccess interface {
+	Reader
+	SaveExecution(ctx context.Context, value Execution) error
 }

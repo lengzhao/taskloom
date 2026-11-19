@@ -29,15 +29,15 @@ type ExecutionDeps struct {
 	Events       record.EventWriter       `json:"events"`
 }
 type ResultDeps struct {
-	Commands   command.Handler    `json:"commands"`
-	Tasks      task.Reader        `json:"tasks"`
-	Flow       flow.Controller    `json:"flow"`
-	Executions execution.Reader   `json:"executions"`
-	Results    delivery.Store     `json:"results"`
-	Commits    commit.Log         `json:"commits"`
-	Accepting  acceptance.Actions `json:"accepting,omitempty"`
-	Snapshots  api.FactsReader    `json:"snapshots"`
-	Events     record.EventWriter `json:"events"`
+	Commands   command.Handler        `json:"commands"`
+	Tasks      task.Reader            `json:"tasks"`
+	Flow       flow.Controller        `json:"flow"`
+	Executions execution.ResultAccess `json:"executions"`
+	Results    delivery.Store         `json:"results"`
+	Commits    commit.Log             `json:"commits"`
+	Accepting  acceptance.Actions     `json:"accepting,omitempty"`
+	Snapshots  api.FactsReader        `json:"snapshots"`
+	Events     record.EventWriter     `json:"events"`
 }
 type ControlDeps struct {
 	Commands   command.Handler    `json:"commands"`
@@ -69,7 +69,7 @@ func NewResults(_ struct{}, d ResultDeps) (*ResultModule, error) {
 	if d.Commands == nil || d.Tasks == nil || d.Flow == nil || d.Executions == nil || d.Results == nil || d.Commits == nil || d.Snapshots == nil || d.Events == nil {
 		return nil, fault.ErrInput
 	}
-	return &ResultModule{&Service{d: dependencies{Commands: d.Commands, Tasks: d.Tasks, Flow: d.Flow, Executions: d.Executions, Results: d.Results, Commits: d.Commits, Accepting: d.Accepting, Snapshots: d.Snapshots, Events: d.Events}}}, nil
+	return &ResultModule{&Service{d: dependencies{Commands: d.Commands, Tasks: d.Tasks, Flow: d.Flow, Executions: d.Executions, ResultExecutions: d.Executions, Results: d.Results, Commits: d.Commits, Accepting: d.Accepting, Snapshots: d.Snapshots, Events: d.Events}}}, nil
 }
 func NewControl(_ struct{}, d ControlDeps) (*ControlModule, error) {
 	if d.Commands == nil || d.Tasks == nil || d.Flow == nil || d.Executions == nil || d.Snapshots == nil || d.Events == nil {

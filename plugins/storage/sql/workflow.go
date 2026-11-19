@@ -211,12 +211,12 @@ type assignmentRow struct {
 	Subject string
 }
 
-func (s *Store) AssignedAgent(ctx context.Context, tenant, taskID string) (string, error) {
+func (s *Store) Assignee(ctx context.Context, tenant, taskID string) (string, error) {
 	var r assignmentRow
 	e := s.use(ctx, false, func(db *gorm.DB) error { return db.First(&r, "row_key = ?", key(tenant, taskID)).Error })
 	return r.Subject, e
 }
-func (s *Store) AssignAgent(ctx context.Context, tenant, taskID, subject string) error {
+func (s *Store) AssignSubject(ctx context.Context, tenant, taskID, subject string) error {
 	return s.use(ctx, true, func(db *gorm.DB) error {
 		return db.Clauses(clause.OnConflict{UpdateAll: true}).Create(&assignmentRow{Key: key(tenant, taskID), Subject: subject}).Error
 	})
@@ -235,4 +235,12 @@ func (s *Store) RecordStopEvidence(ctx context.Context, v execution.StopEvidence
 		}
 		return db.Create(&stopEvidenceRow{ID: v.ID, Data: b}).Error
 	})
+}
+
+func (s *Store) IsAssigned(ctx context.Context, tenant, taskID, subject string) (bool, error) {
+	var count int64
+	e := s.use(ctx, false, func(db *gorm.DB) error {
+		return db.Model(&assignmentRow{}).Where("row_key = ? AND subject = ?", key(tenant, taskID), subject).Count(&count).Error
+	})
+	return count == 1, e
 }

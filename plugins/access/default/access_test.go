@@ -38,3 +38,5 @@ func TestReadOnlyProvidersAreSufficient(t *testing.T) {
 		t.Fatal(e)
 	}
 }
+
+func (relations) IsAssigned(context.Context, string, string, string) (bool, error) { return false, nil }

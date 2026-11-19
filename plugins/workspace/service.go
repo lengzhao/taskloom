@@ -368,7 +368,7 @@ func (s *Service) Candidates(ctx context.Context, token, taskID string) ([]az.Me
 		if e != nil {
 			return e
 		}
-		if e = s.d.Authorization.Check(tx, p, "participant.set", taskID); e != nil {
+		if e = s.d.Authorization.Check(tx, p, "execution.assign", taskID); e != nil {
 			return e
 		}
 		out, e = s.d.Members.ListActiveMembers(tx, p.Tenant)

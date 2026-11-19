@@ -30,19 +30,20 @@ type Config struct {
 // dependencies is an internal implementation detail. Registered constructors
 // below declare each injected capability explicitly, never a dependency bag.
 type dependencies struct {
-	Participants    az.ParticipantWriter
-	Principals      identity.PrincipalReader
-	Members         az.MemberReader
-	Commands        capcommand.Handler
-	Tasks           task.Reader
-	Flow            flow.Controller
-	Executions      execution.Reader
-	ExecutionWrites execution.Store
-	Results         delivery.Store
-	Commits         commit.Log
-	Accepting       acceptance.Actions
-	Snapshots       api.FactsReader
-	Events          record.EventWriter
+	Participants     az.ParticipantWriter
+	Principals       identity.PrincipalReader
+	Members          az.MemberReader
+	Commands         capcommand.Handler
+	Tasks            task.Reader
+	Flow             flow.Controller
+	Executions       execution.Reader
+	ExecutionWrites  execution.Store
+	ResultExecutions execution.ResultAccess
+	Results          delivery.Store
+	Commits          commit.Log
+	Accepting        acceptance.Actions
+	Snapshots        api.FactsReader
+	Events           record.EventWriter
 }
 type Service struct {
 	c Config
@@ -100,10 +101,10 @@ func (s *Service) Open(ctx context.Context, token, key string, in api.Open) (api
 		if e != nil {
 			return nil, e
 		}
-		if p.Kind != "agent" || p.CredentialPurpose != "business" || p.InstanceID == "" || p.Incarnation == "" {
+		if p.Kind != "human" && (p.Kind != "agent" || p.CredentialPurpose != "business" || p.InstanceID == "" || p.Incarnation == "") {
 			return nil, az.ErrForbidden
 		}
-		assigned, e := s.d.Executions.AssignedAgent(tx, t.Tenant, t.ID)
+		assigned, e := s.d.Executions.Assignee(tx, t.Tenant, t.ID)
 		if e != nil {
 			return nil, e
 		}
@@ -122,6 +123,9 @@ func (s *Service) Open(ctx context.Context, token, key string, in api.Open) (api
 		}
 		old, e := s.d.Executions.Current(tx, t.Tenant, t.ID)
 		if e == nil {
+			if old.Manual && old.Writable && old.RoundID == pos.RoundID {
+				return nil, fault.ErrConflict
+			}
 			old.Writable = false
 			if e = s.d.ExecutionWrites.SaveExecution(tx, old); e != nil {
 				return nil, e
@@ -129,7 +133,13 @@ func (s *Service) Open(ctx context.Context, token, key string, in api.Open) (api
 		} else if !errors.Is(e, fault.ErrNotFound) {
 			return nil, e
 		}
-		_, e = s.d.ExecutionWrites.OpenExecution(tx, execution.Execution{Tenant: t.Tenant, TaskID: t.ID, ID: id(), RoundID: pos.RoundID, Subject: p.ID, InstanceID: p.InstanceID, Incarnation: p.Incarnation, BasisVersion: t.BasisVersion, Status: "active", Writable: true, EndEvidenceID: id(), LeaseUntil: time.Now().Add(time.Duration(s.c.LeaseSeconds) * time.Second)})
+		v := execution.Execution{Tenant: t.Tenant, TaskID: t.ID, ID: id(), RoundID: pos.RoundID, Subject: p.ID, InstanceID: p.InstanceID, Incarnation: p.Incarnation, BasisVersion: t.BasisVersion, Status: "active", Writable: true, EndEvidenceID: id(), LeaseUntil: time.Now().Add(time.Duration(s.c.LeaseSeconds) * time.Second)}
+		if p.Kind == "human" {
+			v.Manual, v.Safe = true, true
+			v.InstanceID, v.Incarnation, v.EndEvidenceID = "", "", ""
+			v.LeaseUntil = time.Time{}
+		}
+		_, e = s.d.ExecutionWrites.OpenExecution(tx, v)
 		if e != nil {
 			return nil, e
 		}
@@ -145,7 +155,7 @@ func (s *Service) owned(ctx context.Context, p identity.Principal, in api.Execut
 	if e != nil {
 		return t, v, e
 	}
-	if v.TaskID != in.TaskID || v.Generation != in.Generation || p.ID != v.Subject || p.InstanceID != v.InstanceID || p.Incarnation != v.Incarnation {
+	if v.TaskID != in.TaskID || v.Generation != in.Generation || !ownExecution(p, v) {
 		return t, v, az.ErrForbidden
 	}
 	return t, v, nil
@@ -220,6 +230,12 @@ func (s *Service) Submit(ctx context.Context, token, key string, in api.Submit) 
 		}
 		if (v.Status != "ended" && !v.Safe && time.Now().After(v.LeaseUntil)) || strings.TrimSpace(in.Body) == "" || len(in.Body) > 20000 {
 			return nil, fault.ErrConflict
+		}
+		if v.Manual && v.Status != "ended" {
+			v.Status = "ended"
+			if e = s.d.ResultExecutions.SaveExecution(tx, v); e != nil {
+				return nil, e
+			}
 		}
 		current, currentErr := s.d.Results.CurrentSubmission(tx, t.Tenant, t.ID, v.RoundID)
 		if currentErr == nil && current.ExecutionID == v.ID && current.BasisVersion == t.BasisVersion {
@@ -300,6 +316,9 @@ func (s *Service) invalidate(ctx context.Context, t task.Task, requestStop bool)
 		return e
 	}
 	v.Writable = false
+	if v.Manual {
+		v.Status = "ended"
+	}
 	if requestStop && !v.Safe {
 		v.Status = "stop-requested"
 		if v.StopRequestID == "" {
@@ -434,7 +453,7 @@ func (s *Service) Assign(ctx context.Context, token, key string, in api.Assignme
 		if e != nil {
 			return nil, e
 		}
-		if subject.Kind != "agent" {
+		if subject.Kind != "agent" && subject.Kind != "human" {
 			return nil, fault.ErrInput
 		}
 		member, e := s.d.Members.GetMember(tx, t.Tenant, subject.ID)
@@ -454,7 +473,7 @@ func (s *Service) Assign(ctx context.Context, token, key string, in api.Assignme
 		if e = s.d.Participants.SetParticipant(tx, az.Participant{Tenant: t.Tenant, TaskID: t.ID, Subject: in.Subject}, true); e != nil {
 			return nil, e
 		}
-		if e = s.d.ExecutionWrites.AssignAgent(tx, t.Tenant, t.ID, in.Subject); e != nil {
+		if e = s.d.ExecutionWrites.AssignSubject(tx, t.Tenant, t.ID, in.Subject); e != nil {
 			return nil, e
 		}
 		return s.finish(tx, t)

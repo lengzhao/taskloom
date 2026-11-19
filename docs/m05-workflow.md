@@ -82,9 +82,9 @@ Submit 原子追加不可变 result commit、登记 Submission，再核对已到
 
 界面支持角色切换、分配、认领/续期/结束、结果区、验收/撤回、取消、退回、重开及管理员恢复表单。布局为左侧任务列表（“待我处理/全部”，标出状态与等谁）与右侧详情：顶部“下一步”卡片（等谁、等待原因、待验收时的验收与分配入口），主栏为当前结果与时间线，侧栏为任务约定、执行、参与者、任务控制及仅对 Agent 会话显示的“Agent 调试”。界面不按状态名判断可用操作，只依据快照的 Can*/Blocked/NextActor；状态名仅用于显示。退回、取消、撤回、重开需二次确认；退出登录会清空当前详情。结果正文按稳定引用读取，不依赖时间线首屏。网络结果不明确时保留请求幂等键；编辑期间保留输入并提示刷新。查询操作提示不是授权凭证，服务端每次重新检查。
 
-快照另带两项只读说明：`NextActor`（owner/agent/reviewer，空表示没有固定角色需要行动，步骤专有原因仍看 `Position.Waiting`）与 `Blocked`（仅对当前查看者相关的 open/renew/submit/review 给出不可用原因码，例如 not_assigned、execution_in_progress、lease_expired、basis_changed、not_reviewer，完整列表见 `cap/workflow`）。每个 Can* 与其原因码出自同一判断函数，避免提示与开关漂移；原因码只解释当前状态，不是授权凭证，也不替代命令写入时的重查。
+快照另带两项只读说明：`NextActor`（owner/assignee/reviewer，空表示没有固定角色需要行动，步骤专有原因仍看 `Position.Waiting`）与 `Blocked`（仅对当前查看者相关的 open/renew/submit/review 给出不可用原因码，例如 not_assigned、execution_in_progress、lease_expired、basis_changed、not_reviewer，完整列表见 `cap/workflow`）。每个 Can* 与其原因码出自同一判断函数，避免提示与开关漂移；原因码只解释当前状态，不是授权凭证，也不替代命令写入时的重查。
 
-`GET /v1/inbox` 返回当前调用者可读且 NextActor 指向自己的任务（TaskID/Title/NextActor）：负责人对应 owner、验收记录的 reviewer 对应 reviewer，Agent 对应仍未安全停止的执行主体或已分配的 Agent。它与快照共用 ReadFacts 派生，不保存收件箱记录、不发通知；管理员恢复项暂不列入。当前逐任务读取，规模评估归 M11。工作台任务列表以 ● 标记并可“只看待我处理”。
+`GET /v1/inbox` 返回当前调用者可读且 NextActor 指向自己的任务（TaskID/Title/NextActor）：负责人对应 owner、验收记录的 reviewer 对应 reviewer，assignee 对应当前处理人（人或 Agent）；仍未安全停止的 Agent 执行优先指向原执行主体。它与快照共用 ReadFacts 派生，不保存收件箱记录、不发通知；管理员恢复项暂不列入。当前逐任务读取，规模评估归 M11。工作台任务列表以 ● 标记并可“只看待我处理”。
 
 ## 请求输入与人工引导
 
@@ -115,4 +115,14 @@ E01—E03 已通过本地真实配置/SQLite/API 扩展验证：新 State/新 AP
 
 内置浏览器在独立临时数据库完成负责人创建/分配→业务 Agent 认领/提交/结束→负责人验收等待；独立测试 runtime 通过实际 HTTP 提交匹配证明后，界面补拉显示 completed。这是协议与本地 UI 验证，不是实际进程清理证明。真实 Harness/运行实例、受管子进程和外部工作覆盖，以及 MySQL/PostgreSQL 与生产负载仍未验收，归 M06/后续阶段。
 
-任务分配与参与者控件使用 `GET /v1/tasks/{id}/candidates` 查询有效成员：执行者只可选择 Agent，参与者可选择用户或 Agent。候选展示主体 ID、类型及 Agent 所属人；不表示在线或可立即执行。没有 Agent 时提示管理员登记，目标/标准不完整时提示先补全。原分配命令仍在事务中校验目标成员和任务状态。
+任务分配与参与者控件使用 `GET /v1/tasks/{id}/candidates` 查询有效成员：处理人和参与者都可选择用户或 Agent。候选展示主体 ID、类型及 Agent 所属人；不表示在线或可立即执行。没有有效成员时提示管理员登记，目标/标准不完整时提示先补全。原分配命令仍在事务中校验目标成员和任务状态。
+
+## 人工处理与转交
+
+`Assignee` 是当前处理主体，替代 Agent 专属命名；`NextActor=assignee` 覆盖人和 Agent。`ViewerKind` 用于呈现人工操作或 Agent 调试区，`CanAssign` 单独表达分配资格，不借用负责人管理权限。创建者仍是默认负责人和验收人。
+
+人工处理人复用 Open/SubmitResult：Open 建立服务端标记的 Manual 执行记录，保留轮次/依据/代次与并发隔离；没有受管 Agent 进程，因此不要求实例、心跳或运行时停止证明，Safe 只代表无该类受管运行等待。Submit 同事务结束人工记录并登记交付，人工验收仍按原流程。Agent 路径的停止、租约与实例约束保持。
+
+负责人/管理员可分配给有效用户或 Agent。仍参与任务的当前人工处理人可以转交，普通参与者和 Agent 不能转交。转交失效原执行写资格，旧结果请求不能写入，原处理者保留参与关系而不保留分配权；负责人/验收人不变。运行中的 Agent 必须先提供原有停止/隔离证据才能转交。已提交的结果仍按现有验收、退回流程处理。
+
+复用原 assignmentRow 的 Subject 和 executionRow 的 JSON 数据；不新增表、插件或配置。已有 Agent 执行未带 Manual 字段时自然为 false，不变更历史记录或已应用迁移。API/Go 消费者同步改用 Assignee、AssignSubject 与 assignee 角色；不保留旧字段别名。相关验证见 `plugins/workflow/human_test.go`。

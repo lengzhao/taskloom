@@ -7,6 +7,7 @@
 | 有效人类租户成员 | 创建任务并成为负责人 |
 | 有效人类租户管理员 | 管理本租户成员，读取和管理本租户任务 |
 | 有效人类任务负责人 | 读取、修改任务约定、追加 commit、加入/移出参与者 |
+| 有效人工处理人（仍有任务参与关系） | 认领处理、提交结果、查询候选和转交处理；不自动取得负责人或验收资格 |
 | 有效任务参与者 | 读取与追加 commit；仅更正自己已有的评论 |
 | 停用/不存在的成员 | 无任务访问或管理能力，即使仍保留负责人/参与历史 |
 | Agent | 不继承 owner 任何权限；可显式参与任务读取/评论；执行提交须由 M05 的分配及有效代次再限制 |
@@ -15,7 +16,7 @@
 
 ## 接口与存储
 
-`cap/authorization` 保留 Member、Participant，以及 MemberReader/MemberWriter、Relations、ParticipantWriter 和固定业务 Authorizer。Check 的 resource 是明确任务 ID 或管理用例租户 ID；没有通用 Scope、Grant、通配符或动作目录。`access/default` 的 Deps 是 store→成员/参与仓储、tasks→任务事实接口，规则在代码中明确判断。
+`cap/authorization` 保留 Member、Participant，以及 MemberReader/MemberWriter、Relations（含只读 IsAssigned）、ParticipantWriter 和固定业务 Authorizer。Check 的 resource 是明确任务 ID 或管理用例租户 ID；没有通用 Scope、Grant、通配符或动作目录。`access/default` 的 Deps 是 store→成员/参与仓储、tasks→任务事实接口，规则在代码中明确判断。
 
 SQL 保存 memberRow（tenant/subject、role、active）、participantRow（tenant/task/subject）；负责人存于 Task。domain/security.SetMember 只允许有效人类管理员在自己租户操作，Agent 不能成为管理员，管理员不能通过普通命令撤销自己的管理身份。创建新主体默认建立有效 member，bootstrap/recover 建立 admin。离线恢复继续保留操作者、原因及凭据撤销审计。
 
@@ -25,10 +26,10 @@ workspace.SetParticipant 只允许有效管理员/负责人，加入对象必须
 
 - POST /v1/members：Tenant、Subject、Role（admin/member）、Active；更新已登记主体的租户成员关系。
 - DELETE /v1/members：同一 DTO，将 Active 设为 false；仍需有效管理员身份。
-- GET /v1/tasks/{id}/candidates：仅当前有效人类负责人/管理员可读，返回同租户有效成员的 Subject、Kind、OwnerID；不返回凭据或运行实例信息。
+- GET /v1/tasks/{id}/candidates：仅当前有效人类负责人/管理员或仍参与任务的当前人工处理人可读，返回同租户有效成员的 Subject、Kind、OwnerID；不返回凭据或运行实例信息。
 - POST /v1/tasks/{id}/participants：Subject、Present；加入或移出任务参与者，TaskID 由路径绑定。
 
-写入均需 Idempotency-Key，遵守现有 Cookie/Origin/CSRF 规则。旧 /grants 路由不存在，旧 Action/Scope 请求字段会被拒绝。界面去除逐动作授权编辑器；创建者直接拥有任务管理能力，任务详情提供用户/Agent 候选选择框用于参与者加入/移出；执行分配只展示 Agent，并标注所属人。无 Agent 时提示管理员登记并启用后刷新；列表资格不代替写入时重新鉴权。成员登记及角色操作可通过命名 API 完成，不扩展为权限配置页面。
+写入均需 Idempotency-Key，遵守现有 Cookie/Origin/CSRF 规则。旧 /grants 路由不存在，旧 Action/Scope 请求字段会被拒绝。界面去除逐动作授权编辑器；创建者直接拥有任务管理能力，任务详情提供用户/Agent 候选选择框用于参与者加入/移出；处理人可选择用户或 Agent，并标注 Agent 所属人；人工处理人在详情中开始处理、提交结果或转交给其他成员。无有效成员时提示管理员登记并启用后刷新；列表资格不代替写入时重新鉴权。成员登记及角色操作可通过命名 API 完成，不扩展为权限配置页面。
 
 ## 隔离与撤销
 

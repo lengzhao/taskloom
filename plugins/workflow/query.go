@@ -51,9 +51,9 @@ func (s *Query) ReadFacts(ctx context.Context, t task.Task) (api.Snapshot, error
 		return out, safeErr
 	}
 	out.SafeToExit = safe
-	assigned, assignedErr := s.d.Executions.AssignedAgent(ctx, t.Tenant, t.ID)
+	assigned, assignedErr := s.d.Executions.Assignee(ctx, t.Tenant, t.ID)
 	if assignedErr == nil {
-		out.AssignedAgent = assigned
+		out.Assignee = assigned
 	} else if !errors.Is(assignedErr, fault.ErrNotFound) {
 		return out, assignedErr
 	}
@@ -62,7 +62,7 @@ func (s *Query) ReadFacts(ctx context.Context, t task.Task) (api.Snapshot, error
 	}
 	ex, e := s.d.Executions.Current(ctx, t.Tenant, t.ID)
 	if e == nil {
-		if ex.Status == "active" && time.Now().After(ex.LeaseUntil) {
+		if !ex.Manual && ex.Status == "active" && time.Now().After(ex.LeaseUntil) {
 			ex.Status = "unknown"
 		}
 		out.Execution = &ex
@@ -117,6 +117,8 @@ func (s *Query) Read(ctx context.Context, token, taskID string) (api.Snapshot, e
 		out, e = s.ReadFacts(tx, t)
 		if e == nil {
 			out.CanIsolate = s.d.Authorization.Check(tx, p, "execution.isolate", taskID) == nil
+			out.ViewerKind = p.Kind
+			out.CanAssign = s.d.Authorization.Check(tx, p, "execution.assign", taskID) == nil
 			out.CanManage = s.d.Authorization.Check(tx, p, "task.cancel", taskID) == nil
 			blocked := map[string]string{}
 			why := func(action, code string, relevant bool) bool {
@@ -125,13 +127,13 @@ func (s *Query) Read(ctx context.Context, token, taskID string) (api.Snapshot, e
 				}
 				return code == ""
 			}
-			agent := p.Kind == "agent"
+			worker := p.Kind == "agent" || out.Assignee == p.ID
 			out.CanReview = why(api.ActionReview, reviewBlock(p, t, out), out.Review != nil)
-			out.CanOpen = why(api.ActionOpen, s.openBlock(tx, p, t, out), agent)
+			out.CanOpen = why(api.ActionOpen, s.openBlock(tx, p, t, out), worker)
 			if out.Execution != nil {
 				raw, _ := s.d.Executions.Current(tx, t.Tenant, t.ID)
-				out.CanRenew = why(api.ActionRenew, renewBlock(p, out.Position, raw), agent)
-				out.CanSubmit = why(api.ActionSubmit, submitBlock(p, t, out.Position, *out.Execution), agent)
+				out.CanRenew = why(api.ActionRenew, renewBlock(p, out.Position, raw), p.Kind == "agent")
+				out.CanSubmit = why(api.ActionSubmit, submitBlock(p, t, out.Position, *out.Execution), worker)
 			}
 			if len(blocked) > 0 {
 				out.Blocked = blocked
@@ -178,14 +180,11 @@ func waitsOn(p identity.Principal, t task.Task, v api.Snapshot) bool {
 		return p.Kind == "human" && p.ID == t.Owner
 	case api.ActorReviewer:
 		return p.Kind == "human" && v.Review != nil && p.ID == v.Review.Reviewer
-	case api.ActorAgent:
-		if p.Kind != "agent" {
-			return false
-		}
+	case api.ActorAssignee:
 		if v.Execution != nil && !v.Execution.Safe {
 			return v.Execution.Subject == p.ID
 		}
-		return v.AssignedAgent == p.ID
+		return v.Assignee == p.ID
 	}
 	return false
 }
@@ -210,10 +209,12 @@ func (s *Query) openBlock(ctx context.Context, p identity.Principal, t task.Task
 	switch {
 	case out.Position.Status != flow.PhaseActive:
 		return api.ReasonTaskNotActive
-	case p.Kind != "agent" || p.CredentialPurpose != "business":
+	case p.Kind != "human" && (p.Kind != "agent" || p.CredentialPurpose != "business"):
 		return api.ReasonCredential
-	case out.AssignedAgent != p.ID:
+	case out.Assignee != p.ID:
 		return api.ReasonNotAssigned
+	case out.Execution != nil && out.Execution.Manual && out.Execution.Writable && out.Execution.RoundID == out.Position.RoundID:
+		return api.ReasonExecutionInProgress
 	case !out.SafeToExit && out.Execution != nil && !out.Execution.Safe && out.Execution.RoundID == out.Position.RoundID:
 		return api.ReasonExecutionInProgress
 	case !out.SafeToExit:
@@ -226,7 +227,10 @@ func (s *Query) openBlock(ctx context.Context, p identity.Principal, t task.Task
 }
 
 func ownExecution(p identity.Principal, v execution.Execution) bool {
-	return v.Subject == p.ID && v.InstanceID == p.InstanceID && v.Incarnation == p.Incarnation
+	if v.Manual {
+		return p.Kind == "human" && v.Subject == p.ID
+	}
+	return p.Kind == "agent" && v.Subject == p.ID && v.InstanceID == p.InstanceID && v.Incarnation == p.Incarnation
 }
 
 // renewBlock reads the stored execution, not the lease-overlaid view: an
@@ -235,7 +239,7 @@ func renewBlock(p identity.Principal, pos flow.Position, raw execution.Execution
 	switch {
 	case pos.Status != flow.PhaseActive:
 		return api.ReasonTaskNotActive
-	case p.CredentialPurpose != "business":
+	case p.Kind != "agent" || p.CredentialPurpose != "business":
 		return api.ReasonCredential
 	case !ownExecution(p, raw):
 		return api.ReasonNotYourExecution
@@ -253,7 +257,7 @@ func submitBlock(p identity.Principal, t task.Task, pos flow.Position, v executi
 	switch {
 	case pos.Status != flow.PhaseActive:
 		return api.ReasonTaskNotActive
-	case p.CredentialPurpose != "business":
+	case p.Kind != "human" && p.CredentialPurpose != "business":
 		return api.ReasonCredential
 	case !ownExecution(p, v):
 		return api.ReasonNotYourExecution
@@ -275,7 +279,7 @@ func (s *Query) nextActor(ctx context.Context, t task.Task, out api.Snapshot) ap
 	switch {
 	case pos.Status != flow.PhaseActive:
 		if !out.SafeToExit {
-			return api.ActorAgent
+			return api.ActorAssignee
 		}
 		return ""
 	case len(out.Questions) > 0:
@@ -284,15 +288,17 @@ func (s *Query) nextActor(ctx context.Context, t task.Task, out api.Snapshot) ap
 	case out.Review != nil && out.Review.Outcome == "pending":
 		return api.ActorReviewer
 	case out.Execution != nil && !out.Execution.Safe:
-		return api.ActorAgent
+		return api.ActorAssignee
+	case out.Review != nil && out.Review.Outcome == "rejected":
+		return api.ActorAssignee
 	case out.Submission != nil:
 		return ""
 	}
 	if _, e := s.d.Flow.CheckOpen(ctx, t); e == nil {
-		if out.AssignedAgent == "" {
+		if out.Assignee == "" {
 			return api.ActorOwner
 		}
-		return api.ActorAgent
+		return api.ActorAssignee
 	}
 	if pos.Waiting != "" && s.d.Flow.CheckEdit(ctx, t) == nil {
 		return api.ActorOwner

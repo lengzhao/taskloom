@@ -44,3 +44,14 @@ func (s *Store) SetParticipant(ctx context.Context, p az.Participant, present bo
 		return db.Clauses(clause.OnConflict{DoNothing: true}).Create(&row).Error
 	})
 }
+
+func (s *Store) ListActiveMembers(ctx context.Context, tenant string) ([]az.MemberOption, error) {
+	out := []az.MemberOption{}
+	e := s.use(ctx, false, func(db *gorm.DB) error {
+		return db.Table("member_rows AS m").Select("m.subject, p.kind, p.owner_id").
+			Joins("JOIN principal_rows AS p ON p.tenant = m.tenant AND p.subject = m.subject").
+			Where("m.tenant = ? AND m.active = ? AND m.role IN ? AND p.kind IN ?", tenant, true, []string{"member", "admin"}, []string{"human", "agent"}).
+			Order("p.kind, m.subject").Scan(&out).Error
+	})
+	return out, e
+}

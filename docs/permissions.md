@@ -25,9 +25,10 @@ workspace.SetParticipant 只允许有效管理员/负责人，加入对象必须
 
 - POST /v1/members：Tenant、Subject、Role（admin/member）、Active；更新已登记主体的租户成员关系。
 - DELETE /v1/members：同一 DTO，将 Active 设为 false；仍需有效管理员身份。
+- GET /v1/tasks/{id}/candidates：仅当前有效人类负责人/管理员可读，返回同租户有效成员的 Subject、Kind、OwnerID；不返回凭据或运行实例信息。
 - POST /v1/tasks/{id}/participants：Subject、Present；加入或移出任务参与者，TaskID 由路径绑定。
 
-写入均需 Idempotency-Key，遵守现有 Cookie/Origin/CSRF 规则。旧 /grants 路由不存在，旧 Action/Scope 请求字段会被拒绝。界面去除逐动作授权编辑器；创建者直接拥有任务管理能力，任务详情提供参与者加入/移出控件。成员登记及角色操作可通过命名 API 完成，不扩展为权限配置页面。
+写入均需 Idempotency-Key，遵守现有 Cookie/Origin/CSRF 规则。旧 /grants 路由不存在，旧 Action/Scope 请求字段会被拒绝。界面去除逐动作授权编辑器；创建者直接拥有任务管理能力，任务详情提供用户/Agent 候选选择框用于参与者加入/移出；执行分配只展示 Agent，并标注所属人。无 Agent 时提示管理员登记并启用后刷新；列表资格不代替写入时重新鉴权。成员登记及角色操作可通过命名 API 完成，不扩展为权限配置页面。
 
 ## 隔离与撤销
 

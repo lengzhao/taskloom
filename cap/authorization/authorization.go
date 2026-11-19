@@ -36,3 +36,12 @@ type ParticipantWriter interface {
 type Authorizer interface {
 	Check(ctx context.Context, actor identity.Principal, operation, resourceID string) error
 }
+
+// MemberOption is public directory metadata, never credentials or runtime identity.
+type MemberOption struct{ Subject, Kind, OwnerID string }
+
+// MemberDirectory is the read-only capability needed by task member selectors.
+type MemberDirectory interface {
+	MemberReader
+	ListActiveMembers(ctx context.Context, tenant string) ([]MemberOption, error)
+}

@@ -35,7 +35,7 @@ type Deps struct {
 	Identity      identity.Authenticator `json:"identity"`
 	Authorization az.Authorizer          `json:"authorization"`
 	Commands      capcommand.Handler     `json:"commands"`
-	Members       az.MemberReader        `json:"members"`
+	Members       az.MemberDirectory     `json:"members"`
 	Participants  az.ParticipantWriter   `json:"participants"`
 	Events        record.EventLog        `json:"events"`
 }
@@ -358,4 +358,21 @@ func (s *Service) SetParticipant(ctx context.Context, token, key string, in api.
 		return nil, s.event(tx, t)
 	})
 	return e
+}
+
+// Candidates exposes directory metadata only to people allowed to manage this task.
+func (s *Service) Candidates(ctx context.Context, token, taskID string) ([]az.MemberOption, error) {
+	out := []az.MemberOption{}
+	e := s.d.Transactions.Do(ctx, func(tx context.Context) error {
+		p, e := s.d.Identity.Authenticate(tx, token)
+		if e != nil {
+			return e
+		}
+		if e = s.d.Authorization.Check(tx, p, "participant.set", taskID); e != nil {
+			return e
+		}
+		out, e = s.d.Members.ListActiveMembers(tx, p.Tenant)
+		return e
+	})
+	return out, e
 }

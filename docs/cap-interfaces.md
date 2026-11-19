@@ -45,7 +45,7 @@ M04 提交时为 12 个实例；M05 为 22 个，加入请求输入后为 23 个
 - task/flow：definitions→flow.DefinitionStore（sql）、positions→flow.PositionStore（sql）、state→ready。
 - commands/runtime：6 字段，transactions、requests、identity、authorization、audit、events；同事务生命周期，不分发业务。
 - commands/security：8 字段，分别为 commands、transactions、principals、credentials、bootstrap、members、audit、events。离线管理与成员命令在同一实现，但 HTTP 只能得到 MemberCommands。
-- workspace/tasks：10 字段，transactions、tasks、commits、flow、identity、authorization、commands、members、participants、events。它是当前纵向切片编排边界，事实所有权未合并；成员只读与参与写入明确分开。
+- workspace/tasks：10 字段，transactions、tasks、commits、flow、identity、authorization、commands、members、participants、events。它是当前纵向切片编排边界，事实所有权未合并；成员只读与参与写入明确分开。members 使用 MemberDirectory（GetMember + ListActiveMembers），由现有 SQL 联查成员和主体供候选选择，不增加依赖字段或新表；workflow 等其他消费者仍只获得 MemberReader。
 - api/workspace：5 字段，commands、queries、changes 分别指向同一个 workspace 实例，identity 与 security 提供认证和成员命令。
 
 超过五字段的三处协调实现明确保留：command-runtime 需幂等/身份/权限/审计/事件的原子生命周期，security 需管理/离线能力，workspace 需同事务协调多种事实。不通过合并不相关接口、依赖包或隐藏查找缩小计数；后续执行/验收应使用独立命名模块，不继续扩张 workspace。

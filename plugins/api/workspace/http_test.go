@@ -104,6 +104,10 @@ func TestHTTPAuthenticatedWorkspaceLoop(t *testing.T) {
 		t.Fatal(e)
 	}
 	path := "/v1/tasks/" + created.Task.ID
+	w = request("GET", path+"/candidates", nil, "", false)
+	if w.Code != 200 || !bytes.Contains(w.Body.Bytes(), []byte(`"Subject":"u"`)) || bytes.Contains(w.Body.Bytes(), []byte(`"Subject":"member"`)) || bytes.Contains(w.Body.Bytes(), []byte("Digest")) {
+		t.Fatal("candidate route", w.Code, w.Body.String())
+	}
 	w = request("POST", path+"/commits", map[string]string{"Body": "评论"}, "comment", false)
 	if w.Code != 200 {
 		t.Fatal(w.Code, w.Body.String())

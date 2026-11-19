@@ -25,6 +25,10 @@ import (
 )
 
 func fixture(t *testing.T) (*workspace.Service, *security.Service, string) {
+	svc, sec, token, _ := fixtureWithStore(t)
+	return svc, sec, token
+}
+func fixtureWithStore(t *testing.T) (*workspace.Service, *security.Service, string, *store.Store) {
 	t.Helper()
 	s, e := store.New(store.Config{DSN: filepath.Join(t.TempDir(), "db")})
 	if e != nil {
@@ -50,7 +54,7 @@ func fixture(t *testing.T) (*workspace.Service, *security.Service, string) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	return svc, sec, issued.Secret
+	return svc, sec, issued.Secret, s
 }
 
 func TestCreateReadCommitEditAndRevoke(t *testing.T) {
@@ -291,5 +295,81 @@ func TestMembershipOwnerParticipantsAndImmediateRemoval(t *testing.T) {
 	}
 	if _, e = s.Get(ctx, admin, d.Task.ID, 0); e != nil {
 		t.Fatal("admin", e)
+	}
+}
+
+func TestCandidatesRequireTaskManagementAndFilterInactiveMembers(t *testing.T) {
+	s, sec, admin, db := fixtureWithStore(t)
+	ctx := context.Background()
+	for _, p := range []identity.Principal{{Tenant: "t", ID: "owner", Kind: "human"}, {Tenant: "t", ID: "guest", Kind: "human"}, {Tenant: "t", ID: "agent", Kind: "agent", OwnerID: "owner"}} {
+		if e := sec.Create(ctx, admin, "create-"+p.ID, p); e != nil {
+			t.Fatal(e)
+		}
+	}
+	issue := func(id string) string {
+		t.Helper()
+		v, e := sec.Issue(ctx, admin, "issue-"+id, security.IssueInput{Tenant: "t", Subject: id, ExpiresAt: time.Now().Add(time.Hour)})
+		if e != nil {
+			t.Fatal(e)
+		}
+		return v.Secret
+	}
+	owner, guest := issue("owner"), issue("guest")
+	d, e := s.Create(ctx, owner, "task", api.Create{Title: "directory"})
+	if e != nil {
+		t.Fatal(e)
+	}
+	if e = s.SetParticipant(ctx, owner, "join", api.Participation{TaskID: d.Task.ID, Subject: "guest", Present: true}); e != nil {
+		t.Fatal(e)
+	}
+	for _, token := range []string{admin, owner} {
+		list, e := s.Candidates(ctx, token, d.Task.ID)
+		if e != nil || len(list) != 4 {
+			t.Fatalf("candidates: %+v %v", list, e)
+		}
+		found := false
+		for _, m := range list {
+			if m.Subject == "agent" && m.Kind == "agent" && m.OwnerID == "owner" {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatal("missing agent metadata")
+		}
+	}
+	if _, e = s.Candidates(ctx, guest, d.Task.ID); !errors.Is(e, az.ErrForbidden) {
+		t.Fatal("participant sees directory", e)
+	}
+	if _, e = s.Candidates(ctx, owner, "missing"); !errors.Is(e, az.ErrForbidden) {
+		t.Fatal("missing task", e)
+	}
+	if e = sec.SetMember(ctx, admin, "disable-agent", az.Member{Tenant: "t", Subject: "agent", Role: "member", Active: false}); e != nil {
+		t.Fatal(e)
+	}
+	list, e := s.Candidates(ctx, owner, d.Task.ID)
+	if e != nil || len(list) != 3 {
+		t.Fatalf("inactive candidate: %+v %v", list, e)
+	}
+	if e = db.Do(ctx, func(tx context.Context) error {
+		return db.CreatePrincipal(tx, identity.Principal{Tenant: "other", ID: "foreign", Kind: "human"})
+	}); e != nil {
+		t.Fatal(e)
+	}
+	foreign, e := sec.Recover(ctx, security.BootstrapInput{Tenant: "other", Subject: "foreign", Operator: "test", Reason: "isolation test", ExpiresAt: time.Now().Add(time.Hour)})
+	if e != nil {
+		t.Fatal(e)
+	}
+	if _, e = s.Candidates(ctx, foreign.Secret, d.Task.ID); !errors.Is(e, az.ErrForbidden) {
+		t.Fatal("cross-tenant access", e)
+	}
+	list, e = s.Candidates(ctx, owner, d.Task.ID)
+	if e != nil || len(list) != 3 {
+		t.Fatalf("cross-tenant member leaked: %+v %v", list, e)
+	}
+	if e = sec.SetMember(ctx, admin, "disable-owner", az.Member{Tenant: "t", Subject: "owner", Role: "member", Active: false}); e != nil {
+		t.Fatal(e)
+	}
+	if _, e = s.Candidates(ctx, owner, d.Task.ID); !errors.Is(e, az.ErrForbidden) {
+		t.Fatal("revoked owner", e)
 	}
 }

@@ -2,6 +2,7 @@ package workspace
 
 import (
 	"context"
+	"github.com/lengzhao/taskloom/cap/authorization"
 
 	"github.com/lengzhao/taskloom/cap/commit"
 	"github.com/lengzhao/taskloom/cap/flow"
@@ -36,6 +37,7 @@ type Commands interface {
 	Comment(ctx context.Context, credential, idempotencyKey string, value Comment) (commit.Commit, error)
 }
 type Queries interface {
+	Candidates(ctx context.Context, credential, taskID string) ([]authorization.MemberOption, error)
 	List(ctx context.Context, credential string) ([]Detail, error)
 	Get(ctx context.Context, credential, taskID string, after int64) (Detail, error)
 }

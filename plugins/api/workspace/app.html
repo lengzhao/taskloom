@@ -25,7 +25,7 @@
 body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.6 -apple-system, BlinkMacSystemFont, "PingFang SC", "Segoe UI", "Microsoft YaHei", sans-serif }
 h1, h2, h3, h4 { margin: 0; line-height: 1.3 }
 p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere }
-button, input, textarea { font: inherit; color: inherit }
+button, input, textarea, select { font: inherit; color: inherit }
 code { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere }
 
 /* Controls */
@@ -35,8 +35,8 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 button.danger { color: var(--danger); border-color: var(--danger) }
 button.link { border: 0; background: none; padding: 0; color: var(--accent) }
 button:disabled { opacity: .45; cursor: default }
-input, textarea { width: 100%; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 8px 11px }
-input:focus, textarea:focus { outline: 2px solid var(--accent-soft); border-color: var(--accent) }
+input, textarea, select { width: 100%; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 8px 11px }
+input:focus, textarea:focus, select:focus { outline: 2px solid var(--accent-soft); border-color: var(--accent) }
 textarea { min-height: 84px; resize: vertical }
 label { display: block; margin: 10px 0 4px; color: var(--muted); font-size: 13px }
 form { margin: 0 }
@@ -305,6 +305,7 @@ async function show() {
     if (page.Commits.length < 100) break;
   }
   const ctx = makeContext(d, w, path);
+  ctx.candidates = d.CanEdit ? await api(path + "/candidates") : [];
   ctx.commits = new Map(commits.map(c => [c.ID, c]));
   $('detail').replaceChildren(
     renderHead(ctx),
@@ -398,10 +399,23 @@ function renderQuestions(ctx, panel) {
   if (canAnswer) panel.classList.add('mine');
 }
 
+function memberSelect(members, placeholder) {
+  const select = el('select'); select.required = true;
+  const empty = el('option', placeholder); empty.value = ''; empty.disabled = true; empty.selected = true;
+  select.append(empty);
+  for (const m of members) {
+    const option = el('option', m.Subject + (m.Kind === 'agent' ? ' · Agent' + (m.OwnerID ? ' · 所属人：' + m.OwnerID : '') : ' · 用户'));
+    option.value = m.Subject;
+    select.append(option);
+  }
+  return select;
+}
+
 function assignForm(ctx, text) {
-  const input = el('input');
-  input.required = true;
-  input.placeholder = 'Agent ID';
+  const agents = ctx.candidates.filter(m => m.Kind === 'agent');
+  if (!agents.length) return el('p', '暂无可分配的 Agent。请联系管理员登记并启用 Agent，然后刷新页面。', 'muted');
+  if (!ctx.d.Task.Goal.trim() || !ctx.d.Task.Criteria.trim()) return el('p', '请先在「任务约定」中补充目标和验收标准，再选择执行 Agent。', 'muted');
+  const input = memberSelect(agents, '请选择执行 Agent');
   const f = h('form', null, field(text, input), h('div', 'actions', el('button', '分配', 'primary')));
   f.onsubmit = handle(() => ctx.send('/execution/assign', { ...ctx.base, Subject: input.value }));
   return f;
@@ -499,18 +513,18 @@ function renderExecution(ctx) {
   const live = el('div', undefined, 'muted small'); live.id = 'execution-live-status';
   const panel = h('div', 'panel', el('h3', '执行'), dl, live);
   if (ctx.running) panel.append(el('p', '停止证据尚未完整确认；执行结束或断线都不会自动解除等待。', 'muted small'));
-  if (w.CanManage && ctx.active && w.SafeToExit && w.AssignedAgent) panel.append(h('details', null, el('summary', '更换执行 Agent'), assignForm(ctx, '新的 Agent ID')));
+  if (w.CanManage && ctx.active && w.SafeToExit && w.AssignedAgent) panel.append(h('details', null, el('summary', '更换执行 Agent'), assignForm(ctx, '选择新的执行 Agent')));
   return panel;
 }
 
-function renderParticipants({ d, path }) {
+function renderParticipants({ d, path, candidates }) {
   if (!d.CanEdit) return null;
-  const input = el('input'); input.required = true; input.placeholder = '成员 ID';
+  const input = memberSelect(candidates, '请选择用户或 Agent');
   const change = present => async () => {
     await api(path + '/participants', 'POST', { Subject: input.value, Present: present });
     notice(present ? '参与者已加入' : '参与者已移出');
   };
-  const f = h('form', null, input, h('div', 'actions', el('button', '加入任务'), button('移出任务', () => { if (!input.reportValidity()) return; return change(false)() })));
+  const f = h('form', null, field('选择参与者', input), h('div', 'actions', el('button', '加入任务'), button('移出任务', () => { if (!input.reportValidity()) return; return change(false)() })));
   f.onsubmit = handle(change(true));
   return h('div', 'panel', h('details', null, el('summary', '管理参与者'), f));
 }

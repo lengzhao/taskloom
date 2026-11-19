@@ -72,7 +72,7 @@ func New(c Config, d Deps) (*Module, error) {
 func (m *Module) Routes() []httpapi.Route {
 	routes := []httpapi.Route{}
 	for _, r := range []struct{ method, path, op string }{{"GET", "/app", "ui.app"}, {"POST", "/session", "session.login"}, {"DELETE", "/session", "session.logout"}, {"GET", "/tasks", "tasks.list"}, {"POST", "/tasks", "tasks.create"}, {"GET", "/tasks/{id}", "tasks.get"}, {"PATCH", "/tasks/{id}", "tasks.edit"}, {"POST", "/tasks/{id}/commits", "commits.append"},
-		{"POST", "/tasks/{id}/participants", "participants.set"}, {"GET", "/changes", "changes.read"}, {"POST", "/members", "members.set"}, {"DELETE", "/members", "members.remove"}} {
+		{"GET", "/tasks/{id}/candidates", "tasks.candidates"}, {"POST", "/tasks/{id}/participants", "participants.set"}, {"GET", "/changes", "changes.read"}, {"POST", "/members", "members.set"}, {"DELETE", "/members", "members.remove"}} {
 		routes = append(routes, httpapi.Route{Method: r.method, Path: r.path, Operation: r.op, Handler: http.HandlerFunc(m.serve)})
 	}
 	return routes
@@ -181,6 +181,8 @@ func (m *Module) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		err = m.d.Security.SetMember(ctx, token, key, in)
 		result = map[string]bool{"ok": err == nil}
+	case strings.HasSuffix(path, "/candidates"):
+		result, err = m.d.Queries.Candidates(ctx, token, taskID)
 	case strings.HasSuffix(path, "/participants"):
 		var in api.Participation
 		if !httpx.Decode(w, r, &in) {

@@ -1,0 +1,28 @@
+#!/bin/sh
+# Writes the deployment overlay (the second and last config layer) from the
+# environment, then starts Taskloom. A mounted /app/config.yaml is kept as is.
+#   TASKLOOM_PORT    port to listen on, also published on the host (default 8899)
+#   TASKLOOM_ORIGIN  exact browser origin (default http://localhost:$TASKLOOM_PORT)
+# The session cookie stays Secure (localHTTP=false); browsers accept that on
+# http://localhost. Serve any other host over HTTPS.
+set -eu
+PORT="${TASKLOOM_PORT:-8899}"
+ORIGIN="${TASKLOOM_ORIGIN:-http://localhost:$PORT}"
+case "$PORT" in ''|*[!0-9]*) echo "TASKLOOM_PORT must be a number" >&2; exit 1 ;; esac
+if [ ! -f /app/config.yaml ] || [ -f /app/.generated-config ]; then
+  cat > /app/config.yaml <<EOF
+http:
+  config:
+    listen: 0.0.0.0:$PORT
+sql:
+  config:
+    dsn: /data/taskloom.db
+workspace-api:
+  config:
+    origin: $ORIGIN
+    localHTTP: false
+EOF
+  touch /app/.generated-config
+fi
+if [ "$#" -gt 0 ]; then exec "$@"; fi
+exec taskloom -base /app/base.yaml -config /app/config.yaml

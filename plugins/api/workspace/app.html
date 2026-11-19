@@ -511,7 +511,7 @@ function renderTimeline({ d, path }, commits) {
       c.Kind === 'answer' && byID.has(c.RefID) ? el('div', '回答：' + byID.get(c.RefID).Body, 'muted small') : null,
       el('p', c.Body),
       c.RefID && c.Kind === 'comment' ? el('code', '更正引用 ' + c.RefID, 'muted') : null);
-    if (d.CanComment && c.Kind === 'comment') {
+    if (d.CanComment && c.Kind === 'comment' && c.Author === viewer?.Subject) {
       li.append(button('追加更正', () => {
         const f = $('comment');
         f.elements.RefID.value = c.ID;

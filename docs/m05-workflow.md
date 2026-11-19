@@ -68,8 +68,8 @@ Submit 原子追加不可变 result commit、登记 Submission，再核对已到
 | 路径 | 行为 |
 | --- | --- |
 | GET /workflow | 受权快照、最近执行、当前交付/正文/验收、可用操作提示 |
-| POST /execution/assign | Basis + Subject，负责人/管理员明确分配 Agent |
-| POST /execution/open | Basis，匹配分配的业务 Agent 认领 |
+| POST /execution/assign | Basis + Subject，负责人/管理员或当前人工处理人分配用户或 Agent |
+| POST /execution/open | Basis，匹配分配的用户或业务 Agent 认领 |
 | POST /execution/renew、/execution/end | ExecutionID/Generation，绑定自身实例 |
 | POST /execution/proof | ExecutionID/Generation/Challenge + 三项完整性事实，仅 runtime 凭据 |
 | POST /execution/isolate | Basis + ExecutionID/Generation/Reason/Scope，仅管理员 |

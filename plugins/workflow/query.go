@@ -170,6 +170,12 @@ func waitsOn(p identity.Principal, t task.Task, v api.Snapshot) bool {
 		return p.Kind == "human" && v.Review != nil && p.ID == v.Review.Reviewer
 	case api.ActorAssignee:
 		return v.Assignee == p.ID
+	case api.ActorAddressee:
+		for _, q := range v.Questions {
+			if q.Addressee == p.ID {
+				return true
+			}
+		}
 	}
 	return false
 }
@@ -240,8 +246,8 @@ func (s *Query) nextActor(ctx context.Context, t task.Task, out api.Snapshot) ap
 	case pos.Status != flow.PhaseActive:
 		return ""
 	case len(out.Questions) > 0:
-		// Questions are addressed to the owner; answering unblocks the agent.
-		return api.ActorOwner
+		// Whoever was asked must answer before the task can complete.
+		return api.ActorAddressee
 	case out.Review != nil && out.Review.Outcome == "pending":
 		return api.ActorReviewer
 	case out.Review != nil && out.Review.Outcome == "rejected":

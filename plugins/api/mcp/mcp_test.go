@@ -177,7 +177,7 @@ func TestAgentWorksATaskThroughMCP(t *testing.T) {
 	if init["protocolVersion"] != "2025-06-18" || !strings.Contains(init["instructions"].(string), "submit_result") || f.session == "" {
 		t.Fatal("initialize", init, f.session)
 	}
-	if n := len(f.rpc("tools/list", nil)["tools"].([]any)); n != 6 {
+	if n := len(f.rpc("tools/list", nil)["tools"].([]any)); n != 7 {
 		t.Fatal("tools", n)
 	}
 
@@ -223,8 +223,8 @@ func TestAgentWorksATaskThroughMCP(t *testing.T) {
 
 	f.ok("ask_owner", map[string]string{"task_id": id, "basis": started["basis"].(string), "question": "CSV 还是 Excel？"})
 	f.ownerCall("GET", "/tasks/"+id+"/workflow", nil, &w)
-	if len(w.Questions) != 1 || w.NextActor != "owner" {
-		t.Fatal("question not waiting on owner", w.NextActor)
+	if len(w.Questions) != 1 || w.NextActor != "addressee" {
+		t.Fatal("question not waiting on the owner it was asked of", w.NextActor)
 	}
 	f.ownerCall("POST", "/tasks/"+id+"/questions/"+w.Questions[0].ID+"/answer", map[string]string{"Body": "用 CSV"}, nil)
 	task = f.ok("read_task", map[string]string{"task_id": id})
@@ -283,5 +283,33 @@ func TestTransportEdges(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusForbidden {
 		t.Fatal("foreign origin", resp.StatusCode)
+	}
+}
+
+// The owner may ask the assigned agent a question; it appears in the agent's
+// inbox and the agent answers it through MCP.
+func TestAgentAnswersAQuestionAskedOfIt(t *testing.T) {
+	f := setup(t)
+	var created struct{ Task struct{ ID string } }
+	f.ownerCall("POST", "/tasks", map[string]string{"Title": "t", "Goal": "g", "Criteria": "c"}, &created)
+	id := created.Task.ID
+	var w snapshot
+	f.ownerCall("GET", "/tasks/"+id+"/workflow", nil, &w)
+	f.ownerCall("POST", "/tasks/"+id+"/execution/assign", map[string]any{"RoundID": w.Position.RoundID, "BasisVersion": 1, "ExpectedRevision": w.Position.Revision, "Subject": "agent"}, nil)
+	f.ownerCall("GET", "/tasks/"+id+"/workflow", nil, &w)
+	f.ownerCall("POST", "/tasks/"+id+"/questions", map[string]string{"RoundID": w.Position.RoundID, "Body": "预计什么时候完成？", "Addressee": "agent"}, nil)
+
+	if text, _ := f.tool("inbox", nil); !strings.Contains(text, "addressee") {
+		t.Fatal("agent inbox misses the question", text)
+	}
+	task := f.ok("read_task", map[string]string{"task_id": id})
+	q := task["open_questions"].([]any)[0].(map[string]any)
+	if q["asked_of"] != "agent" || q["id"] == nil {
+		t.Fatal("open question", q)
+	}
+	f.ok("answer_question", map[string]string{"task_id": id, "question_id": q["id"].(string), "text": "今天下班前"})
+	task = f.ok("read_task", map[string]string{"task_id": id})
+	if len(task["open_questions"].([]any)) != 0 || task["next_actor"] != "assignee" {
+		t.Fatal("answer did not close the question", task["open_questions"], task["next_actor"])
 	}
 }

@@ -45,6 +45,8 @@ const (
 	ActorOwner    Actor = "owner"
 	ActorAssignee Actor = "assignee"
 	ActorReviewer Actor = "reviewer"
+	// ActorAddressee means whoever an open question of this round was asked of.
+	ActorAddressee Actor = "addressee"
 )
 
 // Action keys and stable reason codes for Snapshot.Blocked. Codes explain a
@@ -84,8 +86,10 @@ type Snapshot struct {
 
 // Ask raises a request for input to the task owner inside the round the
 // caller saw; Answer replies to one open question of the current round.
+// Addressee is optional: empty asks the task owner; otherwise it must be a
+// current task participant and active member other than the asker.
 type Ask struct {
-	TaskID, RoundID, Body string
+	TaskID, RoundID, Body, Addressee string
 }
 type Answer struct {
 	TaskID, QuestionID, Body string

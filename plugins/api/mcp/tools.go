@@ -142,7 +142,8 @@ func toolList() []tool {
 		{"read_task", "读取任务：目标、验收标准、状态、下一步等谁、你能做哪些操作及不能做的原因、待回答问题、当前结果和最近时间线，并返回写操作所需的 basis。", schema([]string{"task_id"}, map[string]string{"task_id": descTask})},
 		{"start_work", "认领并开始执行任务。", schema([]string{"task_id", "basis"}, map[string]string{"task_id": descTask, "basis": descBasis})},
 		{"post_message", "在任务时间线留言：汇报进度、回复人的引导。留言会更新你的最近进展时间，但不算交付结果。", schema([]string{"task_id", "text"}, map[string]string{"task_id": descTask, "text": "留言内容"})},
-		{"ask_owner", "向任务负责人提问（说明问题、为何卡住、可选方案和建议）。问题未回答前任务不能完成；回答会出现在 read_task 的时间线中。", schema([]string{"task_id", "basis", "question"}, map[string]string{"task_id": descTask, "basis": descBasis, "question": "问题内容"})},
+		{"ask_owner", "提问或请求协助（说明问题、为何卡住、可选方案和建议）。默认问任务负责人；需要某位参与者协助时用 to 指定其 ID（对方须已被负责人加入任务）。问题未回答前任务不能完成；回答会出现在 read_task 的时间线中。", schema([]string{"task_id", "basis", "question"}, map[string]string{"task_id": descTask, "basis": descBasis, "question": "问题内容", "to": "可选：被提问的参与者 ID，留空为负责人"})},
+		{"answer_question", "回答别人向你提的问题（read_task 的 open_questions 中 asked_of 为你的那条）。", schema([]string{"task_id", "question_id", "text"}, map[string]string{"task_id": descTask, "question_id": "问题 ID（open_questions 中的 id）", "text": "回答内容"})},
 		{"submit_result", "明确提交本轮的正式结果（交付物）。需要已认领执行；再次提交会替换当前结果。", schema([]string{"task_id", "basis", "result"}, map[string]string{"task_id": descTask, "basis": descBasis, "result": "结果正文"})},
 	}
 }
@@ -192,6 +193,14 @@ func (m *Module) call(ctx context.Context, c call, name string, rawArgs json.Raw
 			return "", err
 		}
 		return "已留言（" + cm.ID + "）。", nil
+	case "answer_question":
+		if err := required(args, "task_id", "question_id", "text"); err != nil {
+			return "", err
+		}
+		if _, err := m.d.Questions.Answer(ctx, c.token, c.key(name, args), work.Answer{TaskID: args["task_id"], QuestionID: args["question_id"], Body: args["text"]}); err != nil {
+			return "", err
+		}
+		return "已回答。", nil
 	case "start_work", "ask_owner", "submit_result":
 	default:
 		return "", invalid("未知工具 " + name)
@@ -216,11 +225,15 @@ func (m *Module) call(ctx context.Context, c call, name string, rawArgs json.Raw
 		if err = required(args, "question"); err != nil {
 			return "", err
 		}
-		s, err := m.d.Questions.Ask(ctx, c.token, key, work.Ask{TaskID: b.TaskID, RoundID: b.RoundID, Body: args["question"]})
+		s, err := m.d.Questions.Ask(ctx, c.token, key, work.Ask{TaskID: b.TaskID, RoundID: b.RoundID, Body: args["question"], Addressee: args["to"]})
 		if err != nil {
 			return "", err
 		}
-		return pretty(map[string]any{"message": "已向负责人提问；回答前任务不能完成。可继续执行，稍后用 read_task 查看回答。", "basis": b.next(s).token()}), nil
+		to := args["to"]
+		if to == "" {
+			to = "负责人"
+		}
+		return pretty(map[string]any{"message": "已向" + to + "提问；回答前任务不能完成。可继续执行，稍后用 read_task 查看回答。", "basis": b.next(s).token()}), nil
 	default: // submit_result
 		if err = required(args, "result"); err != nil {
 			return "", err
@@ -270,7 +283,7 @@ func (m *Module) readTask(ctx context.Context, c call, taskID string) (string, e
 	}
 	questions := []map[string]any{}
 	for _, q := range w.Questions {
-		questions = append(questions, map[string]any{"question": byID[q.CommitID].Body, "asked_by": q.Asker, "asked_at": q.CreatedAt.Format(time.RFC3339)})
+		questions = append(questions, map[string]any{"id": q.ID, "question": byID[q.CommitID].Body, "asked_by": q.Asker, "asked_of": q.Addressee, "asked_at": q.CreatedAt.Format(time.RFC3339)})
 	}
 	if len(commits) > timelineLimit {
 		commits = commits[len(commits)-timelineLimit:]

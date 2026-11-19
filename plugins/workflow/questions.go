@@ -19,11 +19,11 @@ import (
 	api "github.com/lengzhao/taskloom/cap/workflow"
 )
 
-// QuestionDeps has eight fields: the command lifecycle, the task and its flow
+// QuestionDeps has nine fields: the command lifecycle, the task and its flow
 // position, the timeline that holds the text, the question records, the
-// executor's progress lease, and the snapshot/event pair every task command
-// returns and publishes. Splitting them would only move the same transaction
-// coordination elsewhere.
+// executor's progress, the relations that validate an addressee, and the
+// snapshot/event pair every task command returns and publishes. Splitting them
+// would only move the same transaction coordination elsewhere.
 type QuestionDeps struct {
 	Commands  command.Handler    `json:"commands"`
 	Tasks     task.Reader        `json:"tasks"`
@@ -31,6 +31,7 @@ type QuestionDeps struct {
 	Commits   commit.Log         `json:"commits"`
 	Questions question.Store     `json:"questions"`
 	Progress  execution.Progress `json:"progress"`
+	Relations az.Relations       `json:"relations"`
 	Snapshots api.FactsReader    `json:"snapshots"`
 	Events    record.EventWriter `json:"events"`
 }
@@ -38,15 +39,16 @@ type QuestionModule struct {
 	s *Service
 	q question.Store
 	p execution.Progress
+	r az.Relations
 }
 
 func init() { pluginkit.Register("commands/question", NewQuestions) }
 
 func NewQuestions(_ struct{}, d QuestionDeps) (*QuestionModule, error) {
-	if d.Commands == nil || d.Tasks == nil || d.Flow == nil || d.Commits == nil || d.Questions == nil || d.Progress == nil || d.Snapshots == nil || d.Events == nil {
+	if d.Commands == nil || d.Tasks == nil || d.Flow == nil || d.Commits == nil || d.Questions == nil || d.Progress == nil || d.Relations == nil || d.Snapshots == nil || d.Events == nil {
 		return nil, fault.ErrInput
 	}
-	return &QuestionModule{&Service{d: dependencies{Commands: d.Commands, Tasks: d.Tasks, Flow: d.Flow, Commits: d.Commits, Snapshots: d.Snapshots, Events: d.Events}}, d.Questions, d.Progress}, nil
+	return &QuestionModule{&Service{d: dependencies{Commands: d.Commands, Tasks: d.Tasks, Flow: d.Flow, Commits: d.Commits, Snapshots: d.Snapshots, Events: d.Events}}, d.Questions, d.Progress, d.Relations}, nil
 }
 
 func validText(body string) bool { return strings.TrimSpace(body) != "" && len(body) <= 20000 }
@@ -72,7 +74,30 @@ func (m *QuestionModule) appendCommit(ctx context.Context, p identity.Principal,
 	return c, m.s.d.Commits.Append(ctx, c)
 }
 
-// Ask is open to any task participant except the owner, who is the addressee.
+// addressee resolves who a question is asked of: the owner by default, or a
+// current participant who is an active member. Nobody asks themselves.
+func (m *QuestionModule) addressee(ctx context.Context, p identity.Principal, t task.Task, requested string) (string, error) {
+	to := strings.TrimSpace(requested)
+	if to == "" {
+		to = t.Owner
+	}
+	if to == p.ID {
+		return "", fault.ErrInput
+	}
+	if to == t.Owner {
+		return to, nil
+	}
+	member, e := m.r.GetMember(ctx, t.Tenant, to)
+	if e != nil || !member.Active {
+		return "", fault.ErrInput
+	}
+	if in, e := m.r.HasParticipant(ctx, az.Participant{Tenant: t.Tenant, TaskID: t.ID, Subject: to}); e != nil || !in {
+		return "", fault.ErrInput
+	}
+	return to, nil
+}
+
+// Ask is open to any task participant; it waits on the addressee.
 func (m *QuestionModule) Ask(ctx context.Context, token, key string, in api.Ask) (api.Snapshot, error) {
 	return run(ctx, m.s, token, key, "commit.append", in.TaskID, in, func(tx context.Context, p identity.Principal) ([]byte, error) {
 		if !validText(in.Body) {
@@ -85,14 +110,15 @@ func (m *QuestionModule) Ask(ctx context.Context, token, key string, in api.Ask)
 		if pos.RoundID != in.RoundID {
 			return nil, fault.ErrConflict
 		}
-		if p.ID == t.Owner {
-			return nil, fault.ErrInput
+		to, e := m.addressee(tx, p, t, in.Addressee)
+		if e != nil {
+			return nil, e
 		}
 		c, e := m.appendCommit(tx, p, t, "question", in.Body, "")
 		if e != nil {
 			return nil, e
 		}
-		if e = m.q.CreateQuestion(tx, question.Question{Tenant: t.Tenant, TaskID: t.ID, ID: id(), RoundID: pos.RoundID, CommitID: c.ID, Asker: p.ID, Addressee: t.Owner, Status: question.StatusOpen, CreatedAt: time.Now()}); e != nil {
+		if e = m.q.CreateQuestion(tx, question.Question{Tenant: t.Tenant, TaskID: t.ID, ID: id(), RoundID: pos.RoundID, CommitID: c.ID, Asker: p.ID, Addressee: to, Status: question.StatusOpen, CreatedAt: time.Now()}); e != nil {
 			return nil, e
 		}
 		if e = m.p.RecordProgress(tx, p, t.Tenant, t.ID); e != nil {
@@ -102,7 +128,7 @@ func (m *QuestionModule) Ask(ctx context.Context, token, key string, in api.Ask)
 	})
 }
 
-// Answer is reserved to the human addressee and only for the current round.
+// Answer is reserved to the addressee and only for the current round.
 // The flow is refreshed afterwards, so a completion held by the question can proceed.
 func (m *QuestionModule) Answer(ctx context.Context, token, key string, in api.Answer) (api.Snapshot, error) {
 	return run(ctx, m.s, token, key, "commit.append", in.TaskID, in, func(tx context.Context, p identity.Principal) ([]byte, error) {
@@ -117,7 +143,7 @@ func (m *QuestionModule) Answer(ctx context.Context, token, key string, in api.A
 		if e != nil {
 			return nil, e
 		}
-		if p.Kind != "human" || p.ID != q.Addressee {
+		if p.ID != q.Addressee {
 			return nil, az.ErrForbidden
 		}
 		if q.Status != question.StatusOpen || q.RoundID != pos.RoundID {

@@ -178,6 +178,7 @@ question-commands:
     commits: sql
     questions: sql
     progress: execution-commands
+    relations: sql
     snapshots: workflow-query
     events: sql
 flow-commands:

@@ -217,7 +217,7 @@ details[open] > summary { margin-bottom: 4px }
 <script>
 // ---------- Labels (display only; flow rules stay on the server) ----------
 const STATE_LABEL = { ready: '准备', executing: '执行中', accepting: '验收中', checkpoint: '待确认', factcheck: '检查中' };
-const ACTOR_LABEL = { owner: '负责人', assignee: '处理人', reviewer: '验收人' };
+const ACTOR_LABEL = { owner: '负责人', assignee: '处理人', reviewer: '验收人', addressee: '被提问人' };
 const ACTION_LABEL = { open: '认领执行', submit: '提交结果', review: '验收' };
 const REASON_LABEL = {
   task_not_active: '任务已结束或已取消',
@@ -449,7 +449,7 @@ async function show() {
     renderNext(ctx),
     h('div', 'cols',
       h('div', null, renderResult(ctx), renderTimeline(ctx, commits)),
-      h('div', null, renderBasis(ctx), renderExecution(ctx), renderParticipants(ctx), renderManage(ctx), renderAgentDebug(ctx))));
+      h('div', null, renderBasis(ctx), renderExecution(ctx), renderAsk(ctx), renderParticipants(ctx), renderManage(ctx), renderAgentDebug(ctx))));
 }
 
 function makeContext(d, w, path) {
@@ -491,7 +491,7 @@ function renderNext(ctx) {
   else if (w.NextActor) title = '下一步等待：' + ACTOR_LABEL[w.NextActor];
   else title = w.Position.Complete ? '当前步骤已完成' : '暂无需要处理的事项';
   panel.append(h('div', 'head', el('h3', title), pill(s)));
-  if (w.Questions?.length) panel.append(el('p', '处理人提出了问题，回答前任务不能完成。', 'muted'));
+  if (w.Questions?.length) panel.append(el('p', '有待回答的问题，回答前任务不能完成。', 'muted'));
   else if (w.Position.Waiting) panel.append(el('p', w.Position.Waiting, 'muted'));
   if (w.Blocked?.review && !ctx.isAgent) panel.append(el('p', '暂不能验收：' + (REASON_LABEL[w.Blocked.review] || w.Blocked.review), 'muted'));
 
@@ -530,16 +530,18 @@ function renderNext(ctx) {
   return panel;
 }
 
-// Open requests for input from the executor. Only the addressee (the owner,
-// who then has the task in "待我处理") gets an answer box.
+// Open requests for input. Only the person each question was asked of gets an
+// answer box; the task is then in their "待我处理".
 function renderQuestions(ctx, panel) {
   const qs = ctx.w.Questions || [];
   if (!qs.length) return;
-  const canAnswer = ctx.w.NextActor === 'owner' && inboxIDs.has(ctx.d.Task.ID) && !ctx.isAgent;
+  let mine = false;
   for (const q of qs) {
     const asked = ctx.commits?.get(q.CommitID);
+    const canAnswer = q.Addressee === viewer.Subject;
+    mine = mine || canAnswer;
     const box = h('div', 'result',
-      el('div', q.Asker + ' 提问 · ' + time(q.CreatedAt), 'muted small'),
+      el('div', q.Asker + ' 问 ' + (q.Addressee === ctx.d.Task.Owner ? '负责人 ' : '') + q.Addressee + ' · ' + time(q.CreatedAt), 'muted small'),
       el('p', asked ? asked.Body : '（问题正文见时间线）'));
     if (canAnswer) {
       const body = textarea('Body', true, '回答后处理人可在任务中查看');
@@ -549,7 +551,7 @@ function renderQuestions(ctx, panel) {
     }
     panel.append(box);
   }
-  if (canAnswer) panel.classList.add('mine');
+  if (mine) panel.classList.add('mine');
 }
 
 function memberSelect(members, placeholder) {
@@ -669,6 +671,26 @@ function renderExecution(ctx) {
   return panel;
 }
 
+// Ask anyone on the task for input or help. The owner is the default; others
+// must already be participants (the server checks). Unanswered questions hold completion.
+function renderAsk(ctx) {
+  const { d, w, active, candidates, send } = ctx;
+  if (!active) return null;
+  const to = el('select');
+  if (d.Task.Owner !== viewer.Subject) { const o = el('option', '负责人 ' + d.Task.Owner); o.value = ''; to.append(o); }
+  for (const m of candidates || []) {
+    if (m.Subject === viewer.Subject || m.Subject === d.Task.Owner) continue;
+    const o = el('option', m.Subject + (m.Kind === 'agent' ? ' · Agent' : ' · 用户')); o.value = m.Subject; to.append(o);
+  }
+  if (!to.children.length) return null;
+  const body = textarea('Body', true, '说明问题、为什么卡住、需要对方做什么');
+  const f = h('form', null, field('问谁', to), field('问题', body),
+    el('p', '对方须是任务参与者；未回答前任务不能完成。', 'muted small'),
+    h('div', 'actions', el('button', '提问')));
+  f.onsubmit = handle(() => send('/questions', { RoundID: w.Position.RoundID, Body: body.value, Addressee: to.value }));
+  return h('div', 'panel', h('details', null, el('summary', '提问 / 请求协助'), f));
+}
+
 function renderParticipants({ d, path, candidates }) {
   if (!d.CanEdit) return null;
   const input = memberSelect(candidates, '请选择用户或 Agent');
@@ -708,12 +730,6 @@ function renderAgentDebug(ctx) {
   const actions = h('div', 'actions');
   if (w.CanOpen) actions.append(button('认领并开始执行', () => send('/execution/open', base), 'primary'));
   if (actions.children.length) panel.append(actions);
-  if (ctx.active) {
-    const q = textarea('Body', true, '说明问题、为什么卡住、可选方案和建议');
-    const f = h('form', null, field('向负责人提问（未回答前任务不能完成）', q), h('div', 'actions', el('button', '提问')));
-    f.onsubmit = handle(() => send('/questions', { RoundID: w.Position.RoundID, Body: q.value }));
-    panel.append(f);
-  }
   if (w.CanSubmit) {
     const body = textarea('Body', true, '这是正式交付的结果正文');
     const f = h('form', null, field('提交结果', body), h('div', 'actions', el('button', '提交结果', 'primary')));

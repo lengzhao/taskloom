@@ -21,10 +21,11 @@ claude mcp add --transport http taskloom http://localhost:8899/v1/mcp \
 | read_task | workspace.Get + workflow.Read | 目标、标准、状态、等谁、can/blocked 原因、待答问题、当前结果、最近进展时间、最近 20 条时间线及 basis |
 | start_work | ExecutionCommands.Open | 认领执行 |
 | post_message | workspace.Comment | 留言：进度、回复人的引导；记录最近进展，不算交付 |
-| ask_owner | QuestionCommands.Ask | 向负责人提问，未答前任务不能完成 |
+| ask_owner | QuestionCommands.Ask | 提问或请求协助：默认问负责人，`to` 可指定已加入任务的参与者；未答前任务不能完成 |
+| answer_question | QuestionCommands.Answer | 回答别人向自己提的问题（open_questions 中 asked_of 为自己） |
 | submit_result | ResultCommands.Submit | 明确提交结果 |
 
-分配、验收、回答、取消、退回与重开不对模型开放：插件以局部窄接口注入，只拿到上表能力，这些都属于人。
+分配、验收、取消、退回与重开不对模型开放：插件以局部窄接口注入，只拿到上表能力，这些都属于人。
 
 ## 约束
 
@@ -33,7 +34,7 @@ claude mcp add --transport http taskloom http://localhost:8899/v1/mcp \
 - **进展而非保活**：执行没有租约或超时。认领、本人留言、提问、提交结果都会更新执行的最近进展时间，负责人据此判断是否介入；instructions 提示模型长时间工作时每 10～15 分钟汇报一次。Agent 重启后用同一业务凭据（同实例）read_task 即可继续原执行，不新建执行。沉默或断线不改变执行。
 - **推送**：不订阅变化流；模型通过 inbox/read_task 按需读取，人的留言与回答在下次读取时可见。实时 steer 仍归 Agent 层。
 
-验证见 `plugins/api/mcp/mcp_test.go`：以真实默认配置图和 HTTP 路由运行，覆盖初始化与会话、认领、损坏/过期 basis、留言幂等与进展记录、提问与回答、提交，以及通知、未知方法、批量、坏凭据和外部 Origin。
+验证见 `plugins/api/mcp/mcp_test.go`：以真实默认配置图和 HTTP 路由运行，覆盖初始化与会话、认领、损坏/过期 basis、留言幂等与进展记录、提问与回答、Agent 回答被问的问题、提交，以及通知、未知方法、批量、坏凭据和外部 Origin。
 
 ## 示例：AgentKit 常驻执行 Agent
 

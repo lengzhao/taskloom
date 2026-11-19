@@ -15,7 +15,7 @@
 - 未实现：Harness 适配与真实 Agent 联调（下一步 M06）、WebSocket、文件/S3、任务树、提醒与历史恢复。本地测试不代表真实进程清理或生产数据库验收。
 - 本地工作台：`http://127.0.0.1:8080/v1/app`，初始化与启动见 [M04](docs/m04-workspace.md)，执行与验收见 [M05](docs/m05-workflow.md)。
 - Docker：`docker build -t taskloom:local .`，再 `docker run -d --name taskloom -p 8899:8899 -v taskloom-data:/data taskloom:local`，访问 `http://localhost:8899/v1/app`。端口由 `TASKLOOM_PORT`（默认 8899，宿主机与容器同端口）决定，Origin 默认 `http://localhost:端口`，可用 `TASKLOOM_ORIGIN` 覆盖；非 localhost 访问须走 HTTPS。首次启动前用同一数据卷执行 `docker run --rm -v taskloom-data:/data taskloom:local taskloom-admin -base /app/base.yaml -config /app/config.yaml -mode bootstrap ... -credential-file /data/admin.json` 初始化管理员。需要内部 Go 模块代理时用构建参数传入本机设置：`docker build --build-arg GOPROXY="$(go env GOPROXY)" --build-arg GOSUMDB="$(go env GOSUMDB)" -t taskloom:local .`（也支持 `GOPRIVATE`）；离线构建可在构建上下文先执行 `go mod vendor`。
-- Agent 接入：服务内置 MCP 端点 `POST /v1/mcp`（Streamable HTTP，6 个工具，复用共用命令），Agent 只需配置 URL 和业务凭据，见 [MCP 接入](docs/mcp-adapter.md)。
+- Agent 接入：服务内置 MCP 端点 `POST /v1/mcp`（Streamable HTTP，7 个工具，复用共用命令），Agent 只需配置 URL 和业务凭据，见 [MCP 接入](docs/mcp-adapter.md)。
 - 检查入口：`sh scripts/check.sh all`、`sh scripts/check.sh race`，见[开发说明](docs/development.md)。
 
 ## 文档索引

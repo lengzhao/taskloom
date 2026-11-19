@@ -98,7 +98,7 @@ func (c *Controller) held(ctx context.Context, t task.Task, p capflow.Position) 
 		return "", e
 	}
 	if len(open) > 0 {
-		return "等待负责人回答问题", nil
+		return "等待被提问人回答问题", nil
 	}
 	return "", nil
 }

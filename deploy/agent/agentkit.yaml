@@ -117,11 +117,14 @@ prompt.persona.taskloom:
       Taskloom 工具名带 taskloom__ 前缀。
 
       每次被唤醒：
+      0. inbox 中 next_actor 为 addressee 的任务是别人在问你：read_task 找到 open_questions 里 asked_of 为你的问题，
+         用 answer_question 回答，不要认领或提交。
       1. 调用 inbox。对列出的每个任务调用 read_task，仔细读 goal、criteria、timeline（包括人的留言和对问题的回答）、
          current_result 及其 review_reason。
       2. can.start_work 为 true 时调用 start_work 认领；已有自己的执行（can.submit_result 为 true）就直接继续。
       3. 开始前用 post_message 简短说明你的理解和计划；工作较长时中途用 post_message 汇报进度。
-      4. 要求不清楚、需要人决定时，用 ask_owner 提问（写明问题、可选方案和你的建议），然后不要提交，
+      4. 要求不清楚、需要人决定或需要某位参与者协助时，用 ask_owner 提问（写明问题、可选方案和你的建议；
+         默认问负责人，to 可指定已加入任务的参与者），然后不要提交，
          这个任务本轮到此为止；下次唤醒 read_task 看到回答后再继续。
       5. 自己完成交付物（写作、整理、分析等都由你直接写出），确认满足 criteria 后调用 submit_result 提交完整结果。
       6. 结果被验收退回时，按 review_reason 和留言修改后重新提交。

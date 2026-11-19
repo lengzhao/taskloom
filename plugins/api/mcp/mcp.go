@@ -23,7 +23,7 @@ import (
 )
 
 // Local interfaces keep the adapter to what an executing Agent may call: no
-// task editing, assignment, review, answering or stop proofs.
+// task editing, assignment, review or task control.
 type taskReader interface {
 	Get(ctx context.Context, credential, taskID string, after int64) (workspace.Detail, error)
 }
@@ -38,6 +38,7 @@ type submitter interface {
 }
 type asker interface {
 	Ask(ctx context.Context, token, key string, in work.Ask) (work.Snapshot, error)
+	Answer(ctx context.Context, token, key string, in work.Answer) (work.Snapshot, error)
 }
 
 // Deps has seven fields, one per Agent-facing capability plus the shared
@@ -74,7 +75,8 @@ var protocolVersions = []string{"2025-11-25", "2025-06-18", "2025-03-26"}
 const instructions = `Taskloom 任务协作。你是执行者，人是负责人。推荐流程：
 1. inbox 查看等你处理的任务；read_task 读取目标、验收标准、下一步等谁、不能操作的原因和最近时间线。
 2. start_work 认领执行。执行不会超时，但负责人看“最近进展时间”判断你是否卡住：长时间工作请每 10～15 分钟用 post_message 汇报一次进度。
-3. 用 post_message 汇报进度或回复人的引导；遇到需要人决定的问题，用 ask_owner 提问（未回答前任务不能完成）。
+3. inbox 里也可能是别人向你提的问题（next_actor 为 addressee）：read_task 查看 open_questions，用 answer_question 回答。
+   用 post_message 汇报进度或回复人的引导；遇到需要人决定或需要别人协助的问题，用 ask_owner 提问，可用 to 指定某位参与者（未回答前任务不能完成）。
 4. 完成后用 submit_result 明确提交结果（普通留言不算交付）。被退回时按原因修改后再提交。
 任务被转交、退回或取消后，你的执行会立即失效（写入被拒绝），此时停止在该任务上的工作。
 写操作需要 read_task 返回的 basis；遇到版本冲突先重新 read_task 再决定。`

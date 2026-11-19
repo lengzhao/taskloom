@@ -129,6 +129,7 @@ flowchart TD
   n21 -->|commits| n3
   n21 -->|questions| n3
   n21 -->|progress| n19
+  n21 -->|relations| n3
   n21 -->|snapshots| n18
   n21 -->|events| n3
   n22 -->|commands| n13
@@ -177,7 +178,7 @@ flowchart TD
 | workflow-query | query/workflow | questions、commits、transactions、tasks、flow、executions、results、reviews、identity、authorization |
 | execution-commands | commands/execution | participants、principals、members、commands、tasks、flow、executions、snapshots、events |
 | result-commands | commands/result | commands、tasks、flow、executions、results、commits、accepting、snapshots、events |
-| question-commands | commands/question | commands、tasks、flow、commits、questions、progress、snapshots、events |
+| question-commands | commands/question | commands、tasks、flow、commits、questions、progress、relations、snapshots、events |
 | flow-commands | commands/flow | commands、tasks、flow、executions、snapshots、events |
 | workflow-api | api/workflow | executions、results、controls、workflow、questions、security |
 | mcp-api | api/mcp | tasks、comments、workflow、executions、results、questions、security |

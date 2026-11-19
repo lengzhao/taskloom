@@ -12,6 +12,7 @@ import (
 	"github.com/lengzhao/taskloom/cap/fault"
 	"github.com/lengzhao/taskloom/cap/identity"
 	"github.com/lengzhao/taskloom/cap/lifecycle"
+	capsecurity "github.com/lengzhao/taskloom/cap/security"
 	"github.com/lengzhao/taskloom/cap/unitofwork"
 	api "github.com/lengzhao/taskloom/cap/workflow"
 	workspace "github.com/lengzhao/taskloom/cap/workspace"
@@ -87,7 +88,7 @@ func setup(t *testing.T, override map[string]any) *fixture {
 		t.Fatal(e)
 	}
 	for _, purpose := range []string{"business", "runtime"} {
-		issued, e = f.security.Issue(ctx, f.owner, purpose, security.IssueInput{Tenant: "t", Subject: "agent", InstanceID: "machine", Incarnation: "boot", Purpose: purpose, ExpiresAt: time.Now().Add(time.Hour)})
+		issued, e = f.security.Issue(ctx, f.owner, purpose, capsecurity.IssueInput{Tenant: "t", Subject: "agent", InstanceID: "machine", Incarnation: "boot", Purpose: purpose, ExpiresAt: time.Now().Add(time.Hour)})
 		if e != nil {
 			t.Fatal(e)
 		}

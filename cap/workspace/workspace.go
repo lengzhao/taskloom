@@ -36,7 +36,13 @@ type Commands interface {
 	Edit(ctx context.Context, credential, idempotencyKey string, value Edit) (Detail, error)
 	Comment(ctx context.Context, credential, idempotencyKey string, value Comment) (commit.Commit, error)
 }
+type Viewer struct {
+	Tenant, Subject, Kind string
+	CanAdmin              bool
+}
 type Queries interface {
+	Viewer(ctx context.Context, credential string) (Viewer, error)
+	Members(ctx context.Context, credential string) ([]authorization.DirectoryMember, error)
 	Candidates(ctx context.Context, credential, taskID string) ([]authorization.MemberOption, error)
 	List(ctx context.Context, credential string) ([]Detail, error)
 	Get(ctx context.Context, credential, taskID string, after int64) (Detail, error)

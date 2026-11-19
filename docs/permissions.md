@@ -42,3 +42,15 @@ workspace.SetParticipant 只允许有效管理员/负责人，加入对象必须
 按用户决定不兼容旧权限格式：删除 Grant 表定义及操作，不保留迁移映射。旧数据库会因迁移校验和变化明确拒绝打开，需要在开发环境重建；程序不自动删除数据库文件。新数据库仅建立成员/参与 schema。
 
 测试覆盖初始化直接可用、成员创建自动成为负责人、参与者可读/评论但不可改约定/管理参与者、移出后的幂等重放及变化读取拒绝、成员停用、跨租户拒绝、Agent 不继承所属人权限、旧逐动作 API 不存在。Harness 不在此次范围。
+
+## 用户与 Agent 管理入口
+
+页面顶部为当前有效管理员显示“用户与 Agent”，支持登记、查看、启用/停用和凭据签发/撤销。普通用户和 Agent 不显示入口，服务端同样拒绝管理操作。首次管理员初始化和离线恢复仍只在受控 CLI 中执行。
+
+- GET /v1/me：当前有效成员的 Tenant、Subject、Kind、CanAdmin。
+- GET /v1/members：仅管理员可读，返回本租户用户与 Agent（含停用成员）的标识、类型、所属人、角色、启用状态，无凭据信息。
+- POST /v1/identities：Subject、Kind（human/agent）、OwnerID；创建有效普通成员，Agent 的所属人须为同租户有效用户。
+- POST /v1/credentials：Subject、ExpiresAt；Agent 还需 InstanceID、Incarnation、Purpose（business/runtime）。仅为有效成员签发，最长 90 天。
+- POST /v1/credentials/revoke：CredentialID；管理员撤销本租户凭据。
+
+新增身份和凭据 API 的租户由可信认证主体确定，浏览器不能提交 Tenant 或创建管理员角色。凭据明文只在首次签发响应中返回，可复制或下载；数据库/幂等回执只保存摘要或编号，重试只返回编号。明文关闭窗口即清空，不写浏览器持久化存储。网络结果不明确时页面沿用同一请求及幂等键；重放拿不到明文时可按返回编号撤销，再重新签发。停用不删除历史数据，重新启用恢复仍保留的任务关系。

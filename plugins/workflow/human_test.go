@@ -3,6 +3,7 @@ package workflow_test
 import (
 	"context"
 	"errors"
+	capsecurity "github.com/lengzhao/taskloom/cap/security"
 	"testing"
 	"time"
 
@@ -13,7 +14,6 @@ import (
 	"github.com/lengzhao/taskloom/cap/identity"
 	api "github.com/lengzhao/taskloom/cap/workflow"
 	workspace "github.com/lengzhao/taskloom/cap/workspace"
-	"github.com/lengzhao/taskloom/domain/security"
 )
 
 func (f *fixture) human(t *testing.T, id string) string {
@@ -21,7 +21,7 @@ func (f *fixture) human(t *testing.T, id string) string {
 	if e := f.security.Create(f.ctx, f.owner, "create-"+id, identity.Principal{Tenant: "t", ID: id, Kind: "human"}); e != nil {
 		t.Fatal(e)
 	}
-	v, e := f.security.Issue(f.ctx, f.owner, "issue-"+id, security.IssueInput{Tenant: "t", Subject: id, ExpiresAt: time.Now().Add(time.Hour)})
+	v, e := f.security.Issue(f.ctx, f.owner, "issue-"+id, capsecurity.IssueInput{Tenant: "t", Subject: id, ExpiresAt: time.Now().Add(time.Hour)})
 	if e != nil {
 		t.Fatal(e)
 	}

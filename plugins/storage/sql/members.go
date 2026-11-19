@@ -55,3 +55,13 @@ func (s *Store) ListActiveMembers(ctx context.Context, tenant string) ([]az.Memb
 	})
 	return out, e
 }
+
+func (s *Store) ListMembers(ctx context.Context, tenant string) ([]az.DirectoryMember, error) {
+	out := []az.DirectoryMember{}
+	e := s.use(ctx, false, func(db *gorm.DB) error {
+		return db.Table("member_rows AS m").Select("m.subject, p.kind, p.owner_id, m.role, m.active").
+			Joins("JOIN principal_rows AS p ON p.tenant = m.tenant AND p.subject = m.subject").
+			Where("m.tenant = ?", tenant).Order("p.kind, m.subject").Scan(&out).Error
+	})
+	return out, e
+}

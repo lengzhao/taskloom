@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	capflow "github.com/lengzhao/taskloom/cap/flow"
+	capsecurity "github.com/lengzhao/taskloom/cap/security"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -105,7 +106,7 @@ func TestCreateReadCommitEditAndRevoke(t *testing.T) {
 	if e = sec.SetMember(ctx, token, "promote", az.Member{Tenant: "t", Subject: "admin2", Role: "admin", Active: true}); e != nil {
 		t.Fatal(e)
 	}
-	second, e := sec.Issue(ctx, token, "admin2-token", security.IssueInput{Tenant: "t", Subject: "admin2", ExpiresAt: time.Now().Add(time.Hour)})
+	second, e := sec.Issue(ctx, token, "admin2-token", capsecurity.IssueInput{Tenant: "t", Subject: "admin2", ExpiresAt: time.Now().Add(time.Hour)})
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -160,7 +161,7 @@ func TestConcurrentCreateAndCrossSubjectCursor(t *testing.T) {
 	if e := sec.Create(ctx, token, "user", identity.Principal{Tenant: "t", ID: "v", Kind: "human"}); e != nil {
 		t.Fatal(e)
 	}
-	issued, e := sec.Issue(ctx, token, "issue", security.IssueInput{Tenant: "t", Subject: "v", ExpiresAt: time.Now().Add(time.Hour)})
+	issued, e := sec.Issue(ctx, token, "issue", capsecurity.IssueInput{Tenant: "t", Subject: "v", ExpiresAt: time.Now().Add(time.Hour)})
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -218,7 +219,7 @@ func TestMembershipOwnerParticipantsAndImmediateRemoval(t *testing.T) {
 		if e := sec.Create(ctx, admin, "create-"+name, identity.Principal{Tenant: "t", ID: name, Kind: "human"}); e != nil {
 			t.Fatal(e)
 		}
-		issued, e := sec.Issue(ctx, admin, "issue-"+name, security.IssueInput{Tenant: "t", Subject: name, ExpiresAt: time.Now().Add(time.Hour)})
+		issued, e := sec.Issue(ctx, admin, "issue-"+name, capsecurity.IssueInput{Tenant: "t", Subject: name, ExpiresAt: time.Now().Add(time.Hour)})
 		if e != nil {
 			t.Fatal(e)
 		}
@@ -308,7 +309,7 @@ func TestCandidatesRequireTaskManagementAndFilterInactiveMembers(t *testing.T) {
 	}
 	issue := func(id string) string {
 		t.Helper()
-		v, e := sec.Issue(ctx, admin, "issue-"+id, security.IssueInput{Tenant: "t", Subject: id, ExpiresAt: time.Now().Add(time.Hour)})
+		v, e := sec.Issue(ctx, admin, "issue-"+id, capsecurity.IssueInput{Tenant: "t", Subject: id, ExpiresAt: time.Now().Add(time.Hour)})
 		if e != nil {
 			t.Fatal(e)
 		}

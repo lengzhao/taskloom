@@ -376,3 +376,35 @@ func (s *Service) Candidates(ctx context.Context, token, taskID string) ([]az.Me
 	})
 	return out, e
 }
+
+func (s *Service) Viewer(ctx context.Context, token string) (api.Viewer, error) {
+	var out api.Viewer
+	e := s.d.Transactions.Do(ctx, func(tx context.Context) error {
+		p, e := s.d.Identity.Authenticate(tx, token)
+		if e != nil {
+			return e
+		}
+		member, e := s.d.Members.GetMember(tx, p.Tenant, p.ID)
+		if e != nil || !member.Active {
+			return az.ErrForbidden
+		}
+		out = api.Viewer{Tenant: p.Tenant, Subject: p.ID, Kind: p.Kind, CanAdmin: s.d.Authorization.Check(tx, p, "member.set", p.Tenant) == nil}
+		return nil
+	})
+	return out, e
+}
+func (s *Service) Members(ctx context.Context, token string) ([]az.DirectoryMember, error) {
+	out := []az.DirectoryMember{}
+	e := s.d.Transactions.Do(ctx, func(tx context.Context) error {
+		p, e := s.d.Identity.Authenticate(tx, token)
+		if e != nil {
+			return e
+		}
+		if e = s.d.Authorization.Check(tx, p, "member.set", p.Tenant); e != nil {
+			return e
+		}
+		out, e = s.d.Members.ListMembers(tx, p.Tenant)
+		return e
+	})
+	return out, e
+}

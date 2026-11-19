@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	capsecurity "github.com/lengzhao/taskloom/cap/security"
 	"io"
 	"os"
 	"time"
@@ -62,7 +63,7 @@ func run(ctx context.Context, args []string, out, errout io.Writer) int {
 	}
 	tx, ok1 := build.GetByID[unitofwork.Manager](graph, *id)
 	identities, ok2 := build.GetByID[identity.Principals](graph, *id)
-	members, ok3 := build.GetByID[authorization.MemberWriter](graph, *id)
+	members, ok3 := build.GetByID[authorization.MemberStore](graph, *id)
 	audit, ok4 := build.GetByID[record.AuditWriter](graph, *id)
 	events, ok5 := build.GetByID[record.EventWriter](graph, *id)
 	credentials, ok6 := build.GetByID[identity.Credentials](graph, *id)
@@ -91,7 +92,7 @@ func run(ctx context.Context, args []string, out, errout io.Writer) int {
 	defer resource.Close(context.Background())
 	svc := security.New(security.Deps{Transactions: tx, Principals: identities, Credentials: credentials, Bootstrap: bootstrap, Members: members, Audit: audit, Events: events})
 	in := security.BootstrapInput{Tenant: *tenant, Subject: *subject, Operator: *operator, Reason: *reason, ExpiresAt: time.Now().Add(*ttl)}
-	var issued security.Issued
+	var issued capsecurity.Issued
 	if *mode == "enroll-agent" {
 		issued, err = svc.EnrollAgent(ctx, security.AgentEnrollment{BootstrapInput: in, Owner: *owner, InstanceID: *instance, Incarnation: *incarnation, Purpose: *purpose})
 	} else if *mode == "bootstrap" {

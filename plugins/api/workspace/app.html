@@ -56,6 +56,10 @@ aside, #detail { min-width: 0 }
 .muted { color: var(--muted) }
 .small { font-size: 12px }
 
+dialog { width: min(900px, 95vw); max-height: 90vh; overflow: auto; background: var(--panel); color: var(--ink); border: 1px solid var(--line); border-radius: var(--radius); padding: 22px }
+dialog::backdrop { background: #0006 }
+.member-row { border-bottom: 1px solid var(--line); padding: 12px 0; display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap }
+#members-content > section { margin-top: 20px }
 /* Task list */
 .tabs { display: flex; gap: 4px; padding: 3px; background: var(--bg); border-radius: 8px; margin-bottom: 10px }
 .tabs button { flex: 1; border: 0; background: none; padding: 6px }
@@ -109,7 +113,7 @@ details[open] > summary { margin-bottom: 4px }
 <body>
 <header>
   <h1>Taskloom <span>/</span> 工作台</h1>
-  <button id="logout" hidden>退出</button>
+  <div class="actions" style="margin:0"><button id="members-admin" hidden>用户与 Agent</button><button id="logout" hidden>退出</button></div>
 </header>
 <div id="notice" role="status" aria-live="polite"></div>
 
@@ -149,6 +153,11 @@ details[open] > summary { margin-bottom: 4px }
   <section id="detail"><div class="panel empty">选择左侧任务，或新建一个任务。</div></section>
 </main>
 
+<dialog id="members-dialog" aria-labelledby="members-title">
+ <div class="head"><h2 id="members-title">用户与 Agent</h2><button id="members-close" type="button">关闭</button></div>
+ <p id="members-notice" role="status" style="color:var(--warn);margin-top:10px"></p>
+ <div id="members-content"></div>
+</dialog>
 <script>
 // ---------- Labels (display only; flow rules stay on the server) ----------
 const STATE_LABEL = { ready: '准备', executing: '执行中', accepting: '验收中', checkpoint: '待确认', factcheck: '检查中' };
@@ -193,7 +202,7 @@ function h(tag, cls, ...children) {
   for (const c of children) if (c !== null && c !== undefined && c !== false) n.append(c);
   return n;
 }
-function notice(s) { $('notice').textContent = s }
+function notice(s) { $('notice').textContent = s; $('members-notice').textContent = $('members-dialog').open ? s : '' }
 function formdata(form) { return Object.fromEntries(new FormData(form)) }
 function handle(fn) {
   return async e => {
@@ -251,13 +260,20 @@ function pill(s) { return el('span', s.text, 'pill ' + s.cls) }
 
 // ---------- Session ----------
 // Leaving the session must not leave another user's task details on screen.
+let viewer = null;
 function showLogin() {
+  viewer = null;
+  $('members-admin').hidden = true;
+  $('members-dialog').close();
+  $('members-content').replaceChildren();
   selected = ''; cursor = ''; inboxIDs = new Set();
   $('detail').replaceChildren(h('div', 'panel empty', '选择左侧任务，或新建一个任务。'));
   $('tasks').replaceChildren();
   $('work').hidden = true; $('login').hidden = false; $('logout').hidden = true;
 }
 async function start() {
+  viewer = await api('/me');
+  $('members-admin').hidden = !viewer.CanAdmin;
   const p = await api('/changes');
   cursor = p.Cursor;
   // Open on "待我处理" only when something is actually waiting.
@@ -588,6 +604,93 @@ function renderAgentDebug(ctx) {
   }
   return panel;
 }
+
+// ---------- Member administration ----------
+async function openMembers(preselect = '') {
+  $('members-notice').textContent = '';
+  const root = $('members-content');
+  root.replaceChildren(); // Never retain a previously issued secret across reloads.
+  const members = await api('/members');
+  if (!$('members-dialog').open) $('members-dialog').showModal();
+  const directory = h('section', null, el('h3', '已登记成员'));
+  for (const m of members) {
+    const actions = h('div', 'actions');
+    if (m.Active) actions.append(button('签发凭据', () => { subject.value = m.Subject; binding(); credentialForm.scrollIntoView({block:'center'}); }));
+    if (m.Subject !== viewer.Subject) actions.append(button(m.Active ? '停用' : '启用', () => confirmThen(
+      m.Active ? '停用后，该成员将不能访问和处理任务。继续？' : '启用后将恢复仍保留的任务关系。继续？',
+      async () => { await api('/members', 'POST', {Tenant:viewer.Tenant,Subject:m.Subject,Role:m.Role,Active:!m.Active}); await openMembers(); }), m.Active ? 'danger' : ''));
+    directory.append(h('article', 'member-row', h('div', null, el('strong',m.Subject),
+      el('p',(m.Kind === 'agent' ? 'Agent · 所属人：'+m.OwnerID : '用户')+' · '+(m.Role === 'admin' ? '管理员' : '成员')+' · '+(m.Active ? '已启用' : '已停用'),'muted small')),actions));
+  }
+  root.append(directory);
+  const kind=el('select');
+  for (const [value,text] of [['human','用户'],['agent','Agent']]) {const o=el('option',text);o.value=value;kind.append(o)}
+  const id=el('input');id.required=true;id.maxLength=128;id.placeholder='例如 zhangsan 或 assistant-1';
+  const owner=memberSelect(members.filter(m=>m.Kind==='human' && m.Active),'请选择所属用户');
+  const ownerField=field('Agent 所属用户',owner);
+  function chooseKind(){ownerField.hidden=kind.value!=='agent';owner.required=kind.value==='agent'}
+  kind.onchange=chooseKind;chooseKind();
+  const create=h('form',null,el('h3','添加用户或 Agent'),field('成员类型',kind),field('成员标识',id),ownerField,
+    el('p','添加后可分配任务；签发凭据后，用户可登录，Agent 可连接任务系统。','muted small'),h('div','actions',el('button','添加成员','primary')));
+  create.onsubmit=handle(async()=>{
+    const subjectID=id.value.trim();
+    await api('/identities','POST',{Subject:subjectID,Kind:kind.value,OwnerID:kind.value==='agent'?owner.value:''});
+    await openMembers(subjectID);
+    notice('成员已添加，请在管理窗口中签发登录或接入凭据。');
+  });
+  root.append(h('section',null,create));
+  const active=members.filter(m=>m.Active);
+  const subject=memberSelect(active,'请选择签发对象');
+  if (active.some(m=>m.Subject===preselect)) subject.value=preselect;
+  const days=el('select');
+  for (const n of [1,7,30,90]) {const o=el('option',n+' 天');o.value=n;days.append(o)}
+  days.value='7';
+  const instance=el('input');instance.value='instance-'+crypto.randomUUID().slice(0,8);
+  const incarnation=el('input');incarnation.value=crypto.randomUUID();
+  const purpose=el('select');
+  for (const [value,text] of [['business','任务处理（business）'],['runtime','运行时停止证明（runtime）']]) {const o=el('option',text);o.value=value;purpose.append(o)}
+  const agentFields=h('div',null,field('运行实例标识',instance),field('本次启动标识',incarnation),field('凭据用途',purpose),
+    el('p','使用同一实例和启动标识签发配套凭据；新实例或重启请使用新标识。','muted small'));
+  function binding(){const agent=members.find(m=>m.Subject===subject.value)?.Kind==='agent';agentFields.hidden=!agent;instance.required=agent;incarnation.required=agent}
+  subject.onchange=binding;binding();
+  const result=h('div',null);result.id='issued-credential';
+  const credentialForm=h('form',null,el('h3','签发登录 / 接入凭据'),field('签发对象',subject),field('有效期',days),agentFields,
+    h('div','actions',el('button','生成凭据','primary')),result);
+  let pendingIssue=null;
+  credentialForm.onsubmit=handle(async()=>{
+    result.replaceChildren();
+    const member=members.find(m=>m.Subject===subject.value);
+    const fields={Subject:subject.value,Days:days.value};
+    if(member.Kind==='agent') Object.assign(fields,{InstanceID:instance.value,Incarnation:incarnation.value,Purpose:purpose.value});
+    const fingerprint=JSON.stringify(fields);
+    if(!pendingIssue || pendingIssue.fingerprint!==fingerprint) pendingIssue={fingerprint,input:{Subject:subject.value,ExpiresAt:new Date(Date.now()+Number(days.value)*86400000).toISOString()}};
+    const input=pendingIssue.input;
+    if(member.Kind==='agent') Object.assign(input,{InstanceID:instance.value,Incarnation:incarnation.value,Purpose:purpose.value});
+    const issued=await api('/credentials','POST',input);
+    pendingIssue=null;
+    if(!issued.Secret){result.append(el('p','这次请求已签发过凭据，明文不能重新读取。请先撤销该凭据，再生成新的凭据。','muted'));}
+    else {
+      const secret=el('textarea');secret.readOnly=true;secret.value=issued.Secret;secret.autocomplete='off';
+      const download=()=>{
+        const blob=new Blob([JSON.stringify({...input,ID:issued.ID,Secret:issued.Secret,Server:location.origin+prefix},null,2)],{type:'application/json'});
+        const url=URL.createObjectURL(blob),a=el('a');a.href=url;a.download='taskloom-credential.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+      };
+      result.append(el('p','请立即复制或下载并妥善保管。关闭窗口后将不再展示明文；新增凭据不会自动撤销旧凭据。','muted'),field('本次生成的凭据',secret),
+        h('div','actions',button('复制凭据',async()=>{await navigator.clipboard.writeText(issued.Secret);notice('凭据已复制')}),button('下载凭据文件',download)));
+    }
+    result.append(el('p','凭据编号：'+issued.ID,'muted small'),button('撤销本次凭据',async()=>{await api('/credentials/revoke','POST',{CredentialID:issued.ID});result.replaceChildren(el('p','凭据已撤销'))},'danger'));
+  });
+  root.append(h('section',null,credentialForm));
+  if(preselect) credentialForm.scrollIntoView({block:'center'});
+}
+$('members-admin').onclick=handle(()=>openMembers());
+$('members-close').onclick=()=>{$('members-content').replaceChildren();$('members-dialog').close()};
+$('members-dialog').addEventListener('cancel',()=>{$('members-content').replaceChildren()});
+$('members-dialog').addEventListener('close',()=>{
+  $('members-content').replaceChildren();
+  // Refresh task selectors too: identity creation need not change a task's state.
+  if (viewer) pendingRefresh = true;
+});
 
 // ---------- Wiring ----------
 $('login').onsubmit = handle(async () => {

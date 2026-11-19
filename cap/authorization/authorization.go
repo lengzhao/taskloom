@@ -18,6 +18,11 @@ type Participant struct{ Tenant, TaskID, Subject string }
 type MemberReader interface {
 	GetMember(ctx context.Context, tenant, subject string) (Member, error)
 }
+type MemberStore interface {
+	MemberReader
+	MemberWriter
+}
+
 type MemberWriter interface {
 	SetMember(ctx context.Context, value Member) error
 }
@@ -45,4 +50,11 @@ type MemberOption struct{ Subject, Kind, OwnerID string }
 type MemberDirectory interface {
 	MemberReader
 	ListActiveMembers(ctx context.Context, tenant string) ([]MemberOption, error)
+	ListMembers(ctx context.Context, tenant string) ([]DirectoryMember, error)
+}
+
+// DirectoryMember is administrative metadata; inactive members remain visible here.
+type DirectoryMember struct {
+	Subject, Kind, OwnerID, Role string
+	Active                       bool
 }

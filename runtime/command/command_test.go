@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	capcommand "github.com/lengzhao/taskloom/cap/command"
+	capsecurity "github.com/lengzhao/taskloom/cap/security"
 	"path/filepath"
 	"sync"
 	"sync/atomic"
@@ -147,11 +148,11 @@ func TestBootstrapOnceAndCredentialRevocation(t *testing.T) {
 	if _, err := svc.Bootstrap(ctx, security.BootstrapInput{Tenant: "other", Subject: "admin", Operator: "op", Reason: "again", ExpiresAt: time.Now().Add(time.Hour)}); !errors.Is(err, fault.ErrConflict) {
 		t.Fatalf("second bootstrap: %v", err)
 	}
-	issued, err := svc.Issue(ctx, token, "issue", security.IssueInput{Tenant: "t", Subject: "admin", ExpiresAt: time.Now().Add(time.Hour)})
+	issued, err := svc.Issue(ctx, token, "issue", capsecurity.IssueInput{Tenant: "t", Subject: "admin", ExpiresAt: time.Now().Add(time.Hour)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = svc.Revoke(ctx, token, "revoke", security.RevokeInput{Tenant: "t", CredentialID: issued.ID}); err != nil {
+	if err = svc.Revoke(ctx, token, "revoke", capsecurity.RevokeInput{Tenant: "t", CredentialID: issued.ID}); err != nil {
 		t.Fatal(err)
 	}
 	req := capcommand.Request{Token: issued.Secret, Key: "denied", Operation: "identity.issue", Resource: "t"}
@@ -183,14 +184,14 @@ func TestRecoveryRevokesOldCredentials(t *testing.T) {
 	}); !errors.Is(err, identity.ErrUnauthenticated) {
 		t.Fatal(err)
 	}
-	if _, err = svc.Issue(ctx, recovered.Secret, "new", security.IssueInput{Tenant: "t", Subject: "admin", ExpiresAt: time.Now().Add(time.Hour)}); err != nil {
+	if _, err = svc.Issue(ctx, recovered.Secret, "new", capsecurity.IssueInput{Tenant: "t", Subject: "admin", ExpiresAt: time.Now().Add(time.Hour)}); err != nil {
 		t.Fatal(err)
 	}
 }
 func TestIssuanceReplayDoesNotRediscloseSecret(t *testing.T) {
 	s, _, svc, token := fixture(t)
 	ctx := context.Background()
-	in := security.IssueInput{Tenant: "t", Subject: "admin", ExpiresAt: time.Now().Add(time.Hour)}
+	in := capsecurity.IssueInput{Tenant: "t", Subject: "admin", ExpiresAt: time.Now().Add(time.Hour)}
 	first, err := svc.Issue(ctx, token, "once", in)
 	if err != nil {
 		t.Fatal(err)
@@ -218,11 +219,11 @@ func TestAgentBindingsAreCredentialScopedAndDoNotInheritOwner(t *testing.T) {
 	if err := svc.Create(ctx, token, "agent", p); err != nil {
 		t.Fatal(err)
 	}
-	first, err := svc.Issue(ctx, token, "agent-1", security.IssueInput{Tenant: "t", Subject: "agent", InstanceID: "instance", Incarnation: "boot-1", Purpose: "business", ExpiresAt: time.Now().Add(time.Hour)})
+	first, err := svc.Issue(ctx, token, "agent-1", capsecurity.IssueInput{Tenant: "t", Subject: "agent", InstanceID: "instance", Incarnation: "boot-1", Purpose: "business", ExpiresAt: time.Now().Add(time.Hour)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := svc.Issue(ctx, token, "agent-2", security.IssueInput{Tenant: "t", Subject: "agent", InstanceID: "instance", Incarnation: "boot-2", Purpose: "runtime", ExpiresAt: time.Now().Add(time.Hour)})
+	second, err := svc.Issue(ctx, token, "agent-2", capsecurity.IssueInput{Tenant: "t", Subject: "agent", InstanceID: "instance", Incarnation: "boot-2", Purpose: "runtime", ExpiresAt: time.Now().Add(time.Hour)})
 	if err != nil {
 		t.Fatal(err)
 	}

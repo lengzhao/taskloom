@@ -37,7 +37,7 @@ type Deps struct {
 	Queries  api.Queries             `json:"queries"`
 	Changes  api.ChangeFeed          `json:"changes"`
 	Identity identity.Authenticator  `json:"identity"`
-	Security security.MemberCommands `json:"security"`
+	Security security.Administration `json:"security"`
 }
 type Module struct {
 	c        Config
@@ -71,7 +71,7 @@ func New(c Config, d Deps) (*Module, error) {
 }
 func (m *Module) Routes() []httpapi.Route {
 	routes := []httpapi.Route{}
-	for _, r := range []struct{ method, path, op string }{{"GET", "/app", "ui.app"}, {"POST", "/session", "session.login"}, {"DELETE", "/session", "session.logout"}, {"GET", "/tasks", "tasks.list"}, {"POST", "/tasks", "tasks.create"}, {"GET", "/tasks/{id}", "tasks.get"}, {"PATCH", "/tasks/{id}", "tasks.edit"}, {"POST", "/tasks/{id}/commits", "commits.append"},
+	for _, r := range []struct{ method, path, op string }{{"GET", "/me", "session.viewer"}, {"GET", "/members", "members.list"}, {"POST", "/identities", "identity.create"}, {"POST", "/credentials", "identity.issue"}, {"POST", "/credentials/revoke", "identity.revoke"}, {"GET", "/app", "ui.app"}, {"POST", "/session", "session.login"}, {"DELETE", "/session", "session.logout"}, {"GET", "/tasks", "tasks.list"}, {"POST", "/tasks", "tasks.create"}, {"GET", "/tasks/{id}", "tasks.get"}, {"PATCH", "/tasks/{id}", "tasks.edit"}, {"POST", "/tasks/{id}/commits", "commits.append"},
 		{"GET", "/tasks/{id}/candidates", "tasks.candidates"}, {"POST", "/tasks/{id}/participants", "participants.set"}, {"GET", "/changes", "changes.read"}, {"POST", "/members", "members.set"}, {"DELETE", "/members", "members.remove"}} {
 		routes = append(routes, httpapi.Route{Method: r.method, Path: r.path, Operation: r.op, Handler: http.HandlerFunc(m.serve)})
 	}
@@ -169,6 +169,15 @@ func (m *Module) serve(w http.ResponseWriter, r *http.Request) {
 	var result any
 	var err error
 	switch {
+	case strings.HasSuffix(path, "/me"):
+		result, err = m.d.Queries.Viewer(ctx, token)
+	case strings.HasSuffix(path, "/members") && r.Method == "GET":
+		result, err = m.d.Queries.Members(ctx, token)
+	case strings.HasSuffix(path, "/identities"), strings.HasSuffix(path, "/credentials"), strings.HasSuffix(path, "/credentials/revoke"):
+		result, err = m.administration(w, r, token)
+		if err == errDecoded {
+			return
+		}
 	case strings.HasSuffix(path, "/changes"):
 		result, err = m.d.Changes.Changes(ctx, token, r.URL.Query().Get("cursor"))
 	case strings.HasSuffix(path, "/members"):

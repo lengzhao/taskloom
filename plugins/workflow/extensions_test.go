@@ -14,9 +14,9 @@ import (
 	"github.com/lengzhao/taskloom/cap/flow"
 	"github.com/lengzhao/taskloom/cap/httpapi"
 	"github.com/lengzhao/taskloom/cap/record"
+	capsecurity "github.com/lengzhao/taskloom/cap/security"
 	"github.com/lengzhao/taskloom/cap/task"
 	api "github.com/lengzhao/taskloom/cap/workflow"
-	"github.com/lengzhao/taskloom/domain/security"
 	"github.com/lengzhao/taskloom/runtime/config"
 	"gopkg.in/yaml.v3"
 	"net/http"
@@ -201,7 +201,7 @@ func TestNoAcceptanceVerdictAndWrongInstanceRejected(t *testing.T) {
 	f := setup(t, map[string]any{"flow-standard": map[string]any{"deps": map[string]any{"states": []string{"ready", "executing", "completed"}}}})
 	d := f.create(t)
 	s := f.open(t, d)
-	issued, e := f.security.Issue(f.ctx, f.owner, "other-instance", security.IssueInput{Tenant: "t", Subject: "agent", InstanceID: "other-machine", Incarnation: "boot", Purpose: "business", ExpiresAt: time.Now().Add(time.Hour)})
+	issued, e := f.security.Issue(f.ctx, f.owner, "other-instance", capsecurity.IssueInput{Tenant: "t", Subject: "agent", InstanceID: "other-machine", Incarnation: "boot", Purpose: "business", ExpiresAt: time.Now().Add(time.Hour)})
 	if e != nil {
 		t.Fatal(e)
 	}

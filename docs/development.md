@@ -38,12 +38,11 @@ curl http://127.0.0.1:8080/v1/healthz
 `-check` 只构造并校验，不监听、不调用 Open/Run；成功打印实际实例数。`-config ''` 显式省略 L1；显式指定的文件缺失会失败。配置/运行错误退出 1，参数错误退出 2，帮助及正常信号退出为 0。错误不输出原始配置或构造器错误，仅保留阶段和实例 ID；实例 ID 应使用固定名称，不能包含凭据。
 
 ```sh
-sh scripts/check.sh all     # 单测、vet、构建、最小真实装配、设计静态检查
+sh scripts/check.sh all     # 单测（含文档链接/代码块检查）、vet、构建、真实装配
 sh scripts/check.sh race    # 竞态检查
-sh scripts/check.sh design  # 仅设计配置与文档检查
 ```
 
-Go 依赖首次需下载；design 使用 Ruby 标准 YAML 库。HTTP 和 CLI 测试需要本机回环端口。受限沙箱若禁止 bind，应在允许本机监听的环境运行，不能把环境失败算作通过。
+Go 依赖首次需下载，不需要 Ruby。配置图由 PluginKit 真实构建校验（`-check` 与 runtime/config、workflow 扩展测试），文档链接由 `runtime/architecture` 测试校验。HTTP 和 CLI 测试需要本机回环端口。受限沙箱若禁止 bind，应在允许本机监听的环境运行，不能把环境失败算作通过。
 
 ## 两层装配实现
 

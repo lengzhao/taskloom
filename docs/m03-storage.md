@@ -39,7 +39,7 @@ Manager.Do 把事务绑定在 context，只允许同 Store 的同步调用；结
 
 凭据为 256 位随机秘密的十六进制表示，库中只存 SHA-256 摘要、有效期、撤销及主体绑定。每请求查询当前状态，不做授权缓存。默认管理员凭据期限 24 小时，上限 90 天；正式写入的认证和撤销通过同一写协调边界串行化。初始化直接建立有效租户管理员；普通成员、负责人、参与者按固定业务规则访问，未知操作拒绝。
 
-人、Agent 有稳定主体 ID；Agent owner 只用于归属。每张 Agent 凭据绑定 instance/incarnation 和 business/runtime 用途，更换实例不改主体目录。runtime 用途为遗留值：停止证明已移除，当前所有业务动作只接受 business 凭据，runtime 凭据一律拒绝。新增 incarnation 不自动撤销旧凭据，调用者必须显式撤销旧凭据，执行代次保护仍归 M05。
+人、Agent 有稳定主体 ID；Agent owner 只用于归属。每张 Agent 凭据绑定 instance/incarnation 和 business/runtime 用途，更换实例不改主体目录。runtime 用途为遗留值：停止证明已移除，当前所有业务动作只接受 business 凭据，runtime 凭据一律拒绝。新增 incarnation 不自动撤销旧凭据，调用者必须显式撤销旧凭据，执行写入隔离归 M05。
 
 管理员初始化是数据库级一次性原子操作；恢复必须显式调用本地 CLI，记录操作者和原因，撤销指定人的全部旧凭据并签发新凭据。没有匿名初始化 API。操作者的可信边界是部署机/数据库运维权限，`-operator` 是审计声明，不冒充操作系统认证。
 

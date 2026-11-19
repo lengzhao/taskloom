@@ -42,7 +42,6 @@ type basis struct {
 	BasisVersion     int64  `json:"b"`
 	ExpectedRevision int64  `json:"v"`
 	ExecutionID      string `json:"e,omitempty"`
-	Generation       int64  `json:"g,omitempty"`
 }
 
 func (b basis) token() string {
@@ -71,7 +70,7 @@ func (b basis) flow() work.Basis {
 func (b basis) next(s work.Snapshot) basis {
 	n := basis{TaskID: b.TaskID, RoundID: s.Position.RoundID, BasisVersion: b.BasisVersion, ExpectedRevision: s.Position.Revision}
 	if s.Execution != nil {
-		n.ExecutionID, n.Generation = s.Execution.ID, s.Execution.Generation
+		n.ExecutionID = s.Execution.ID
 	}
 	return n
 }
@@ -220,7 +219,7 @@ func (m *Module) call(ctx context.Context, c call, name string, rawArgs json.Raw
 			return "", err
 		}
 		n := b.next(s)
-		return pretty(map[string]any{"message": "已认领执行。长时间工作请定期 post_message 汇报进度。", "execution_generation": n.Generation, "basis": n.token()}), nil
+		return pretty(map[string]any{"message": "已认领执行。长时间工作请定期 post_message 汇报进度。", "execution_id": n.ExecutionID, "basis": n.token()}), nil
 	case "ask_owner":
 		if err = required(args, "question"); err != nil {
 			return "", err
@@ -241,7 +240,7 @@ func (m *Module) call(ctx context.Context, c call, name string, rawArgs json.Raw
 		if b.ExecutionID == "" {
 			return "", invalid("还没有执行：先 start_work 认领，再用它返回的 basis 提交")
 		}
-		s, err := m.d.Results.Submit(ctx, c.token, key, work.Submit{Basis: b.flow(), ExecutionID: b.ExecutionID, Generation: b.Generation, Body: args["result"]})
+		s, err := m.d.Results.Submit(ctx, c.token, key, work.Submit{Basis: b.flow(), ExecutionID: b.ExecutionID, Body: args["result"]})
 		if err != nil {
 			return "", err
 		}
@@ -275,7 +274,7 @@ func (m *Module) readTask(ctx context.Context, c call, taskID string) (string, e
 	}
 	b := basis{TaskID: d.Task.ID, RoundID: w.Position.RoundID, BasisVersion: d.Task.BasisVersion, ExpectedRevision: w.Position.Revision}
 	if w.Execution != nil {
-		b.ExecutionID, b.Generation = w.Execution.ID, w.Execution.Generation
+		b.ExecutionID = w.Execution.ID
 	}
 	blocked := map[string]string{}
 	for action, code := range w.Blocked {
@@ -314,7 +313,7 @@ func (m *Module) readTask(ctx context.Context, c call, taskID string) (string, e
 		"basis":          b.token(),
 	}
 	if e := w.Execution; e != nil {
-		x := map[string]any{"writable": e.Writable, "generation": e.Generation, "agent": e.Subject}
+		x := map[string]any{"writable": e.Writable, "execution_id": e.ID, "agent": e.Subject}
 		if !e.ProgressAt.IsZero() {
 			x["last_progress_at"] = e.ProgressAt.Format(time.RFC3339)
 		}

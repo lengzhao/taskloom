@@ -15,7 +15,7 @@ type checkpointRow struct {
 }
 
 func checkpointKey(v checkpoint.Record) string {
-	return key(v.Tenant, v.TaskID, v.RoundID, v.EntryID, v.SubmissionID)
+	return key(v.Tenant, v.TaskID, v.RoundID, v.SubmissionID)
 }
 func (s *Store) EnsureCheckpoint(ctx context.Context, v checkpoint.Record) error {
 	return s.use(ctx, true, func(db *gorm.DB) error {

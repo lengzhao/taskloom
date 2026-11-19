@@ -42,7 +42,7 @@ func TestSnapshotExplainsBlockedActionsAndNextActor(t *testing.T) {
 		t.Fatal("running execution", a.CanSubmit, a.Blocked, a.NextActor)
 	}
 	v := *a.Execution
-	if _, e = f.results.Submit(f.ctx, f.agent, "submit", api.Submit{Basis: basis(d, a), ExecutionID: v.ID, Generation: v.Generation, Body: "done"}); e != nil {
+	if _, e = f.results.Submit(f.ctx, f.agent, "submit", api.Submit{Basis: basis(d, a), ExecutionID: v.ID, Body: "done"}); e != nil {
 		t.Fatal(e)
 	}
 	if s = f.read(t, d.Task.ID); !s.CanReview || s.NextActor != api.ActorReviewer || s.Blocked != nil {
@@ -93,7 +93,7 @@ func TestInboxListsOnlyTasksWaitingOnCaller(t *testing.T) {
 		t.Fatal("agent sees only its running task", got)
 	}
 	v := s.Execution
-	if s, e = f.results.Submit(f.ctx, f.agent, "submit", api.Submit{Basis: basis(d, s), ExecutionID: v.ID, Generation: v.Generation, Body: "done"}); e != nil {
+	if s, e = f.results.Submit(f.ctx, f.agent, "submit", api.Submit{Basis: basis(d, s), ExecutionID: v.ID, Body: "done"}); e != nil {
 		t.Fatal(e)
 	}
 	if got := inbox(f.owner); got[d.Task.ID] != api.ActorReviewer {
@@ -119,7 +119,7 @@ func TestRejectionRequiresReason(t *testing.T) {
 	d := f.create(t)
 	s := f.open(t, d)
 	v := s.Execution
-	s, e := f.results.Submit(f.ctx, f.agent, "submit", api.Submit{Basis: basis(d, s), ExecutionID: v.ID, Generation: v.Generation, Body: "done"})
+	s, e := f.results.Submit(f.ctx, f.agent, "submit", api.Submit{Basis: basis(d, s), ExecutionID: v.ID, Body: "done"})
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -149,7 +149,7 @@ func TestApprovedTaskLeavesTheAgentInbox(t *testing.T) {
 	d := f.create(t)
 	s := f.open(t, d)
 	v := s.Execution
-	s, e := f.results.Submit(f.ctx, f.agent, "submit", api.Submit{Basis: basis(d, s), ExecutionID: v.ID, Generation: v.Generation, Body: "done"})
+	s, e := f.results.Submit(f.ctx, f.agent, "submit", api.Submit{Basis: basis(d, s), ExecutionID: v.ID, Body: "done"})
 	if e != nil {
 		t.Fatal(e)
 	}

@@ -64,7 +64,7 @@ func TestHumanProcessesAndSubmitsWithoutRuntimeProof(t *testing.T) {
 		t.Fatal("duplicate human execution", e)
 	}
 	v := *s.Execution
-	s, e = f.results.Submit(f.ctx, worker, "human-result", api.Submit{Basis: basis(d, s), ExecutionID: v.ID, Generation: v.Generation, Body: "人工完成的结果"})
+	s, e = f.results.Submit(f.ctx, worker, "human-result", api.Submit{Basis: basis(d, s), ExecutionID: v.ID, Body: "人工完成的结果"})
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -105,7 +105,7 @@ func TestHumanCanDelegateButOldWorkCannotSubmit(t *testing.T) {
 	if s.Assignee != "agent" || s.Execution.Writable {
 		t.Fatal("delegation not fenced", s)
 	}
-	if _, e = f.results.Submit(f.ctx, worker, "stale-human-result", api.Submit{Basis: basis(d, s), ExecutionID: old.ID, Generation: old.Generation, Body: "too late"}); !errors.Is(e, fault.ErrConflict) {
+	if _, e = f.results.Submit(f.ctx, worker, "stale-human-result", api.Submit{Basis: basis(d, s), ExecutionID: old.ID, Body: "too late"}); !errors.Is(e, fault.ErrConflict) {
 		t.Fatal("old human submission accepted", e)
 	}
 	if _, e = f.ex.Assign(f.ctx, worker, "steal-back", api.Assignment{Basis: basis(d, s), Subject: "worker"}); !errors.Is(e, az.ErrForbidden) {
@@ -115,7 +115,7 @@ func TestHumanCanDelegateButOldWorkCannotSubmit(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	if s.Execution.Manual || s.Execution.Generation <= old.Generation {
+	if s.Execution.Manual || s.Execution.ID == old.ID {
 		t.Fatal("agent claim", s)
 	}
 	// Reassigning a running agent fences it at once; nothing waits for it to stop.
@@ -123,7 +123,7 @@ func TestHumanCanDelegateButOldWorkCannotSubmit(t *testing.T) {
 	if s, e = f.ex.Assign(f.ctx, f.owner, "reassign", api.Assignment{Basis: basis(d, s), Subject: "worker"}); e != nil || s.Execution.Writable {
 		t.Fatal("reassign over a running agent", e)
 	}
-	if _, e = f.results.Submit(f.ctx, f.agent, "stale-agent-result", api.Submit{Basis: basis(d, s), ExecutionID: agentRun.ID, Generation: agentRun.Generation, Body: "too late"}); e == nil {
+	if _, e = f.results.Submit(f.ctx, f.agent, "stale-agent-result", api.Submit{Basis: basis(d, s), ExecutionID: agentRun.ID, Body: "too late"}); e == nil {
 		t.Fatal("fenced agent submitted")
 	}
 	d2, e := f.taskQueries.Get(f.ctx, f.owner, d.Task.ID, 0)

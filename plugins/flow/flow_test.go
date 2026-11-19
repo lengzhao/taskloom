@@ -116,7 +116,7 @@ func TestNoopRefreshKeepsRevisionAndStepNeedsReachedEntry(t *testing.T) {
 			t.Fatalf("no-op refresh bumped revision %d -> %d", first.Revision, again.Revision)
 		}
 		step, e := controller.Step(tx, value, "ready")
-		if e != nil || step.Position.EntryID != first.EntryID || step.Position.State != "ready" {
+		if e != nil || step.Position.RoundID != first.RoundID || step.Position.State != "ready" {
 			t.Fatalf("reached step %+v %v", step, e)
 		}
 		if _, e = controller.Step(tx, value, "accepting"); !errors.Is(e, fault.ErrConflict) {

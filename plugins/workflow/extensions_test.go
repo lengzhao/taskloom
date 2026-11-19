@@ -47,7 +47,7 @@ func TestNewStatesAndAPIComposeWithoutChangingOriginalConsumers(t *testing.T) {
 	d := f.create(t)
 	s := f.open(t, d)
 	var e error
-	s, e = f.results.Submit(f.ctx, f.agent, "checked-result", api.Submit{Basis: basis(d, s), ExecutionID: s.Execution.ID, Generation: s.Execution.Generation, Body: "verified first"})
+	s, e = f.results.Submit(f.ctx, f.agent, "checked-result", api.Submit{Basis: basis(d, s), ExecutionID: s.Execution.ID, Body: "verified first"})
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -86,7 +86,7 @@ func TestNewStatesAndAPIComposeWithoutChangingOriginalConsumers(t *testing.T) {
 		t.Fatal("review not prepared")
 	}
 	// A new candidate while the first waits for review re-runs the prefix checks.
-	s, e = f.results.Submit(f.ctx, f.agent, "bad-candidate", api.Submit{Basis: basis(d, s), ExecutionID: s.Execution.ID, Generation: s.Execution.Generation, Body: "bad"})
+	s, e = f.results.Submit(f.ctx, f.agent, "bad-candidate", api.Submit{Basis: basis(d, s), ExecutionID: s.Execution.ID, Body: "bad"})
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -96,7 +96,7 @@ func TestNewStatesAndAPIComposeWithoutChangingOriginalConsumers(t *testing.T) {
 	if code := confirm("stale-input", s, first.ID, first.CommitID); code != 409 {
 		t.Fatal("old external input accepted", code)
 	}
-	s, e = f.results.Submit(f.ctx, f.agent, "third", api.Submit{Basis: basis(d, s), ExecutionID: s.Execution.ID, Generation: s.Execution.Generation, Body: "verified third"})
+	s, e = f.results.Submit(f.ctx, f.agent, "third", api.Submit{Basis: basis(d, s), ExecutionID: s.Execution.ID, Body: "verified third"})
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -146,7 +146,7 @@ func TestSubmitTechnicalFailureRollsBackCommitAndDelivery(t *testing.T) {
 	d := f.create(t)
 	s := f.open(t, d)
 	version := s.Position.Revision
-	if _, e := f.results.Submit(f.ctx, f.agent, "failure", api.Submit{Basis: basis(d, s), ExecutionID: s.Execution.ID, Generation: s.Execution.Generation, Body: "must rollback"}); e == nil {
+	if _, e := f.results.Submit(f.ctx, f.agent, "failure", api.Submit{Basis: basis(d, s), ExecutionID: s.Execution.ID, Body: "must rollback"}); e == nil {
 		t.Fatal("technical failure accepted")
 	}
 	s = f.read(t, d.Task.ID)
@@ -173,7 +173,7 @@ func TestIdenticalResultDifferentKeyDoesNotDuplicateCandidate(t *testing.T) {
 	f := setup(t, nil)
 	d := f.create(t)
 	s := f.open(t, d)
-	in := api.Submit{Basis: basis(d, s), ExecutionID: s.Execution.ID, Generation: s.Execution.Generation, Body: "same result"}
+	in := api.Submit{Basis: basis(d, s), ExecutionID: s.Execution.ID, Body: "same result"}
 	first, e := f.results.Submit(f.ctx, f.agent, "first", in)
 	if e != nil {
 		t.Fatal(e)
@@ -199,7 +199,7 @@ func TestNoAcceptanceVerdictAndWrongInstanceRejected(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	if _, e = f.results.Submit(f.ctx, issued.Secret, "wrong-instance", api.Submit{Basis: basis(d, s), ExecutionID: s.Execution.ID, Generation: s.Execution.Generation, Body: "x"}); e == nil {
+	if _, e = f.results.Submit(f.ctx, issued.Secret, "wrong-instance", api.Submit{Basis: basis(d, s), ExecutionID: s.Execution.ID, Body: "x"}); e == nil {
 		t.Fatal("wrong instance submitted into another instance's execution")
 	}
 	if _, e = f.results.Review(f.ctx, f.owner, "no-state", api.Review{Basis: basis(d, s)}); !errors.Is(e, fault.ErrConflict) {
@@ -243,7 +243,7 @@ func TestPostReviewFailureRollsBackEverySubmissionFact(t *testing.T) {
 	d := f.create(t)
 	s := f.open(t, d)
 	revision := s.Position.Revision
-	_, e := f.results.Submit(f.ctx, f.agent, "post-review-failure", api.Submit{Basis: basis(d, s), ExecutionID: s.Execution.ID, Generation: s.Execution.Generation, Body: "rollback everything"})
+	_, e := f.results.Submit(f.ctx, f.agent, "post-review-failure", api.Submit{Basis: basis(d, s), ExecutionID: s.Execution.ID, Body: "rollback everything"})
 	if e == nil {
 		t.Fatal("failure accepted")
 	}
@@ -258,7 +258,7 @@ func TestPostReviewFailureRollsBackEverySubmissionFact(t *testing.T) {
 	if _, e = f.deliveries.GetSubmission(f.ctx, "t", captured.Submission.ID); !errors.Is(e, fault.ErrNotFound) {
 		t.Fatal("submission survived", e)
 	}
-	if _, e = f.reviews.GetReview(f.ctx, "t", d.Task.ID, captured.Position.RoundID, captured.Review.EntryID, captured.Submission.ID); !errors.Is(e, fault.ErrNotFound) {
+	if _, e = f.reviews.GetReview(f.ctx, "t", d.Task.ID, captured.Position.RoundID, captured.Submission.ID); !errors.Is(e, fault.ErrNotFound) {
 		t.Fatal("review survived", e)
 	}
 	receipts, _ := build.GetByID[record.Receipts](f.graph, "sql")
@@ -283,7 +283,7 @@ func TestPreparationDefinitionRetainsOldTaskBehavior(t *testing.T) {
 		if e := defs.EnsureDefinition(ctx, ref); e != nil {
 			return e
 		}
-		return positions.CreatePosition(ctx, flow.Position{Tenant: "t", TaskID: "old-task", RoundID: "old-round", EntryID: "old-entry", State: "ready", Flow: ref, Complete: true})
+		return positions.CreatePosition(ctx, flow.Position{Tenant: "t", TaskID: "old-task", RoundID: "old-round", State: "ready", Flow: ref, Complete: true})
 	})
 	if e != nil {
 		t.Fatal(e)

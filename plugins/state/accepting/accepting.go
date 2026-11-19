@@ -43,8 +43,8 @@ func (s *State) Enter(ctx context.Context, c flow.Context) error {
 	if e != nil {
 		return e
 	}
-	key := fmt.Sprintf("%s/%s/%s/%s", c.Position.RoundID, c.Position.EntryID, v.ID, c.Task.Owner)
-	return s.d.Reviews.EnsureReview(ctx, acceptance.Review{Tenant: c.Task.Tenant, TaskID: c.Task.ID, ID: fmt.Sprintf("%x", sha256.Sum256([]byte(key))), RoundID: c.Position.RoundID, EntryID: c.Position.EntryID, SubmissionID: v.ID, CommitID: v.CommitID, Reviewer: c.Task.Owner, Outcome: "pending", BasisVersion: c.Task.BasisVersion, PolicyVersion: c.Task.PolicyVersion})
+	key := fmt.Sprintf("%s/%s/%s", c.Position.RoundID, v.ID, c.Task.Owner)
+	return s.d.Reviews.EnsureReview(ctx, acceptance.Review{Tenant: c.Task.Tenant, TaskID: c.Task.ID, ID: fmt.Sprintf("%x", sha256.Sum256([]byte(key))), RoundID: c.Position.RoundID, SubmissionID: v.ID, CommitID: v.CommitID, Reviewer: c.Task.Owner, Outcome: "pending", BasisVersion: c.Task.BasisVersion, PolicyVersion: c.Task.PolicyVersion})
 }
 func (s *State) CheckComplete(ctx context.Context, c flow.Context) (flow.Check, error) {
 	v, e := s.d.Results.CurrentSubmission(ctx, c.Task.Tenant, c.Task.ID, c.Position.RoundID)
@@ -54,7 +54,7 @@ func (s *State) CheckComplete(ctx context.Context, c flow.Context) (flow.Check, 
 	if e != nil {
 		return flow.Check{}, e
 	}
-	r, e := s.d.Reviews.GetReview(ctx, c.Task.Tenant, c.Task.ID, c.Position.RoundID, c.Position.EntryID, v.ID)
+	r, e := s.d.Reviews.GetReview(ctx, c.Task.Tenant, c.Task.ID, c.Position.RoundID, v.ID)
 	if errors.Is(e, fault.ErrNotFound) {
 		return flow.Check{Status: flow.Wait, Reason: "等待验收记录"}, nil
 	}
@@ -88,7 +88,7 @@ func (s *State) RecordVerdict(ctx context.Context, c flow.Context, p identity.Pr
 	if v.ID != in.SubmissionID || v.CommitID != in.CommitID || v.BasisVersion != c.Task.BasisVersion {
 		return fault.ErrConflict
 	}
-	r, e := s.d.Reviews.GetReview(ctx, c.Task.Tenant, c.Task.ID, c.Position.RoundID, c.Position.EntryID, v.ID)
+	r, e := s.d.Reviews.GetReview(ctx, c.Task.Tenant, c.Task.ID, c.Position.RoundID, v.ID)
 	if e != nil {
 		return e
 	}

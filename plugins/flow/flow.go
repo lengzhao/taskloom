@@ -80,8 +80,7 @@ func id() string {
 }
 func (c *Controller) Reference() capflow.DefinitionRef { return c.ref }
 func (c *Controller) stateContext(t task.Task, p capflow.Position, i int) capflow.Context {
-	p.EntryID = p.Entries[i].ID
-	p.State = p.Entries[i].Key
+	p.State = c.d.States[i].Describe().Key
 	return capflow.Context{Task: t, Position: p}
 }
 
@@ -103,8 +102,7 @@ func (c *Controller) held(ctx context.Context, t task.Task, p capflow.Position) 
 	return "", nil
 }
 func (c *Controller) Initialize(ctx context.Context, t task.Task) (capflow.Position, error) {
-	p := capflow.Position{Tenant: t.Tenant, TaskID: t.ID, RoundID: id(), EntryID: id(), State: c.d.States[0].Describe().Key, Flow: c.ref, Status: capflow.PhaseActive}
-	p.Entries = []capflow.Entry{{Key: p.State, ID: p.EntryID}}
+	p := capflow.Position{Tenant: t.Tenant, TaskID: t.ID, RoundID: id(), State: c.d.States[0].Describe().Key, Flow: c.ref, Status: capflow.PhaseActive}
 	if e := c.d.Definitions.EnsureDefinition(ctx, c.ref); e != nil {
 		return p, e
 	}
@@ -128,13 +126,10 @@ func (c *Controller) Read(ctx context.Context, tenant, taskID string) (capflow.P
 	if p.Flow != c.ref {
 		return p, fault.ErrConflict
 	}
-	if len(p.Entries) == 0 {
-		p.Entries = []capflow.Entry{{Key: p.State, ID: p.EntryID}}
-	}
 	if p.Status == "" {
 		p.Status = capflow.PhaseActive
 	}
-	if p.Index < 0 || p.Index >= len(c.d.States) || len(p.Entries) != p.Index+1 {
+	if p.Index < 0 || p.Index >= len(c.d.States) || p.State != c.d.States[p.Index].Describe().Key {
 		return p, fault.ErrConflict
 	}
 	return p, nil
@@ -159,7 +154,6 @@ func (c *Controller) Refresh(ctx context.Context, t task.Task) (capflow.Position
 		return p, nil
 	}
 	before := p
-	before.Entries = append([]capflow.Entry(nil), p.Entries...)
 	if p.Status == capflow.PhaseCancelled {
 		p.Waiting = "任务已取消"
 		return c.save(ctx, before, p)
@@ -210,9 +204,7 @@ func (c *Controller) Refresh(ctx context.Context, t task.Task) (capflow.Position
 			break
 		}
 		next := p.Index + 1
-		proposed := p
-		proposed.Entries = append(append([]capflow.Entry{}, p.Entries...), capflow.Entry{Key: c.d.States[next].Describe().Key, ID: id()})
-		check, e := c.d.States[next].CheckEnter(ctx, c.stateContext(t, proposed, next))
+		check, e := c.d.States[next].CheckEnter(ctx, c.stateContext(t, p, next))
 		if e != nil {
 			return p, e
 		}
@@ -233,10 +225,8 @@ func (c *Controller) Refresh(ctx context.Context, t task.Task) (capflow.Position
 				break
 			}
 		}
-		p.Entries = proposed.Entries
 		p.Index = next
-		p.State = p.Entries[next].Key
-		p.EntryID = p.Entries[next].ID
+		p.State = c.d.States[next].Describe().Key
 	}
 	return c.save(ctx, before, p)
 }
@@ -262,8 +252,8 @@ func (c *Controller) Step(ctx context.Context, t task.Task, key string) (capflow
 	if p.Status != capflow.PhaseActive {
 		return capflow.Context{}, fault.ErrConflict
 	}
-	for i := range p.Entries {
-		if p.Entries[i].Key == key {
+	for i := 0; i <= p.Index; i++ {
+		if c.d.States[i].Describe().Key == key {
 			return c.stateContext(t, p, i), nil
 		}
 	}
@@ -349,12 +339,9 @@ func (c *Controller) restart(ctx context.Context, t task.Task, reopen bool) (cap
 		return p, fault.ErrConflict
 	}
 	before := p
-	before.Entries = append([]capflow.Entry(nil), p.Entries...)
 	p.RoundID = id()
-	p.EntryID = id()
 	p.State = c.d.States[0].Describe().Key
 	p.Index = 0
-	p.Entries = []capflow.Entry{{Key: p.State, ID: p.EntryID}}
 	p.Status = capflow.PhaseActive
 	p.Complete = false
 	p.Waiting = ""

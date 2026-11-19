@@ -138,7 +138,7 @@ func TestApprovalCompletesTheTask(t *testing.T) {
 		t.Fatal("running basis edited", e)
 	}
 	var e error
-	s, e = f.results.Submit(f.ctx, f.agent, "submit", api.Submit{Basis: basis(d, s), ExecutionID: s.Execution.ID, Generation: s.Execution.Generation, Body: "immutable result"})
+	s, e = f.results.Submit(f.ctx, f.agent, "submit", api.Submit{Basis: basis(d, s), ExecutionID: s.Execution.ID, Body: "immutable result"})
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -185,7 +185,7 @@ func TestCancelFencesWritesImmediately(t *testing.T) {
 	if s.Position.Status != "cancelled" || s.Execution.Writable || s.NextActor != "" {
 		t.Fatal("cancel did not fence", s.Execution, s.NextActor)
 	}
-	if _, e = f.results.Submit(f.ctx, f.agent, "late", api.Submit{Basis: basis(d, s), ExecutionID: old.ID, Generation: old.Generation, Body: "late"}); !errors.Is(e, fault.ErrConflict) {
+	if _, e = f.results.Submit(f.ctx, f.agent, "late", api.Submit{Basis: basis(d, s), ExecutionID: old.ID, Body: "late"}); !errors.Is(e, fault.ErrConflict) {
 		t.Fatal("late write", e)
 	}
 	if items, _ := f.query.Inbox(f.ctx, f.agent); len(items) != 0 {
@@ -199,10 +199,10 @@ func TestCancelFencesWritesImmediately(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	if s.Execution.Generation <= old.Generation || s.Execution.ID == old.ID {
+	if s.Execution.ID == old.ID {
 		t.Fatal("generation not advanced")
 	}
-	if _, e = f.results.Submit(f.ctx, f.agent, "old-again", api.Submit{Basis: basis(d, s), ExecutionID: old.ID, Generation: old.Generation, Body: "old"}); !errors.Is(e, fault.ErrConflict) {
+	if _, e = f.results.Submit(f.ctx, f.agent, "old-again", api.Submit{Basis: basis(d, s), ExecutionID: old.ID, Body: "old"}); !errors.Is(e, fault.ErrConflict) {
 		t.Fatal("old generation wrote into the new round", e)
 	}
 }
@@ -254,12 +254,12 @@ func TestNewCandidateReplacesPendingReviewAndWithdrawDoesNotRestoreOld(t *testin
 	d := f.create(t)
 	s := f.open(t, d)
 	var e error
-	s, e = f.results.Submit(f.ctx, f.agent, "first", api.Submit{Basis: basis(d, s), ExecutionID: s.Execution.ID, Generation: s.Execution.Generation, Body: "first"})
+	s, e = f.results.Submit(f.ctx, f.agent, "first", api.Submit{Basis: basis(d, s), ExecutionID: s.Execution.ID, Body: "first"})
 	if e != nil {
 		t.Fatal(e)
 	}
 	old := *s.Submission
-	s, e = f.results.Submit(f.ctx, f.agent, "second", api.Submit{Basis: basis(d, s), ExecutionID: s.Execution.ID, Generation: s.Execution.Generation, Body: "second"})
+	s, e = f.results.Submit(f.ctx, f.agent, "second", api.Submit{Basis: basis(d, s), ExecutionID: s.Execution.ID, Body: "second"})
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -282,7 +282,7 @@ func TestFlowWithoutAcceptanceCompletesOnSubmission(t *testing.T) {
 	d := f.create(t)
 	s := f.open(t, d)
 	var e error
-	s, e = f.results.Submit(f.ctx, f.agent, "submit", api.Submit{Basis: basis(d, s), ExecutionID: s.Execution.ID, Generation: s.Execution.Generation, Body: "auto result"})
+	s, e = f.results.Submit(f.ctx, f.agent, "submit", api.Submit{Basis: basis(d, s), ExecutionID: s.Execution.ID, Body: "auto result"})
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -291,7 +291,7 @@ func TestFlowWithoutAcceptanceCompletesOnSubmission(t *testing.T) {
 	}
 }
 
-func TestSameRoundRetryFencesOldGenerationAndReturnAdoptsBasis(t *testing.T) {
+func TestSameRoundRetryFencesOldExecutionAndReturnAdoptsBasis(t *testing.T) {
 	f := setup(t, nil)
 	d := f.create(t)
 	s := f.open(t, d)
@@ -307,10 +307,10 @@ func TestSameRoundRetryFencesOldGenerationAndReturnAdoptsBasis(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	if s.Position.RoundID != oldRound || s.Execution.Generation <= old.Generation {
+	if s.Position.RoundID != oldRound || s.Execution.ID == old.ID {
 		t.Fatal("retry switched round or reused generation")
 	}
-	if _, e = f.results.Submit(f.ctx, f.agent, "old-result", api.Submit{Basis: basis(d, s), ExecutionID: old.ID, Generation: old.Generation, Body: "late old"}); !errors.Is(e, fault.ErrConflict) {
+	if _, e = f.results.Submit(f.ctx, f.agent, "old-result", api.Submit{Basis: basis(d, s), ExecutionID: old.ID, Body: "late old"}); !errors.Is(e, fault.ErrConflict) {
 		t.Fatal("old execution wrote", e)
 	}
 	s = f.read(t, d.Task.ID)

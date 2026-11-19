@@ -458,7 +458,7 @@ function makeContext(d, w, path) {
   return {
     d, w, ex, active, path,
     base: { RoundID: w.Position.RoundID, BasisVersion: d.Task.BasisVersion, ExpectedRevision: w.Position.Revision },
-    ref: ex ? { ExecutionID: ex.ID, Generation: ex.Generation } : {},
+    ref: ex ? { ExecutionID: ex.ID } : {},
     // Blocked only lists agent actions for agent viewers, so this marks an agent session.
     isAgent: w.ViewerKind === 'agent',
     // Refresh the list first: it decides which tasks are waiting on me.
@@ -662,7 +662,6 @@ function renderExecution(ctx) {
   add('处理人', w.Assignee || '待分配');
   if (ex) {
     add('状态', execLabel(ex, w.Position) + (ex.Manual ? ' · 人工处理' : ''));
-    add('代次', '第 ' + ex.Generation + ' 代');
     if (ex.ProgressAt && !ex.ProgressAt.startsWith('0001')) add('最近进展', ago(ex.ProgressAt) + '（' + time(ex.ProgressAt) + '）');
   }
   const live = el('div', undefined, 'muted small'); live.id = 'execution-live-status';
@@ -895,7 +894,7 @@ setInterval(async () => {
     } else if (selected) {
       const state = await api('/tasks/' + encodeURIComponent(selected) + '/workflow');
       const live = $('execution-live-status');
-      if (live) live.textContent = '实时：' + (state.Assignee || '待分配') + (state.Execution ? ' · 第 ' + state.Execution.Generation + ' 代 · ' + execLabel(state.Execution, state.Position) : '');
+      if (live) live.textContent = '实时：' + (state.Assignee || '待分配') + (state.Execution ? ' · ' + execLabel(state.Execution, state.Position) : '');
       if (pendingRefresh && editing) notice('任务有新变化，已保留你的输入；完成编辑后刷新。');
     }
   } catch (e) {

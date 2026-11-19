@@ -25,7 +25,6 @@ type Open struct{ Basis }
 type Submit struct {
 	Basis
 	ExecutionID, Body string
-	Generation        int64
 }
 type Review struct {
 	Basis

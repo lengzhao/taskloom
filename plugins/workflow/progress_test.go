@@ -51,7 +51,7 @@ func TestExecutorProgressIsRecordedWithoutChangingTheFlow(t *testing.T) {
 
 	time.Sleep(5 * time.Millisecond)
 	r := f.read(t, d.Task.ID)
-	if _, e := f.results.Submit(f.ctx, f.agent, "submit", api.Submit{Basis: basis(d, r), ExecutionID: r.Execution.ID, Generation: r.Execution.Generation, Body: "result"}); e != nil {
+	if _, e := f.results.Submit(f.ctx, f.agent, "submit", api.Submit{Basis: basis(d, r), ExecutionID: r.Execution.ID, Body: "result"}); e != nil {
 		t.Fatal(e)
 	}
 	if !at().After(asked) {

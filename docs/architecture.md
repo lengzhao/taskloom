@@ -26,7 +26,7 @@ Task 与 Flow position 分表/接口归属，task/facts 不写状态。正文唯
 - task/facts：目标、标准、负责人和策略；自己的仓储。
 - commit/immutable：追加、精确读取、提交序分页；自己的仓储，文件阶段组合引用保留能力。
 - decision/facts：阻塞问题、答案与解决事实，引用 commit；普通评论不解除阻塞。
-- execution/facts：执行代次、写入资格、最近进展，实例/代次隔离。
+- execution/facts：执行记录（ExecutionID）、写入资格、最近进展，旧实例写入隔离。
 - delivery/reply：结果登记及当前轮候选引用，不保存正文或评审规则。
 - State：准备、执行、事实审核、人工验收、完成等步骤；需要审核记录的步骤拥有自己的仓储。
 - task/flow：状态/轮次/位置唯一写入者；通过有序 states 调用步骤，保留“未答问题不完成”等固定保护。
@@ -38,9 +38,9 @@ Task 与 Flow position 分表/接口归属，task/facts 不写状态。正文唯
 
 默认目标链 ready → executing → accepting → completed；额外事实审核以新 State 插入，省略 accepting 表示无需人工验收。任务绑定不可变 FlowRef，不能改同版本配置偷偷改变旧任务行为；不能把尚未实现的状态配置成假成功。
 
-State 的 Describe、CheckEnter、Enter、CheckComplete 保持不变。检查只读；Enter 在本地事务幂等准备/同步记录，远端请求只写 outbox。当前证据变化重查所有已到达步骤，未来步骤不提前 Enter，前序失效保留位置和原因。Enter 幂等依据为 EntryID 与真实证据组合，不使用自己写入后必变的 TaskVersion。
+State 的 Describe、CheckEnter、Enter、CheckComplete 保持不变。检查只读；Enter 在本地事务幂等准备/同步记录，远端请求只写 outbox。当前证据变化重查所有已到达步骤，未来步骤不提前 Enter，前序失效保留位置和原因。步骤在一轮内最多进入一次，Enter 幂等依据为 RoundID、步骤键与真实证据组合，不使用自己写入后必变的 TaskVersion。
 
-正常推进保留 RoundID，退回/重开新轮；执行 Generation 单独隔离。认领在同事务通过 CheckOpen 重查。任务完成必须满足有效候选、当前依据、全部相关步骤及无未答问题；转交、重新认领、退回、重开、取消立即失效旧执行写资格；普通 commit 或 Hook 不能绕过。Taskloom 不跟踪外部进程是否停止。
+正常推进保留 RoundID，退回/重开新轮；执行以 ExecutionID + 写资格单独隔离。认领在同事务通过 CheckOpen 重查。任务完成必须满足有效候选、当前依据、全部相关步骤及无未答问题；转交、重新认领、退回、重开、取消立即失效旧执行写资格；普通 commit 或 Hook 不能绕过。Taskloom 不跟踪外部进程是否停止。
 
 ## 一致性、权限与变化流
 

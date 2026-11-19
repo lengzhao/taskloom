@@ -77,7 +77,7 @@ func TestCreateReadCommitEditAndRevoke(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	if d.Position.RoundID == "" || d.Position.EntryID == "" || d.Position.State != "ready" || d.Position.Waiting != "请补充任务目标" {
+	if d.Position.RoundID == "" || d.Position.State != "ready" || d.Position.Waiting != "请补充任务目标" {
 		t.Fatalf("position %+v", d.Position)
 	}
 	again, e := s.Create(ctx, token, "create", api.Create{Title: "目标"})

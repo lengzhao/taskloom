@@ -7,7 +7,7 @@ import (
 
 type Submission struct {
 	Tenant, TaskID, ID, RoundID, ExecutionID, CommitID, Author string
-	Generation, BasisVersion                                   int64
+	BasisVersion                                               int64
 	Withdrawn                                                  bool
 	CreatedAt                                                  time.Time
 }

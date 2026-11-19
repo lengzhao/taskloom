@@ -14,7 +14,7 @@ import (
 func TestSavePositionRejectsStaleRevision(t *testing.T) {
 	s := open(t, filepath.Join(t.TempDir(), "store.db"))
 	ctx := context.Background()
-	p := flow.Position{Tenant: "t", TaskID: "a", RoundID: "r", EntryID: "e", State: "ready", Status: flow.PhaseActive}
+	p := flow.Position{Tenant: "t", TaskID: "a", RoundID: "r", State: "ready", Status: flow.PhaseActive}
 	e := s.Do(ctx, func(tx context.Context) error {
 		if e := s.CreateTask(tx, task.Task{Tenant: "t", ID: "a", Version: 1}); e != nil {
 			return e

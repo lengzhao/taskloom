@@ -32,16 +32,17 @@ const (
 	RoleCompleted Role = "completed"
 )
 
-type Entry struct{ Key, ID string }
+// Position is a task's place in its bound flow. Steps run in order and only
+// move forward within a round, so the reached steps are the definition's first
+// Index+1 states and each is entered at most once per RoundID.
 type Position struct {
 	// Revision changes only when the stored position actually changes.
-	Revision                                         int64
-	Status                                           Phase
-	Entries                                          []Entry
-	Index                                            int
-	Tenant, TaskID, RoundID, EntryID, State, Waiting string
-	Flow                                             DefinitionRef
-	Complete                                         bool
+	Revision                                int64
+	Status                                  Phase
+	Index                                   int
+	Tenant, TaskID, RoundID, State, Waiting string
+	Flow                                    DefinitionRef
+	Complete                                bool
 }
 type DefinitionStore interface {
 	EnsureDefinition(ctx context.Context, ref DefinitionRef) error

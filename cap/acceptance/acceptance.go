@@ -7,11 +7,13 @@ import (
 )
 
 type Review struct {
-	Tenant, TaskID, ID, RoundID, EntryID, SubmissionID, CommitID, Reviewer, Outcome, Reason string
-	BasisVersion, PolicyVersion                                                             int64
+	Tenant, TaskID, ID, RoundID, SubmissionID, CommitID, Reviewer, Outcome, Reason string
+	BasisVersion, PolicyVersion                                                    int64
 }
 type Reader interface {
-	GetReview(ctx context.Context, tenant, taskID, roundID, entryID, submissionID string) (Review, error)
+	// A flow reaches the accepting step at most once per round, so a review is
+	// identified by its round and submission.
+	GetReview(ctx context.Context, tenant, taskID, roundID, submissionID string) (Review, error)
 }
 type Records interface {
 	Reader

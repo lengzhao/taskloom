@@ -135,7 +135,7 @@ func (s *Service) Open(ctx context.Context, token, key string, in api.Open) (api
 		return s.finish(tx, t)
 	})
 }
-func (s *Service) owned(ctx context.Context, p identity.Principal, taskID, executionID string, generation int64) (task.Task, execution.Execution, error) {
+func (s *Service) owned(ctx context.Context, p identity.Principal, taskID, executionID string) (task.Task, execution.Execution, error) {
 	t, e := s.d.Tasks.GetTask(ctx, p.Tenant, taskID)
 	if e != nil {
 		return t, execution.Execution{}, e
@@ -144,7 +144,7 @@ func (s *Service) owned(ctx context.Context, p identity.Principal, taskID, execu
 	if e != nil {
 		return t, v, e
 	}
-	if v.TaskID != taskID || v.Generation != generation || !ownExecution(p, v) {
+	if v.TaskID != taskID || !ownExecution(p, v) {
 		return t, v, az.ErrForbidden
 	}
 	return t, v, nil
@@ -187,7 +187,7 @@ func (s *Service) Submit(ctx context.Context, token, key string, in api.Submit) 
 		if e != nil {
 			return nil, e
 		}
-		_, v, e := s.owned(tx, p, in.TaskID, in.ExecutionID, in.Generation)
+		_, v, e := s.owned(tx, p, in.TaskID, in.ExecutionID)
 		if e != nil {
 			return nil, e
 		}
@@ -221,7 +221,7 @@ func (s *Service) Submit(ctx context.Context, token, key string, in api.Submit) 
 		if e = s.d.Commits.Append(tx, c); e != nil {
 			return nil, e
 		}
-		if e = s.d.Results.RegisterSubmission(tx, delivery.Submission{Tenant: t.Tenant, TaskID: t.ID, ID: id(), RoundID: v.RoundID, ExecutionID: v.ID, Generation: v.Generation, CommitID: c.ID, Author: p.ID, BasisVersion: t.BasisVersion}); e != nil {
+		if e = s.d.Results.RegisterSubmission(tx, delivery.Submission{Tenant: t.Tenant, TaskID: t.ID, ID: id(), RoundID: v.RoundID, ExecutionID: v.ID, CommitID: c.ID, Author: p.ID, BasisVersion: t.BasisVersion}); e != nil {
 			return nil, e
 		}
 		return s.finish(tx, t)

@@ -40,7 +40,9 @@ CLI 不打印秘密，不覆盖文件，保留操作者、原因、owner/实例/
 
 ## 执行、进展与写入隔离
 
-认领在同 SQL 写事务内检查任务/轮次/依据、流程 Revision、明确分配、主体/实例、已到达步骤以及执行角色。两个并发认领最多一个成功；Generation 按任务单调增长，换轮也不复用。正常状态推进保留 RoundID，EntryID 每次进入变化。
+执行只以 ExecutionID 和写资格对外表达，没有代次（Generation）；流程位置不保存进入标识（EntryID），评审与确认记录以轮次 + 候选交付标识。该 schema（workflow/001 v2）不兼容此前的本地数据库：迁移校验和不一致时服务拒绝启动，需删除旧 SQLite 文件后重新 bootstrap。
+
+认领在同 SQL 写事务内检查任务/轮次/依据、流程 Revision、明确分配、主体/实例、已到达步骤以及执行角色。两个并发认领最多一个成功；客户端只按 ExecutionID 识别执行，存储内部按认领顺序找当前执行。正常状态推进保留 RoundID，步骤在一轮内只前进、最多进入一次。
 
 执行没有租约、心跳或超时。执行记录 `ProgressAt`：认领、执行者本人留言（workspace 经 execution.Progress）、提问（question-commands 经 execution.Progress）和提交结果时在同一事务内更新；他人留言不算。它只供负责人和 Agent 判断进展，不推动流程 Revision、不产生状态变化，也不自动重派；长期沉默的执行由负责人留言、转交或取消处理。没有后台扫描器。
 
@@ -53,7 +55,7 @@ CLI 不打印秘密，不覆盖文件，保留操作者、原因、owner/实例/
 
 Submit 原子追加不可变 result commit、登记 Submission，再核对已到达步骤；正文只存一份，交付/评审引用 CommitID。当前首版提交新文本；普通评论不能伪造 result 类型。同执行、轮次、依据下重复相同正文的新请求键会返回当前候选，不重复登记；不同正文生成新 commit 和候选。并发/旧依据请求冲突，技术失败回滚正文/交付/步骤/事件/回执。
 
-人工验收 State 默认绑定创建时负责人（当前负责人无转移 API），PolicyVersion=1；记录绑定轮次、EntryID、SubmissionID、CommitID、BasisVersion、PolicyVersion 和 reviewer。首版不提供策略编辑/职责分离开关；未知配置或请求字段拒绝，不假称复杂策略已实现。角色授权不代替验收资格，管理员不是自动 reviewer。
+人工验收 State 默认绑定创建时负责人（当前负责人无转移 API），PolicyVersion=1；记录绑定轮次、SubmissionID、CommitID、BasisVersion、PolicyVersion 和 reviewer。首版不提供策略编辑/职责分离开关；未知配置或请求字段拒绝，不假称复杂策略已实现。角色授权不代替验收资格，管理员不是自动 reviewer。
 
 新候选使旧结论不再当前：同步所有已到达状态的 Enter，创建对应候选的新 pending 记录，再重查整个前序。审核 wait/reject 保留合法交付，技术错误整体回滚；旧验收点击或外部确认不能覆盖新候选。撤回当前候选不恢复旧候选，历史正文/交付/结论保留。
 
@@ -70,7 +72,7 @@ Submit 原子追加不可变 result commit、登记 Submission，再核对已到
 | GET /workflow | 受权快照、最近执行、当前交付/正文/验收、可用操作提示 |
 | POST /execution/assign | Basis + Subject，负责人/管理员或当前人工处理人分配用户或 Agent |
 | POST /execution/open | Basis，匹配分配的用户或业务 Agent 认领 |
-| POST /results | Basis + ExecutionID/Generation/Body |
+| POST /results | Basis + ExecutionID/Body |
 | POST /review | Basis + SubmissionID/CommitID/Outcome/Reason，Outcome 为 approved/rejected；rejected 必须给出非空 Reason，否则按输入错误拒绝且不改变评审 |
 | POST /withdraw | Basis + SubmissionID |
 | POST /cancel、/return、/reopen | Basis，重新检查当前资格与版本，同事务失效旧执行写资格 |
@@ -106,7 +108,7 @@ checkpoint 的写入入口是 POST `/v1/tasks/{id}/checkpoint`，输入 RoundID/
 
 ## 验证范围
 
-真实 SQLite/HTTP 测试覆盖并发认领、进展时间记录与沉默不改变执行、换实例重新认领失效旧代次、错实例写入拒绝、取消与旧写入、旧代次隔离、同轮重试、新轮/新依据、结果更换/撤回及终态保护。C01—C11/C13 的本阶段基础场景均有对应回归；文件/链接的 C12 留 M07。
+真实 SQLite/HTTP 测试覆盖并发认领、进展时间记录与沉默不改变执行、换实例重新认领失效旧执行、错实例写入拒绝、取消与旧写入、旧执行隔离、同轮重试、新轮/新依据、结果更换/撤回及终态保护。C01—C11/C13 的本阶段基础场景均有对应回归；文件/链接的 C12 留 M07。
 
 E01—E03 已通过本地真实配置/SQLite/API 扩展验证：新 State/新 API 装配、业务审核等待保留交付、前序新证据重查、旧确认拒绝、技术失败回滚及路由冲突拒绝。脚本静态图不作为这些运行验收的替代。
 
@@ -118,7 +120,7 @@ E01—E03 已通过本地真实配置/SQLite/API 扩展验证：新 State/新 AP
 
 `Assignee` 是当前处理主体，替代 Agent 专属命名；`NextActor=assignee` 覆盖人和 Agent。`ViewerKind` 用于呈现人工操作或 Agent 调试区，`CanAssign` 单独表达分配资格，不借用负责人管理权限。创建者仍是默认负责人和验收人。
 
-人工处理人复用 Open/SubmitResult：Open 建立服务端标记的 Manual 执行记录，保留轮次/依据/代次与并发隔离；没有 Agent 实例绑定。人工验收仍按原流程。
+人工处理人复用 Open/SubmitResult：Open 建立服务端标记的 Manual 执行记录，保留轮次/依据/写资格与并发隔离；没有 Agent 实例绑定。人工验收仍按原流程。
 
 负责人/管理员可分配给有效用户或 Agent。仍参与任务的当前人工处理人可以转交，普通参与者和 Agent 不能转交。转交失效原执行写资格，旧结果请求不能写入，原处理者保留参与关系而不保留分配权；负责人/验收人不变。转交不等待原执行者停下，旧执行在下次读写时得知已失效。已提交的结果仍按现有验收、退回流程处理。
 

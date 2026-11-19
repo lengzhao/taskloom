@@ -9,7 +9,7 @@ import (
 
 type Execution struct {
 	Tenant, TaskID, ID, RoundID, Subject, InstanceID, Incarnation string
-	Generation, BasisVersion                                      int64
+	BasisVersion                                                  int64
 	// ProgressAt is when the executor last recorded progress (open, comment,
 	// question or result). It is informational: nothing expires on it.
 	ProgressAt time.Time

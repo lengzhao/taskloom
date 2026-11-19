@@ -5,7 +5,7 @@
 ## 项目范围与资料入口
 
 - 本项目只建设任务系统；软件分发、管理平台、Agent 运行时复用已有能力，不重新建设模型推理、工具执行、远端派发或上下文组装。
-- 人是默认负责人，处理人可以是人或 Agent（Buddy），人工处理人可以再转交给 Agent；任务、commit 时间线、执行记录、实例及执行代次分别表达，更换 Buddy/实例不自动更换负责人。
+- 人是默认负责人，处理人可以是人或 Agent（Buddy），人工处理人可以再转交给 Agent；任务、commit 时间线、执行记录、实例分别表达，更换 Buddy/实例不自动更换负责人。
 - 先读 [README](README.md)；涉及能力边界读 [模块化单体](docs/architecture.md)及[插件边界](docs/plugin-contracts.md)；流转读 [状态模块与流程控制](docs/task-flow-plugins.md)；交付读 [结果回复契约](docs/reply-delivery.md)；API/推送读 [通信契约](docs/shared-api-and-realtime.md)；配置读 [两层配置](docs/configuration.md)。
 - 已初始化 go.mod，核心行为以 [核心契约](docs/core-contracts.md)及[阶段覆盖表](docs/requirements-coverage.md)为准；已实现 M03 的 GORM/SQLite 存储与身份/安全命令基础，见 [M03 实现](docs/m03-storage.md)，M04 已有本地任务/commit/准备流程闭环，见 [M04 实现](docs/m04-workspace.md)，M05 已有本地执行/结果/验收/取消闭环，见 [M05 实现](docs/m05-workflow.md)，真实运行时验证仍属 M06；工作前检查实际文件，不把文档中的 kind、接口或默认值视为已经实现。待决策项和已确认约束分开，发现冲突先指出，不自行扩大范围。
 
@@ -25,9 +25,9 @@
 
 - flow 是阶段和 RoundID 唯一写入者，状态通过 deps.states 有序组合；默认 ready/executing/accepting/completed，取消为显式控制。禁止任意 set-status，允许按状态接口扩展。
 - 命令模块通过 Deps 同事务组合本任务事实、交付/评审和阶段，状态检查只读，Enter 幂等同步当前证据，不另设 Coordinator/Reconcile；不在事务中调用 Agent、S3 或远端身份。跨任务影响/通知使用 outbox 与受管 worker，不能靠异步缓存放行关键完成条件。
-- 正常推进保留 RoundID，显式 Return/Reopen 建新轮；执行代次单独隔离。EntryID 用于进入幂等，不判定同轮交付有效性；FlowRef 绑定不可变流程定义及行为摘要，验收要求由 Definition 的状态组合派生，不再配置 acceptanceMode；Policy 仅保存验收者/职责分离。
+- 正常推进保留 RoundID，显式 Return/Reopen 建新轮；执行以写资格单独隔离；步骤在一轮内只前进、最多进入一次；FlowRef 绑定不可变流程定义及行为摘要，验收要求由 Definition 的状态组合派生，不再配置 acceptanceMode；Policy 仅保存验收者/职责分离。
 - 绑定流程的验收模式创建后固定，部署变更不暗改旧任务。验收人变化新策略修订并使旧评审失效。升级不支持旧规则时明确拒绝并要求迁移。
-- 取消、退回、重开经显式授权，普通消息和后台核对不能重开终态。旧执行未知不自动重派，代次失效不证明工具停止。
+- 取消、退回、重开经显式授权，普通消息和后台核对不能重开终态。旧执行未知不自动重派，写资格失效不证明工具停止。
 - 执行成功、交付、验收通过和任务完成分别记录；通知送达、连接在线和取消请求均不等于执行已经停止。
 
 ## 回复交付与共用 API

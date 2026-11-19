@@ -45,7 +45,7 @@ func TestOpenQuestionWaitsOnOwnerAndHoldsCompletion(t *testing.T) {
 
 	// The agent keeps working: submit and approve. Completion still waits for the answer.
 	s = f.read(t, d.Task.ID)
-	s, e = f.results.Submit(f.ctx, f.agent, "submit", api.Submit{Basis: basis(d, s), ExecutionID: s.Execution.ID, Generation: s.Execution.Generation, Body: "result"})
+	s, e = f.results.Submit(f.ctx, f.agent, "submit", api.Submit{Basis: basis(d, s), ExecutionID: s.Execution.ID, Body: "result"})
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -148,7 +148,7 @@ func TestQuestionToParticipantWaitsOnThem(t *testing.T) {
 		t.Fatal("owner answered a question asked of the helper", e)
 	}
 	s = f.read(t, d.Task.ID)
-	s, e = f.results.Submit(f.ctx, f.agent, "submit", api.Submit{Basis: basis(d, s), ExecutionID: s.Execution.ID, Generation: s.Execution.Generation, Body: "result"})
+	s, e = f.results.Submit(f.ctx, f.agent, "submit", api.Submit{Basis: basis(d, s), ExecutionID: s.Execution.ID, Body: "result"})
 	if e != nil {
 		t.Fatal(e)
 	}

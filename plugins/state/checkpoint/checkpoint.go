@@ -33,7 +33,7 @@ func (*State) CheckEnter(context.Context, flow.Context) (flow.Check, error) {
 }
 func (s *State) record(ctx context.Context, c flow.Context) (capcheck.Record, error) {
 	v, e := s.d.Results.CurrentSubmission(ctx, c.Task.Tenant, c.Task.ID, c.Position.RoundID)
-	return capcheck.Record{Tenant: c.Task.Tenant, TaskID: c.Task.ID, RoundID: c.Position.RoundID, EntryID: c.Position.EntryID, SubmissionID: v.ID, CommitID: v.CommitID, BasisVersion: c.Task.BasisVersion}, e
+	return capcheck.Record{Tenant: c.Task.Tenant, TaskID: c.Task.ID, RoundID: c.Position.RoundID, SubmissionID: v.ID, CommitID: v.CommitID, BasisVersion: c.Task.BasisVersion}, e
 }
 func (s *State) Enter(ctx context.Context, c flow.Context) error {
 	r, e := s.record(ctx, c)

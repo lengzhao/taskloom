@@ -7,9 +7,9 @@ import (
 )
 
 type Record struct {
-	Tenant, TaskID, RoundID, EntryID, SubmissionID, CommitID, Actor, Note string
-	BasisVersion                                                          int64
-	Confirmed                                                             bool
+	Tenant, TaskID, RoundID, SubmissionID, CommitID, Actor, Note string
+	BasisVersion                                                 int64
+	Confirmed                                                    bool
 }
 type Records interface {
 	EnsureCheckpoint(ctx context.Context, value Record) error

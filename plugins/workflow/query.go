@@ -68,13 +68,11 @@ func (s *Query) ReadFacts(ctx context.Context, t task.Task) (api.Snapshot, error
 			return out, e
 		}
 		out.ResultCommit = &c
-		for _, entry := range pos.Entries {
-			r, e := s.d.Reviews.GetReview(ctx, t.Tenant, t.ID, pos.RoundID, entry.ID, v.ID)
-			if e == nil {
-				out.Review = &r
-			} else if !errors.Is(e, fault.ErrNotFound) {
-				return out, e
-			}
+		r, e := s.d.Reviews.GetReview(ctx, t.Tenant, t.ID, pos.RoundID, v.ID)
+		if e == nil {
+			out.Review = &r
+		} else if !errors.Is(e, fault.ErrNotFound) {
+			return out, e
 		}
 	} else if !errors.Is(e, fault.ErrNotFound) {
 		return out, e

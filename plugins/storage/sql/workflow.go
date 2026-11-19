@@ -13,10 +13,12 @@ import (
 )
 
 type executionRow struct {
-	Key        string `gorm:"primaryKey;size:64;column:row_key"`
-	TaskKey    string `gorm:"size:64;index"`
-	Generation int64
-	Data       []byte
+	Key     string `gorm:"primaryKey;size:64;column:row_key"`
+	TaskKey string `gorm:"size:64;index"`
+	// Sequence is a private per-task claim order used only to find the
+	// current execution; callers identify executions by ID.
+	Sequence int64
+	Data     []byte
 }
 type submissionRow struct {
 	Key       string `gorm:"primaryKey;size:64;column:row_key"`
@@ -37,7 +39,7 @@ func (s *Store) Current(ctx context.Context, tenant, taskID string) (execution.E
 	var out execution.Execution
 	e := s.use(ctx, false, func(db *gorm.DB) error {
 		var r executionRow
-		if e := db.Where("task_key = ?", key(tenant, taskID)).Order("generation DESC").First(&r).Error; e != nil {
+		if e := db.Where("task_key = ?", key(tenant, taskID)).Order("sequence DESC").First(&r).Error; e != nil {
 			return e
 		}
 		return json.Unmarshal(r.Data, &out)
@@ -58,15 +60,14 @@ func (s *Store) GetExecution(ctx context.Context, tenant, id string) (execution.
 func (s *Store) OpenExecution(ctx context.Context, v execution.Execution) (execution.Execution, error) {
 	e := s.use(ctx, true, func(db *gorm.DB) error {
 		var max struct{ Value int64 }
-		if e := db.Model(&executionRow{}).Select("COALESCE(MAX(generation),0) AS value").Where("task_key = ?", key(v.Tenant, v.TaskID)).Scan(&max).Error; e != nil {
+		if e := db.Model(&executionRow{}).Select("COALESCE(MAX(sequence),0) AS value").Where("task_key = ?", key(v.Tenant, v.TaskID)).Scan(&max).Error; e != nil {
 			return e
 		}
-		v.Generation = max.Value + 1
 		b, e := json.Marshal(v)
 		if e != nil {
 			return e
 		}
-		return db.Create(&executionRow{Key: key(v.Tenant, v.ID), TaskKey: key(v.Tenant, v.TaskID), Generation: v.Generation, Data: b}).Error
+		return db.Create(&executionRow{Key: key(v.Tenant, v.ID), TaskKey: key(v.Tenant, v.TaskID), Sequence: max.Value + 1, Data: b}).Error
 	})
 	return v, e
 }
@@ -76,7 +77,7 @@ func (s *Store) SaveExecution(ctx context.Context, v execution.Execution) error 
 		if e != nil {
 			return e
 		}
-		r := db.Model(&executionRow{}).Where("row_key = ? AND generation = ?", key(v.Tenant, v.ID), v.Generation).Update("data", b)
+		r := db.Model(&executionRow{}).Where("row_key = ?", key(v.Tenant, v.ID)).Update("data", b)
 		if r.Error != nil {
 			return r.Error
 		}
@@ -144,7 +145,7 @@ func (s *Store) WithdrawSubmission(ctx context.Context, tenant, id string) error
 	})
 }
 func reviewKey(v acceptance.Review) string {
-	return key(v.Tenant, v.TaskID, v.RoundID, v.EntryID, v.SubmissionID)
+	return key(v.Tenant, v.TaskID, v.RoundID, v.SubmissionID)
 }
 func (s *Store) EnsureReview(ctx context.Context, v acceptance.Review) error {
 	return s.use(ctx, true, func(db *gorm.DB) error {
@@ -155,11 +156,11 @@ func (s *Store) EnsureReview(ctx context.Context, v acceptance.Review) error {
 		return db.Clauses(clause.OnConflict{DoNothing: true}).Create(&reviewRow{Key: reviewKey(v), Data: b}).Error
 	})
 }
-func (s *Store) GetReview(ctx context.Context, tenant, taskID, round, entry, submission string) (acceptance.Review, error) {
+func (s *Store) GetReview(ctx context.Context, tenant, taskID, round, submission string) (acceptance.Review, error) {
 	var v acceptance.Review
 	e := s.use(ctx, false, func(db *gorm.DB) error {
 		var r reviewRow
-		if e := db.First(&r, "row_key = ?", key(tenant, taskID, round, entry, submission)).Error; e != nil {
+		if e := db.First(&r, "row_key = ?", key(tenant, taskID, round, submission)).Error; e != nil {
 			return e
 		}
 		return json.Unmarshal(r.Data, &v)
@@ -200,13 +201,6 @@ func (s *Store) AssignSubject(ctx context.Context, tenant, taskID, subject strin
 	return s.use(ctx, true, func(db *gorm.DB) error {
 		return db.Clauses(clause.OnConflict{UpdateAll: true}).Create(&assignmentRow{Key: key(tenant, taskID), Subject: subject}).Error
 	})
-}
-
-// stopEvidenceRow is a legacy table kept only so existing databases keep
-// their recorded stop evidence and migration history; nothing writes it now.
-type stopEvidenceRow struct {
-	ID   string `gorm:"primaryKey;size:128"`
-	Data []byte
 }
 
 func (s *Store) IsAssigned(ctx context.Context, tenant, taskID, subject string) (bool, error) {

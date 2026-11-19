@@ -1,6 +1,6 @@
 # 两层配置与实际可运行图
 
-根 base/config 只描述已实现能力，当前为 SQLite 工作台与 M05 流程图（见 [base.yaml](../base.yaml)）；examples/minimal 保留纯 health。未来架构只在[设计](architecture.md)描述，不提供未实现的完整业务图。
+根 base/config 只描述已实现能力，当前为 SQLite 工作台与 M05 流程图（见 [base.yaml](../base.yaml)）。未来架构只在[设计](architecture.md)描述，不提供未实现的完整业务图。
 
 ## 规则
 

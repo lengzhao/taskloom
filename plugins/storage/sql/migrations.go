@@ -26,7 +26,6 @@ var migrations = []migration{
 	{"flow/001", "immutable-flow-definition-v1", []any{&flowDefinitionRow{}}},
 	{"membership/001", "tenant-members-and-task-participants-v1", []any{&memberRow{}, &participantRow{}}},
 	{"workflow/001", "execution-submission-and-state-owned-review-v2", []any{&assignmentRow{}, &executionRow{}, &submissionRow{}, &reviewRow{}, &verdictRow{}, &positionHistoryRow{}}},
-	{"checkpoint/001", "state-owned-checkpoint-records-v1", []any{&checkpointRow{}}},
 	{"question/001", "round-scoped-input-requests-v1", []any{&questionRow{}}},
 	{"password/001", "salted-human-password-hash-v1", []any{&passwordRow{}}},
 	{"catalog/001", "workspace-and-project-metadata-v1", []any{&spaceRow{}, &projectRow{}}},

@@ -1,7 +1,6 @@
 package workflow_test
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
@@ -9,7 +8,6 @@ import (
 	"fmt"
 	"github.com/lengzhao/pluginkit"
 	"github.com/lengzhao/pluginkit/build"
-	"github.com/lengzhao/taskloom/cap/acceptance"
 	"github.com/lengzhao/taskloom/cap/fault"
 	"github.com/lengzhao/taskloom/cap/flow"
 	"github.com/lengzhao/taskloom/cap/httpapi"
@@ -18,104 +16,11 @@ import (
 	"github.com/lengzhao/taskloom/cap/task"
 	api "github.com/lengzhao/taskloom/cap/workflow"
 	"github.com/lengzhao/taskloom/runtime/config"
-	"gopkg.in/yaml.v3"
 	"net/http"
-	"net/http/httptest"
 	"os"
-	"strings"
 	"testing"
 	"time"
 )
-
-func checkpointConfig(t *testing.T) map[string]any {
-	t.Helper()
-	b, e := os.ReadFile("../../examples/flows/with-checkpoint.config.yaml")
-	if e != nil {
-		t.Fatal(e)
-	}
-	var config map[string]any
-	if e = yaml.Unmarshal(b, &config); e != nil {
-		t.Fatal(e)
-	}
-	return config
-}
-func TestNewStatesAndAPIComposeWithoutChangingOriginalConsumers(t *testing.T) {
-	override := checkpointConfig(t)
-	override["flow-checkpoint"].(map[string]any)["deps"].(map[string]any)["states"] = []string{"ready", "executing", "factcheck", "checkpoint", "accepting", "completed"}
-	override["factcheck"] = map[string]any{"use": "state/factcheck", "config": map[string]any{"requiredText": "verified"}, "deps": map[string]any{"results": "sql", "commits": "sql"}}
-	f := setup(t, override)
-	d := f.create(t)
-	s := f.open(t, d)
-	var e error
-	s, e = f.results.Submit(f.ctx, f.agent, "checked-result", api.Submit{Basis: basis(d, s), ExecutionID: s.Execution.ID, Body: "verified first"})
-	if e != nil {
-		t.Fatal(e)
-	}
-	if s.Position.State != "checkpoint" || s.Review != nil {
-		t.Fatal("future review entered early")
-	}
-	module, _ := build.GetByID[httpapi.Module](f.graph, "checkpoint-api")
-	mux := http.NewServeMux()
-	for _, r := range module.Routes() {
-		mux.Handle(r.Method+" /v1"+r.Path, r.Handler)
-	}
-	versionField := "ExpectedRevision"
-	confirm := func(key string, current api.Snapshot, submissionID, commitID string) int {
-		t.Helper()
-		in := map[string]any{"RoundID": current.Position.RoundID, "BasisVersion": d.Task.BasisVersion, versionField: current.Position.Revision, "SubmissionID": submissionID, "CommitID": commitID, "Note": "external input"}
-		b, _ := json.Marshal(in)
-		r := httptest.NewRequest("POST", "/v1/tasks/"+d.Task.ID+"/checkpoint", bytes.NewReader(b))
-		r.Header.Set("Authorization", "Bearer "+f.owner)
-		r.Header.Set("Idempotency-Key", key)
-		w := httptest.NewRecorder()
-		mux.ServeHTTP(w, r)
-		return w.Code
-	}
-	first := *s.Submission
-	// Flow commands pin the flow revision; the task-version field name is not accepted.
-	versionField = "ExpectedVersion"
-	if code := confirm("confirm-legacy-field", s, first.ID, first.CommitID); code != 400 {
-		t.Fatal("legacy ExpectedVersion field accepted", code)
-	}
-	versionField = "ExpectedRevision"
-	if code := confirm("confirm-first", s, first.ID, first.CommitID); code != 200 {
-		t.Fatal("checkpoint API", code)
-	}
-	s = f.read(t, d.Task.ID)
-	if s.Position.State != "accepting" || s.Review == nil {
-		t.Fatal("review not prepared")
-	}
-	// A new candidate while the first waits for review re-runs the prefix checks.
-	s, e = f.results.Submit(f.ctx, f.agent, "bad-candidate", api.Submit{Basis: basis(d, s), ExecutionID: s.Execution.ID, Body: "bad"})
-	if e != nil {
-		t.Fatal(e)
-	}
-	if s.Position.State != "accepting" || !strings.Contains(s.Position.Waiting, "factcheck") || s.Submission == nil || s.Review == nil || s.Review.Outcome != "pending" {
-		t.Fatalf("prefix not rechecked %+v", s)
-	}
-	if code := confirm("stale-input", s, first.ID, first.CommitID); code != 409 {
-		t.Fatal("old external input accepted", code)
-	}
-	s, e = f.results.Submit(f.ctx, f.agent, "third", api.Submit{Basis: basis(d, s), ExecutionID: s.Execution.ID, Body: "verified third"})
-	if e != nil {
-		t.Fatal(e)
-	}
-	if !strings.Contains(s.Position.Waiting, "checkpoint") {
-		t.Fatal("new evidence reused confirmation")
-	}
-	if code := confirm("confirm-third", s, s.Submission.ID, s.Submission.CommitID); code != 200 {
-		t.Fatal(code)
-	}
-	s = f.read(t, d.Task.ID)
-	s, e = f.results.Review(f.ctx, f.owner, "approve-third", api.Review{Basis: basis(d, s), Verdict: acceptance.Verdict{SubmissionID: s.Submission.ID, CommitID: s.Submission.CommitID, Outcome: "approved"}})
-	if e != nil {
-		t.Fatal(e)
-	}
-	s = f.read(t, d.Task.ID)
-	if s.Position.Status != "completed" {
-		t.Fatal("extension flow not completed")
-	}
-}
 
 type failureState struct{}
 

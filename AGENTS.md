@@ -51,7 +51,7 @@
 - 同 ID 且 use 未变时递归合并；标量覆盖、列表整体替换；use 改变时整节点替换。复用 AgentKit MergeYAML，不另写一套不兼容合并语义；真实构建用 PluginKit，不照搬 AgentKit runner resolver。
 - `examples/flows/*.config.yaml` 只放能真实构建的流程覆盖示例。未来能力仅在真实实现后加入 base；目标架构留在文档，不预置未实现业务 kind。
 - 固定不变量不做无意义开关；有用参数提供明确默认值。删除空通知链等无行为节点，不隐藏真实依赖或弱化生命周期。
-- 修改后运行与范围匹配的验证。当前文档/配置需检查 YAML、两层合并、引用、依赖环、根可达、生命周期 owner 及文档链接；最小工程另运行 `sh scripts/check.sh all` 和 `sh scripts/check.sh race`，见 [工程入口](docs/development.md)；当前 health 图不能冒充业务可运行。
+- 修改后运行与范围匹配的验证。当前文档/配置需检查 YAML、两层合并、引用、依赖环、根可达、生命周期 owner 及文档链接；最小工程另运行 `sh scripts/check.sh all` 和 `sh scripts/check.sh race`，见 [工程入口](docs/development.md)；healthz 不能冒充业务可运行。
 - 不照搬 AgentKit 的脚本路径和测试命令；先查本仓库实际验证入口。运行态改动覆盖相关事务、并发、取消、恢复和授权边界。报告实际通过、未运行及受限项，静态检查不能表述为系统可运行。
 
 当前权限基线见[成员与任务关系](docs/permissions.md)：移除通用 Scope/Grant 和逐动作授权配置，以有效租户成员、固定角色、负责人及参与关系判断业务资格；保持租户隔离、即时撤销和幂等重放前重新鉴权。不兼容旧权限数据库格式。

@@ -260,6 +260,12 @@ func TestDependencyListOrderIsInjected(t *testing.T) {
 
 // Root defaults now promise only implemented capabilities. Exercise the actual
 // PluginKit builder, not just YAML shape, without opening resources/listeners.
+func TestFlowExampleOverlayBuilds(t *testing.T) {
+	if _, _, err := cfg.BuildFiles(context.Background(), "../../base.yaml", "../../examples/flows/automatic.config.yaml"); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestRootDefaultGraphBuilds(t *testing.T) {
 	app, _, err := cfg.BuildFiles(context.Background(), "../../base.yaml", "../../config.yaml")
 	if err != nil {

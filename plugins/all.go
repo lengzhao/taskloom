@@ -4,7 +4,6 @@ package plugins
 
 import (
 	_ "github.com/lengzhao/taskloom/plugins/access/default"
-	_ "github.com/lengzhao/taskloom/plugins/api/checkpoint"
 	_ "github.com/lengzhao/taskloom/plugins/api/health"
 	_ "github.com/lengzhao/taskloom/plugins/api/mcp"
 	_ "github.com/lengzhao/taskloom/plugins/api/workflow"
@@ -15,10 +14,8 @@ import (
 	_ "github.com/lengzhao/taskloom/plugins/security"
 	_ "github.com/lengzhao/taskloom/plugins/server"
 	_ "github.com/lengzhao/taskloom/plugins/state/accepting"
-	_ "github.com/lengzhao/taskloom/plugins/state/checkpoint"
 	_ "github.com/lengzhao/taskloom/plugins/state/completed"
 	_ "github.com/lengzhao/taskloom/plugins/state/executing"
-	_ "github.com/lengzhao/taskloom/plugins/state/factcheck"
 	_ "github.com/lengzhao/taskloom/plugins/state/ready"
 	_ "github.com/lengzhao/taskloom/plugins/storage/sql"
 	_ "github.com/lengzhao/taskloom/plugins/transport/http"

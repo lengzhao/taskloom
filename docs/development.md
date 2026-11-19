@@ -20,20 +20,20 @@
 
 ## 业务装配
 
-采用[模块化单体](architecture.md)。根 base/config 挂载 SQL、工作台与 M05 流程模块，examples/minimal 保留纯 health；不注册空业务 kind。通用加载器不解释业务配置，流程定义、内联状态及默认 FlowRef 由已挂载的流程目录验证，失败不得启动业务服务。
+采用[模块化单体](architecture.md)。根 base/config 挂载 SQL、工作台与 M05 流程模块；不注册空业务 kind。通用加载器不解释业务配置，流程定义、内联状态及默认 FlowRef 由已挂载的流程目录验证，失败不得启动业务服务。
 
 ## 运行与检查
 
 ```sh
 go build -o /tmp/taskloom ./cmd/taskloom
-/tmp/taskloom -base examples/minimal/base.yaml -config examples/minimal/config.yaml -check
-/tmp/taskloom -base examples/minimal/base.yaml -config examples/minimal/config.yaml
+/tmp/taskloom -base base.yaml -config config.yaml -check
+/tmp/taskloom -base base.yaml -config config.yaml
 # 另一终端
 curl http://127.0.0.1:8080/v1/healthz
 # Ctrl-C 或 SIGTERM 退出
 ```
 
-最小图只有 server、transport/http、api/health 三种真实插件。healthz 返回进程存活，不表示 SQL、S3 或业务就绪。
+healthz 只返回进程存活，不表示 SQL、S3 或业务就绪。
 
 `-check` 只构造并校验，不监听、不调用 Open/Run；成功打印实际实例数。`-config ''` 显式省略 L1；显式指定的文件缺失会失败。配置/运行错误退出 1，参数错误退出 2，帮助及正常信号退出为 0。错误不输出原始配置或构造器错误，仅保留阶段和实例 ID；实例 ID 应使用固定名称，不能包含凭据。
 

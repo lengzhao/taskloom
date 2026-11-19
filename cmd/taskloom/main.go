@@ -23,7 +23,7 @@ func main() {
 func run(ctx context.Context, args []string, out, errout io.Writer) int {
 	flags := flag.NewFlagSet("taskloom", flag.ContinueOnError)
 	flags.SetOutput(errout)
-	base := flags.String("base", "base.yaml", "L0 base file (use examples/minimal/base.yaml for the implemented graph)")
+	base := flags.String("base", "base.yaml", "L0 base file")
 	overlay := flags.String("config", "config.yaml", "L1 override file; empty path means no overlay")
 	check := flags.Bool("check", false, "build typed plugin graph without opening resources or listeners")
 	if err := flags.Parse(args); err != nil {

@@ -96,20 +96,16 @@ question-commands 有 9 个 Deps（命令生命周期、任务、流程、时间
 
 ## 状态扩展示例
 
-- `state/factcheck`：纯本地文本规则示例，用配置 requiredText 检查结果，规则摘要纳入定义。它演示本地事实/质量门，不代表模型事实核验服务。
-- `state/checkpoint`：拥有自己的候选绑定记录、Enter 和完成检查；`api/checkpoint` 提供人工/异步确认，原 flow/交付无需理解专有记录。
-- `examples/flows/with-checkpoint.config.yaml`：保留旧定义并新增 with-checkpoint/1、State 和 API，真实 typed 构建可用。
-- `examples/flows/automatic.config.yaml`：新增 automatic/1，省略人工验收 State，仍检查有效交付，不另设 acceptanceMode。
+- `examples/flows/automatic.config.yaml`：新增 automatic/1，省略人工验收 State，仍检查有效交付，不另设 acceptanceMode；由 runtime/config 测试真实构建。
+- 状态组合与 API 装配的通用性由测试中的 `test/failure-state`（技术失败整体回滚）和 `test/collision-api`（路由冲突启动前拒绝）覆盖；仓库不保留无消费者的示例步骤。
 
-扩展命令可提供由服务端代码构造的具名资格检查（command.Request.Authorize），在首次执行和重放前都运行；例如 checkpoint.confirm 复用任务管理角色并由 State 再核对 owner/候选。该回调不来自 HTTP，不是跳过授权开关；未提供时使用固定业务规则，未知操作仍拒绝。无需把新步骤动作登记进全局权限目录。
-
-checkpoint 的写入入口是 POST `/v1/tasks/{id}/checkpoint`，输入 RoundID/BasisVersion/ExpectedRevision/SubmissionID/CommitID/Note；新候选需要新的确认。该示例未默认挂载，专有输入走专有 API，薄界面通用部分只展示其步骤/等待原因。
+命令可提供由服务端代码构造的具名资格检查（command.Request.Authorize），在首次执行和重放前都运行；该回调不来自 HTTP，不是跳过授权开关，未提供时使用固定业务规则，未知操作仍拒绝。
 
 ## 验证范围
 
 真实 SQLite/HTTP 测试覆盖并发认领、进展时间记录与沉默不改变执行、换实例重新认领失效旧执行、错实例写入拒绝、取消与旧写入、旧执行隔离、同轮重试、新轮/新依据、结果更换/撤回及终态保护。C01—C11/C13 的本阶段基础场景均有对应回归；文件/链接的 C12 留 M07。
 
-E01—E03 已通过本地真实配置/SQLite/API 扩展验证：新 State/新 API 装配、业务审核等待保留交付、前序新证据重查、旧确认拒绝、技术失败回滚及路由冲突拒绝。脚本静态图不作为这些运行验收的替代。
+扩展性当前由测试状态/模块验证：新增 State 装配后技术失败整体回滚、新增 API 模块路由冲突启动前拒绝、无验收流程真实构建。E01/E02 的事实审核与人工/异步确认示例已删除，待出现真实需求时随具体步骤实现并验收。
 
 内置浏览器在独立临时数据库完成负责人创建/分配→业务 Agent 认领/提交/结束→负责人验收等待；独立测试 runtime 通过实际 HTTP 提交匹配证明后，界面补拉显示 completed。这是协议与本地 UI 验证，不是实际进程清理证明。真实 Harness/运行实例、受管子进程和外部工作覆盖，以及 MySQL/PostgreSQL 与生产负载仍未验收，归 M06/后续阶段。
 

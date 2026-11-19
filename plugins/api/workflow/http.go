@@ -15,13 +15,14 @@ type Deps struct {
 	Results    work.ResultCommands     `json:"results"`
 	Controls   work.ControlCommands    `json:"controls"`
 	Workflow   work.Queries            `json:"workflow"`
+	Questions  work.QuestionCommands   `json:"questions"`
 	Security   httpapi.RequestSecurity `json:"security"`
 }
 type Module struct{ d Deps }
 
 func init() {
 	pluginkit.Register("api/workflow", func(_ struct{}, d Deps) (*Module, error) {
-		if d.Executions == nil || d.Results == nil || d.Controls == nil || d.Workflow == nil || d.Security == nil {
+		if d.Executions == nil || d.Results == nil || d.Controls == nil || d.Workflow == nil || d.Questions == nil || d.Security == nil {
 			return nil, fault.ErrInput
 		}
 		return &Module{d}, nil
@@ -29,6 +30,7 @@ func init() {
 }
 func (m *Module) Routes() []httpapi.Route {
 	return []httpapi.Route{
+		{Method: "GET", Path: "/inbox", Operation: "workflow.inbox", Handler: http.HandlerFunc(m.serve)},
 		{Method: "GET", Path: "/tasks/{id}/workflow", Operation: "workflow.read", Handler: http.HandlerFunc(m.serve)},
 		{Method: "POST", Path: "/tasks/{id}/execution/assign", Operation: "execution.assign", Handler: http.HandlerFunc(m.serve)},
 		{Method: "POST", Path: "/tasks/{id}/execution/open", Operation: "execution.open", Handler: http.HandlerFunc(m.serve)},
@@ -39,6 +41,8 @@ func (m *Module) Routes() []httpapi.Route {
 		{Method: "POST", Path: "/tasks/{id}/results", Operation: "result.submit", Handler: http.HandlerFunc(m.serve)},
 		{Method: "POST", Path: "/tasks/{id}/review", Operation: "result.review", Handler: http.HandlerFunc(m.serve)},
 		{Method: "POST", Path: "/tasks/{id}/withdraw", Operation: "result.withdraw", Handler: http.HandlerFunc(m.serve)},
+		{Method: "POST", Path: "/tasks/{id}/questions", Operation: "question.ask", Handler: http.HandlerFunc(m.serve)},
+		{Method: "POST", Path: "/tasks/{id}/questions/{qid}/answer", Operation: "question.answer", Handler: http.HandlerFunc(m.serve)},
 		{Method: "POST", Path: "/tasks/{id}/cancel", Operation: "task.cancel", Handler: http.HandlerFunc(m.serve)},
 		{Method: "POST", Path: "/tasks/{id}/return", Operation: "task.return", Handler: http.HandlerFunc(m.serve)},
 		{Method: "POST", Path: "/tasks/{id}/reopen", Operation: "task.reopen", Handler: http.HandlerFunc(m.serve)},
@@ -56,6 +60,22 @@ func (m *Module) serve(w http.ResponseWriter, r *http.Request) {
 	var result any
 	var err error
 	switch {
+	case strings.HasSuffix(path, "/questions"):
+		var in work.Ask
+		if !httpx.Decode(w, r, &in) {
+			return
+		}
+		in.TaskID = taskID
+		result, err = m.d.Questions.Ask(ctx, token, key, in)
+	case strings.HasSuffix(path, "/answer"):
+		var in work.Answer
+		if !httpx.Decode(w, r, &in) {
+			return
+		}
+		in.TaskID, in.QuestionID = taskID, r.PathValue("qid")
+		result, err = m.d.Questions.Answer(ctx, token, key, in)
+	case strings.HasSuffix(path, "/inbox"):
+		result, err = m.d.Workflow.Inbox(ctx, token)
 	case strings.HasSuffix(path, "/workflow"):
 		result, err = m.d.Workflow.Read(ctx, token, taskID)
 	case strings.HasSuffix(path, "/execution/assign"):

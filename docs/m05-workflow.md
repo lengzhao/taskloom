@@ -35,7 +35,7 @@ CLI 不打印秘密，不覆盖文件，保留操作者、原因、owner/实例/
 
 超过五字段保留理由：各命令模块必须显式协调事务内领域事实，但分配/执行、交付/验收、流程控制保持独立 provider；只读聚合单独提供内部 FactsReader，命令不额外持有查询仓储写能力。共同代码是包内辅助逻辑，不是依赖包或服务定位器。HTTP 的 Origin/CSRF/会话凭据解析作为内聚 RequestSecurity 复用，HTTP owner 只启动/关闭一次会话模块。没有新增 registry 或配置层。
 
-根默认图为 22 个实际实例，见[逐字段依赖图](m05-dependencies.md)，93 条字段目标边，无环且全部根可达。准备定义与标准定义共存；标准定义的行为摘要包含有序状态描述。改同 ID/版本的步骤/规则导致不匹配时拒绝，不能继续沿旧位置执行新规则。示例片段必须并入同一个 config.yaml；不能作为第三层加载。
+根默认图为 23 个实际实例（含后续新增的 question-commands），见[逐字段依赖图](m05-dependencies.md)，103 条字段目标边，无环且全部根可达。准备定义与标准定义共存；标准定义的行为摘要包含有序状态描述。改同 ID/版本的步骤/规则导致不匹配时拒绝，不能继续沿旧位置执行新规则。示例片段必须并入同一个 config.yaml；不能作为第三层加载。
 
 ## 执行、保活与停止
 
@@ -74,13 +74,27 @@ Submit 原子追加不可变 result commit、登记 Submission，再核对已到
 | POST /execution/proof | ExecutionID/Generation/Challenge + 三项完整性事实，仅 runtime 凭据 |
 | POST /execution/isolate | Basis + ExecutionID/Generation/Reason/Scope，仅管理员 |
 | POST /results | Basis + ExecutionID/Generation/Body |
-| POST /review | Basis + SubmissionID/CommitID/Outcome/Reason，Outcome 为 approved/rejected |
+| POST /review | Basis + SubmissionID/CommitID/Outcome/Reason，Outcome 为 approved/rejected；rejected 必须给出非空 Reason，否则按输入错误拒绝且不改变评审 |
 | POST /withdraw | Basis + SubmissionID |
 | POST /cancel、/return、/reopen | Basis，当前资格、版本与停止门重新检查 |
+| POST /questions | RoundID + Body，执行者等参与者向负责人提问 |
+| POST /questions/{qid}/answer | Body，仅被提问的负责人回答当前轮的未答问题 |
 
-界面支持角色切换、分配、认领/续期/结束、结果区、验收/撤回、取消、退回、重开及管理员恢复表单。结果正文按稳定引用读取，不依赖时间线首屏。网络结果不明确时保留请求幂等键；编辑期间保留输入并提示刷新。查询操作提示不是授权凭证，服务端每次重新检查。
+界面支持角色切换、分配、认领/续期/结束、结果区、验收/撤回、取消、退回、重开及管理员恢复表单。布局为左侧任务列表（“待我处理/全部”，标出状态与等谁）与右侧详情：顶部“下一步”卡片（等谁、等待原因、待验收时的验收与分配入口），主栏为当前结果与时间线，侧栏为任务约定、执行、参与者、任务控制及仅对 Agent 会话显示的“Agent 调试”。界面不按状态名判断可用操作，只依据快照的 Can*/Blocked/NextActor；状态名仅用于显示。退回、取消、撤回、重开需二次确认；退出登录会清空当前详情。结果正文按稳定引用读取，不依赖时间线首屏。网络结果不明确时保留请求幂等键；编辑期间保留输入并提示刷新。查询操作提示不是授权凭证，服务端每次重新检查。
 
 快照另带两项只读说明：`NextActor`（owner/agent/reviewer，空表示没有固定角色需要行动，步骤专有原因仍看 `Position.Waiting`）与 `Blocked`（仅对当前查看者相关的 open/renew/submit/review 给出不可用原因码，例如 not_assigned、execution_in_progress、lease_expired、basis_changed、not_reviewer，完整列表见 `cap/workflow`）。每个 Can* 与其原因码出自同一判断函数，避免提示与开关漂移；原因码只解释当前状态，不是授权凭证，也不替代命令写入时的重查。
+
+`GET /v1/inbox` 返回当前调用者可读且 NextActor 指向自己的任务（TaskID/Title/NextActor）：负责人对应 owner、验收记录的 reviewer 对应 reviewer，Agent 对应仍未安全停止的执行主体或已分配的 Agent。它与快照共用 ReadFacts 派生，不保存收件箱记录、不发通知；管理员恢复项暂不列入。当前逐任务读取，规模评估归 M11。工作台任务列表以 ● 标记并可“只看待我处理”。
+
+## 请求输入与人工引导
+
+人可以随时在时间线给执行 Agent 留言（普通 comment），补充说明、纠正方向或提出要求；Agent 经变化推送得知并自行决定如何处理，留言不算交付，也不改变正式依据。执行开始后不能直接修改目标/标准：正式改要求须先“退回并开始新一轮”再修改，界面在约定卡片中说明这一点。
+
+Agent（或除负责人外的其他参与者）卡住时用 `commands/question` 提问：问题正文是不可变的 question commit，`cap/question` 记录只保存轮次、提问人、被提问人（固定为负责人）、状态及回答 commit 引用。未回答的问题使快照 `Questions` 非空、`NextActor=owner` 并进入负责人的 inbox。回答追加 answer commit（RefID 指向问题），以“仍为 open”条件更新，重复回答冲突；只有被提问的人类负责人可答，且只限当前活跃轮。旧轮或已取消/完成任务的问题不再显示也不可回答，无需额外写入。
+
+当前轮存在未回答问题时任务不能完成：这道门与“全部执行安全停止”一样由 flow 控制器固定执行（`task/flow` 多步定义必须注入 questions），不进入状态描述和 FlowRef 摘要，因此不改变已有定义的版本。Agent 仍可继续执行、提交结果和被验收，只是最后完成被挡住，Waiting 显示“等待负责人回答问题”；回答命令同事务刷新流程，条件满足即完成。
+
+question-commands 有 7 个 Deps（命令生命周期、任务、流程、时间线、问题记录、快照、事件），与其他命令模块同理保留；query/workflow 因此增至 10 个只读依赖，api/workflow 增至 6 个协议依赖，均不引入写接口或服务定位。
 
 ## 状态扩展示例
 

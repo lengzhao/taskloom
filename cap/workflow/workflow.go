@@ -7,6 +7,7 @@ import (
 	"github.com/lengzhao/taskloom/cap/delivery"
 	"github.com/lengzhao/taskloom/cap/execution"
 	"github.com/lengzhao/taskloom/cap/flow"
+	"github.com/lengzhao/taskloom/cap/question"
 	"github.com/lengzhao/taskloom/cap/task"
 )
 
@@ -94,6 +95,21 @@ type Snapshot struct {
 	Execution                                                      *execution.Execution
 	Submission                                                     *delivery.Submission
 	Review                                                         *acceptance.Review
+	// Questions are the open requests for input of the current active round.
+	Questions []question.Question `json:",omitempty"`
+}
+
+// Ask raises a request for input to the task owner inside the round the
+// caller saw; Answer replies to one open question of the current round.
+type Ask struct {
+	TaskID, RoundID, Body string
+}
+type Answer struct {
+	TaskID, QuestionID, Body string
+}
+type QuestionCommands interface {
+	Ask(ctx context.Context, token, key string, in Ask) (Snapshot, error)
+	Answer(ctx context.Context, token, key string, in Answer) (Snapshot, error)
 }
 type ExecutionCommands interface {
 	Assign(ctx context.Context, token, key string, in Assignment) (Snapshot, error)
@@ -113,8 +129,16 @@ type ControlCommands interface {
 	Return(ctx context.Context, token, key string, in Basis) (Snapshot, error)
 	Reopen(ctx context.Context, token, key string, in Basis) (Snapshot, error)
 }
+
+// Pending is one task whose NextActor is the caller.
+type Pending struct {
+	TaskID, Title string
+	NextActor     Actor
+}
 type Queries interface {
 	Read(ctx context.Context, token, taskID string) (Snapshot, error)
+	// Inbox lists readable active-or-stopping tasks currently waiting on the caller.
+	Inbox(ctx context.Context, token string) ([]Pending, error)
 }
 
 type FactsReader interface {

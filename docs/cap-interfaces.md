@@ -38,7 +38,7 @@ FlowRef 的归属移至 flow.DefinitionRef，task.Task 不依赖 flow 或持有�
 
 ## 实际装配变化
 
-M04 提交时为 12 个实例；M05 为 22 个，见[实际图](m05-dependencies.md)。以下保留 M04 基础模块说明，M05 的 task/flow 改为 states 列表：
+M04 提交时为 12 个实例；M05 为 22 个，加入请求输入后为 23 个，见[实际图](m05-dependencies.md)。以下保留 M04 基础模块说明，M05 的 task/flow 改为 states 列表：
 
 - identity/local：store→identity.CredentialLookup（sql），不再提供 Directory 转发。
 - access/default：store→authorization.Relations（sql）、tasks→task.Reader（sql）。
@@ -65,7 +65,7 @@ workspace 不再自行构造第二个 Runner：配置将 commands 指向现有 c
 ## M05 的真实消费者增量
 
 - execution.Reader/Store：执行事实与安全门；delivery.Reader/Store：固定 commit 的候选事实；acceptance.Reader/Records/Actions：状态自有记录与验收动作。
-- workflow.ExecutionCommands/ResultCommands/ControlCommands/Queries/FactsReader 分别服务协议、命令协调和只读聚合；不扩张 workspace。
+- workflow.ExecutionCommands/ResultCommands/ControlCommands/Queries/FactsReader 分别服务协议、命令协调和只读聚合；不扩张 workspace。query/workflow 的 tasks 依赖为只读 task.Lister（GetTask + ListTasks），用于 Inbox，不获得写接口。question.Reader 供查询与 flow 完成门只读使用，question.Store 只注入 commands/question。
 - commit.Lookup、identity.PrincipalReader、flow.PositionReader 为新增只读消费者收窄权限；State 使用 Context，目录按固定 DefinitionRef 路由。
 - checkpoint.Records/Actions 只在可选步骤示例挂载；httpapi.RequestSecurity 复用会话、Origin 与 CSRF 协议处理。
 - 具体方法以 cap 源码为准；Deps、超过五字段的保留理由和授权回调的可信边界见 [M05](m05-workflow.md)。

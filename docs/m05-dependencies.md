@@ -1,6 +1,6 @@
 # M05 实际默认依赖图
 
-由当前 base.yaml 的已实现实例整理；22 个实例。跨阶段的 52 节点规划不等于此运行图。字段与接口职责见 [M05](m05-workflow.md)。
+由当前 base.yaml 的已实现实例整理；23 个实例，含 M05 之后新增的 question-commands（见[请求输入与人工引导](m05-workflow.md#请求输入与人工引导)）。跨阶段的 52 节点规划不等于此运行图。字段与接口职责见 [M05](m05-workflow.md)。
 
 ```mermaid
 flowchart TD
@@ -24,13 +24,14 @@ flowchart TD
   n17["workflow-query<br/>query/workflow"]
   n18["execution-commands<br/>commands/execution"]
   n19["result-commands<br/>commands/result"]
-  n20["flow-commands<br/>commands/flow"]
-  n21["workflow-api<br/>api/workflow"]
+  n20["question-commands<br/>commands/question"]
+  n21["flow-commands<br/>commands/flow"]
+  n22["workflow-api<br/>api/workflow"]
   n0 -->|resources| n3
   n0 -->|components| n1
   n1 -->|modules| n2
   n1 -->|modules| n16
-  n1 -->|modules| n21
+  n1 -->|modules| n22
   n4 -->|store| n3
   n5 -->|store| n3
   n5 -->|tasks| n3
@@ -43,6 +44,7 @@ flowchart TD
   n9 -->|definitions| n3
   n9 -->|positions| n3
   n9 -->|executions| n3
+  n9 -->|questions| n3
   n9 -->|states| n6
   n9 -->|states| n10
   n9 -->|states| n11
@@ -81,6 +83,7 @@ flowchart TD
   n16 -->|changes| n15
   n16 -->|identity| n4
   n16 -->|security| n14
+  n17 -->|questions| n3
   n17 -->|commits| n3
   n17 -->|transactions| n3
   n17 -->|tasks| n3
@@ -111,14 +114,22 @@ flowchart TD
   n20 -->|commands| n13
   n20 -->|tasks| n3
   n20 -->|flow| n7
-  n20 -->|executions| n3
+  n20 -->|commits| n3
+  n20 -->|questions| n3
   n20 -->|snapshots| n17
   n20 -->|events| n3
-  n21 -->|executions| n18
-  n21 -->|results| n19
-  n21 -->|controls| n20
-  n21 -->|workflow| n17
-  n21 -->|security| n16
+  n21 -->|commands| n13
+  n21 -->|tasks| n3
+  n21 -->|flow| n7
+  n21 -->|executions| n3
+  n21 -->|snapshots| n17
+  n21 -->|events| n3
+  n22 -->|executions| n18
+  n22 -->|results| n19
+  n22 -->|controls| n21
+  n22 -->|workflow| n17
+  n22 -->|questions| n20
+  n22 -->|security| n16
 ```
 
 全部引用存在，无循环，全部实例由 server 可达。SQL 提供多个内聚能力；指向同一 sql 不意味着消费者拥有全部写权限，方法集由 typed Deps 限定。
@@ -134,7 +145,7 @@ flowchart TD
 | ready | state/ready | 无 |
 | flow | flow/directory | positions、flows |
 | flow-preparation | task/flow | definitions、positions、states |
-| flow-standard | task/flow | definitions、positions、executions、states |
+| flow-standard | task/flow | definitions、positions、executions、questions、states |
 | executing | state/executing | results |
 | accepting | state/accepting | results、reviews、members |
 | completed | state/completed | results |
@@ -142,8 +153,9 @@ flowchart TD
 | security | commands/security | commands、transactions、principals、credentials、bootstrap、members、audit、events |
 | workspace | workspace/tasks | members、participants、transactions、tasks、commits、flow、identity、authorization、commands、events |
 | workspace-api | api/workspace | commands、queries、changes、identity、security |
-| workflow-query | query/workflow | commits、transactions、tasks、flow、executions、results、reviews、identity、authorization |
+| workflow-query | query/workflow | questions、commits、transactions、tasks、flow、executions、results、reviews、identity、authorization |
 | execution-commands | commands/execution | participants、principals、members、commands、tasks、flow、executions、snapshots、events |
 | result-commands | commands/result | commands、tasks、flow、executions、results、commits、accepting、snapshots、events |
+| question-commands | commands/question | commands、tasks、flow、commits、questions、snapshots、events |
 | flow-commands | commands/flow | commands、tasks、flow、executions、snapshots、events |
-| workflow-api | api/workflow | executions、results、controls、workflow、security |
+| workflow-api | api/workflow | executions、results、controls、workflow、questions、security |

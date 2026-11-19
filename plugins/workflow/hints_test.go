@@ -2,7 +2,10 @@ package workflow_test
 
 import (
 	"context"
+	"errors"
+	"github.com/lengzhao/taskloom/cap/fault"
 	api "github.com/lengzhao/taskloom/cap/workflow"
+	workspace "github.com/lengzhao/taskloom/cap/workspace"
 	"testing"
 	"time"
 )
@@ -67,5 +70,88 @@ func TestSnapshotExplainsBlockedActionsAndNextActor(t *testing.T) {
 	}
 	if a = asAgent(); a.NextActor != api.ActorAgent || a.CanSubmit || a.Blocked[api.ActionSubmit] != api.ReasonTaskNotActive {
 		t.Fatal("cancelled task waits for stop proof", a.NextActor, a.Blocked)
+	}
+}
+
+func TestInboxListsOnlyTasksWaitingOnCaller(t *testing.T) {
+	f := setup(t, nil)
+	d := f.create(t)
+	other, e := f.tasks.Create(f.ctx, f.owner, "create-other", workspace.Create{Title: "other", Goal: "goal", Criteria: "criteria"})
+	if e != nil {
+		t.Fatal(e)
+	}
+	inbox := func(token string) map[string]api.Actor {
+		t.Helper()
+		items, e := f.query.Inbox(f.ctx, token)
+		if e != nil {
+			t.Fatal(e)
+		}
+		out := map[string]api.Actor{}
+		for _, v := range items {
+			out[v.TaskID] = v.NextActor
+		}
+		return out
+	}
+	if got := inbox(f.owner); got[d.Task.ID] != api.ActorOwner || got[other.Task.ID] != api.ActorOwner {
+		t.Fatal("owner should see unassigned tasks", got)
+	}
+	if got := inbox(f.agent); len(got) != 0 {
+		t.Fatal("agent without assignment sees nothing", got)
+	}
+	s := f.open(t, d)
+	if got := inbox(f.owner); len(got) != 1 || got[other.Task.ID] != api.ActorOwner {
+		t.Fatal("running task leaves owner inbox", got)
+	}
+	if got := inbox(f.agent); len(got) != 1 || got[d.Task.ID] != api.ActorAgent {
+		t.Fatal("agent sees only its running task", got)
+	}
+	v := s.Execution
+	if s, e = f.results.Submit(f.ctx, f.agent, "submit", api.Submit{Basis: basis(d, s), ExecutionID: v.ID, Generation: v.Generation, Body: "done"}); e != nil {
+		t.Fatal(e)
+	}
+	if got := inbox(f.owner); got[d.Task.ID] != api.ActorReviewer {
+		t.Fatal("reviewer sees pending review", got)
+	}
+	if got := inbox(f.agent); len(got) != 0 {
+		t.Fatal("agent waits while review is pending", got)
+	}
+	s = f.read(t, d.Task.ID)
+	if _, e = f.controls.Cancel(f.ctx, f.owner, "cancel", basis(d, s)); e != nil {
+		t.Fatal(e)
+	}
+	if got := inbox(f.agent); got[d.Task.ID] != api.ActorAgent {
+		t.Fatal("cancelled running execution waits on agent stop proof", got)
+	}
+	if got := inbox(f.owner); got[d.Task.ID] != "" {
+		t.Fatal("cancelled task is not the owner's to handle", got)
+	}
+}
+
+func TestRejectionRequiresReason(t *testing.T) {
+	f := setup(t, nil)
+	d := f.create(t)
+	s := f.open(t, d)
+	v := s.Execution
+	s, e := f.results.Submit(f.ctx, f.agent, "submit", api.Submit{Basis: basis(d, s), ExecutionID: v.ID, Generation: v.Generation, Body: "done"})
+	if e != nil {
+		t.Fatal(e)
+	}
+	verdict := func(key, reason string) error {
+		s = f.read(t, d.Task.ID)
+		in := api.Review{Basis: basis(d, s)}
+		in.SubmissionID, in.CommitID, in.Outcome, in.Reason = s.Submission.ID, s.Submission.CommitID, "rejected", reason
+		_, e := f.results.Review(f.ctx, f.owner, key, in)
+		return e
+	}
+	for _, blank := range []string{"", "  \n"} {
+		if e = verdict("reject-blank-"+blank, blank); !errors.Is(e, fault.ErrInput) {
+			t.Fatal("blank rejection reason accepted", e)
+		}
+	}
+	if s = f.read(t, d.Task.ID); s.Review == nil || s.Review.Outcome != "pending" {
+		t.Fatal("refused rejection changed the review", s.Review)
+	}
+	if e = verdict("reject", "补充错误处理"); e != nil {
+		t.Fatal(e)
 	}
 }

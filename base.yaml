@@ -59,6 +59,7 @@ flow-standard:
     definitions: sql
     positions: sql
     executions: sql
+    questions: sql
     states: [ready, executing, accepting, completed]
 executing:
   use: state/executing
@@ -122,6 +123,7 @@ workspace-api:
 workflow-query:
   use: query/workflow
   deps:
+    questions: sql
     commits: sql
     transactions: sql
     tasks: sql
@@ -155,6 +157,16 @@ result-commands:
     accepting: accepting
     snapshots: workflow-query
     events: sql
+question-commands:
+  use: commands/question
+  deps:
+    commands: command-runtime
+    tasks: sql
+    flow: flow
+    commits: sql
+    questions: sql
+    snapshots: workflow-query
+    events: sql
 flow-commands:
   use: commands/flow
   deps:
@@ -172,4 +184,5 @@ workflow-api:
     results: result-commands
     controls: flow-commands
     workflow: workflow-query
+    questions: question-commands
     security: workspace-api

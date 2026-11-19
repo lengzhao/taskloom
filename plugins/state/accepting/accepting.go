@@ -12,6 +12,7 @@ import (
 	"github.com/lengzhao/taskloom/cap/fault"
 	"github.com/lengzhao/taskloom/cap/flow"
 	"github.com/lengzhao/taskloom/cap/identity"
+	"strings"
 )
 
 type Deps struct {
@@ -74,6 +75,10 @@ func (s *State) RecordVerdict(ctx context.Context, c flow.Context, p identity.Pr
 		return az.ErrForbidden
 	}
 	if (in.Outcome != "approved" && in.Outcome != "rejected") || len(in.Reason) > 20000 {
+		return fault.ErrInput
+	}
+	// A rejection returns work to the executor, which needs to know what to change.
+	if in.Outcome == "rejected" && strings.TrimSpace(in.Reason) == "" {
 		return fault.ErrInput
 	}
 	v, e := s.d.Results.CurrentSubmission(ctx, c.Task.Tenant, c.Task.ID, c.Position.RoundID)

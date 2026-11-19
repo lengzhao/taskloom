@@ -91,7 +91,7 @@ def check_graph(graph, label, quiet: false)
     if nodes.key?('workspace-api')
       expected += %w[identity/local access/default state/ready task/flow commands/runtime commands/security workspace/tasks api/workspace]
       if nodes.key?('execution-commands')
-        expected += %w[task/flow flow/directory state/executing state/accepting state/completed query/workflow commands/execution commands/result commands/flow api/workflow]
+        expected += %w[task/flow flow/directory state/executing state/accepting state/completed query/workflow commands/execution commands/result commands/question commands/flow api/workflow]
       end
       if nodes.key?('flow-automatic')
         expected << 'task/flow'

@@ -1,36 +1,624 @@
-<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Taskloom · 任务工作台</title>
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Taskloom · 任务工作台</title>
 <style>
-[hidden]{display:none!important}:root{--paper:#f5f2e9;--ink:#233d36;--line:#d8d9cc;--accent:#b64f2e}*{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);font:15px/1.65 Georgia,"Songti SC",serif}header{padding:22px 5vw;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between}h1{margin:0;font-size:25px;letter-spacing:-1px}small,.muted{color:#6a756c}main{max-width:1300px;margin:auto;padding:30px 5vw;display:grid;grid-template-columns:280px 1fr;gap:40px}section,aside{min-width:0}button,input,textarea{font:inherit}button{border:1px solid var(--ink);background:var(--ink);color:white;padding:8px 17px;cursor:pointer;border-radius:3px}button.secondary{background:transparent;color:var(--ink)}button:disabled{opacity:.4;cursor:default}input,textarea{width:100%;background:#fffdf7;border:1px solid var(--line);border-radius:3px;padding:9px 12px;color:var(--ink)}textarea{min-height:90px;resize:vertical}label{display:block;margin:13px 0 5px}form{margin-bottom:25px}.card{padding:17px 0;border-bottom:1px solid var(--line)}nav button{display:block;width:100%;text-align:left;margin:7px 0;background:transparent;color:var(--ink);border-color:var(--line)}nav button.selected{border-left:4px solid var(--accent)}h2{font-size:32px;margin:0 0 15px}h3{font-size:18px}p{white-space:pre-wrap;overflow-wrap:anywhere}.badge{display:inline-block;background:#e3e8dc;padding:3px 10px;margin-right:10px;font-size:13px}#notice{padding:12px 5vw;color:var(--accent);min-height:45px}#login{max-width:500px;margin:50px auto;padding:20px}details{border:1px solid var(--line);padding:13px;margin:20px 0}summary{cursor:pointer}.row{display:flex;gap:10px;align-items:center}.commit{border-left:2px solid var(--line);padding:3px 0 14px 20px;margin:15px 0}.commit small{display:block}code{font-size:12px;overflow-wrap:anywhere}@media(max-width:740px){main{grid-template-columns:1fr;gap:20px}header{padding:15px}h2{font-size:26px}}
-</style>
-<header><div><h1>Taskloom<span style="color:var(--accent)"> / </span>工作台</h1><small>把约定写清楚，让每次协作都有来处。</small></div><button id="logout" class="secondary" hidden>退出</button></header><div id="notice" role="status" aria-live="polite"></div>
-<form id="login"><h2>进入工作台</h2><p class="muted">使用管理员为你签发的凭据。凭据仅用于本次登录。</p><label for="token">访问凭据</label><input id="token" type="password" autocomplete="off" required><button style="margin-top:20px">登录</button></form>
-<main id="work" hidden><aside><div class="row"><h3>任务</h3><button id="refresh" class="secondary">刷新</button></div><nav id="tasks" aria-label="任务列表"></nav><details><summary>创建任务</summary><form id="create"><label>标题<input name="Title" required maxlength="200"></label><label>目标<textarea name="Goal"></textarea></label><label>验收标准<textarea name="Criteria"></textarea></label><button>创建</button></form></details></aside><section id="detail"><h2>选择一个任务</h2><p class="muted">或者先写下一个新的目标。</p></section>
-</main>
-<script>
-const $=id=>document.getElementById(id);let selected='',cursor='',busy=false,pendingRefresh=false;const retryKeys=new Map();const prefix=location.pathname.replace(/\/app$/,'');
-function notice(s){$('notice').textContent=s}async function api(path,method='GET',data,headers={}){let fingerprint=method+' '+path+' '+JSON.stringify(data),requestKey='';if(method!=='GET'){requestKey=retryKeys.get(fingerprint)||crypto.randomUUID();if(retryKeys.size>=256)retryKeys.delete(retryKeys.keys().next().value);retryKeys.set(fingerprint,requestKey)}let r=await fetch(prefix+path,{method,headers:{'Content-Type':'application/json','X-Taskloom-Request':'1',...(method==='GET'?{}:{'Idempotency-Key':requestKey}),...headers},...(data?{body:JSON.stringify(data)}:{})});if(!r.ok){if(r.status>=400&&r.status<500)retryKeys.delete(fingerprint);if(r.status===401){$('work').hidden=true;$('login').hidden=false;$('logout').hidden=true}let error=Error(await r.text());error.status=r.status;throw error}let result=await r.json();retryKeys.delete(fingerprint);return result}
-function el(tag,text,cls){let n=document.createElement(tag);if(text!==undefined)n.textContent=text;if(cls)n.className=cls;return n}function formdata(form){return Object.fromEntries(new FormData(form))}function handle(fn){return async e=>{e?.preventDefault();if(busy)return;busy=true;try{await fn(e);notice('')}catch(x){notice(x.message)}finally{busy=false}}}
-async function start(){let p=await api('/changes');cursor=p.Cursor;await list();$('work').hidden=false;$('login').hidden=true;$('logout').hidden=false}
-async function list(){let ts=await api('/tasks');$('tasks').replaceChildren();if(!ts.length)$('tasks').append(el('p','还没有可见任务','muted'));for(let d of ts){let b=el('button',d.Task.Title,d.Task.ID===selected?'selected':'');b.onclick=handle(async()=>{selected=d.Task.ID;await show();await list()});$('tasks').append(b)}if(selected&&!ts.some(d=>d.Task.ID===selected)){selected='';$('detail').replaceChildren(el('h2','任务访问权限已变更'))}}
-async function show(){let d=await api('/tasks/'+encodeURIComponent(selected)),w=await api('/tasks/'+encodeURIComponent(selected)+'/workflow'),root=$('detail');root.replaceChildren(el('h2',d.Task.Title));root.append(el('span',w.Position.Status==='completed'?'已完成':w.Position.Status==='cancelled'?'已取消':({ready:'准备',executing:'执行中',accepting:'验收中',checkpoint:'待确认',factcheck:'检查中'})[w.Position.State]||w.Position.State,'badge'),el('small','依据 v'+d.Task.BasisVersion+' · 任务 v'+d.Task.Version),el('p',w.Position.Waiting||(w.Position.Status==='completed'?'结果与验收已满足，执行已安全退出':w.Position.Complete?'当前步骤已完成':''),'muted'),el('h3','目标'),el('p',d.Task.Goal||'待补充'),el('h3','验收标准'),el('p',d.Task.Criteria||'待补充'));if(d.CanEdit&&w.Position.Status==='active'&&(w.Position.State==='ready'||w.Position.State==='executing'&&(!w.Execution||w.Execution.RoundID!==w.Position.RoundID&&w.Execution.Safe))){let details=el('details'),summary=el('summary','修改任务约定'),f=el('form');details.append(summary,f);for(let name of ['Title','Goal','Criteria']){let label=el('label',({Title:'标题',Goal:'目标',Criteria:'验收标准'})[name]),input=el(name==='Title'?'input':'textarea');input.name=name;input.value=d.Task[name];label.append(input);f.append(label)}f.append(el('button','保存新依据'));f.onsubmit=handle(async()=>{await api('/tasks/'+selected,'PATCH',{...formdata(f),ExpectedVersion:d.Task.Version});await show();await list()});root.append(details)}if(d.CanEdit){let details=el('details'),f=el('form');details.append(el('summary','管理任务参与者'),f);let label=el('label','成员 ID'),input=el('input');input.name='Subject';input.required=true;label.append(input);f.append(label);let add=el('button','加入任务'),remove=el('button','移出任务','secondary');remove.type='button';f.append(add,remove);async function change(present){await api('/tasks/'+selected+'/participants','POST',{Subject:input.value,Present:present});notice(present?'参与者已加入':'参与者已移出')}f.onsubmit=handle(()=>change(true));remove.onclick=handle(()=>change(false));root.append(details)}await renderWorkflow(d,w,root);root.append(el('h3','Commit 时间线'));let cs=d.Commits||[];while(cs.length&&cs.length%100===0){let page=await api('/tasks/'+selected+'?after='+cs.at(-1).Sequence);if(!page.Commits.length)break;cs.push(...page.Commits);if(page.Commits.length<100)break}for(let c of cs){let box=el('article',undefined,'commit');box.append(el('small',c.Kind+' · '+c.Author+' · '+new Date(c.CreatedAt).toLocaleString()),el('p',c.Body),el('code',c.RefID?'更正引用 '+c.RefID:''));if(d.CanComment&&c.Kind==='comment'){let b=el('button','追加更正','secondary');b.onclick=()=>{let f=$('comment');f.elements.RefID.value=c.ID;f.elements.Body.focus();notice('更正将追加新记录，原内容保留。')};box.append(b)}root.append(box)}if(d.CanComment){let f=el('form');f.id='comment';let label=el('label','追加评论'),body=el('textarea');body.name='Body';body.required=true;label.append(body);let ref=el('input');ref.name='RefID';ref.type='hidden';f.append(label,ref,el('button','提交 commit'));f.onsubmit=handle(async()=>{await api('/tasks/'+selected+'/commits','POST',formdata(f));await show()});root.append(f)}}
-
-async function renderWorkflow(d,w,root){
- const base={RoundID:w.Position.RoundID,BasisVersion:d.Task.BasisVersion,ExpectedRevision:w.Position.Revision};const ex=w.Execution;const ref=ex?{ExecutionID:ex.ID,Generation:ex.Generation}:{};const path='/tasks/'+encodeURIComponent(selected);
- const section=el('section');section.append(el('h3','执行与交付'));
- let live=el('p','执行者：'+(w.AssignedAgent||'待分配')+(ex?' · 第 '+ex.Generation+' 代 · '+ex.Status:''),'muted');live.id='execution-live-status';section.append(live);
- const actors={owner:'负责人',agent:'执行 Agent',reviewer:'验收人'};if(w.NextActor)section.append(el('p','下一步等待：'+actors[w.NextActor],'muted'));
- const actions={open:'认领执行',renew:'续期执行',submit:'提交结果',review:'验收'},reasons={task_not_active:'任务已结束或已取消',business_credential_required:'需要 Agent 业务凭据',not_assigned:'任务未分配给你',execution_in_progress:'本轮已有执行在进行',previous_execution_not_stopped:'上一次执行尚未确认安全停止',step_not_open:'当前步骤还不能执行（检查目标/标准或前置步骤）',not_your_execution:'当前执行不属于你的实例',execution_not_active:'执行已结束',execution_fenced:'执行已失效（取消或被替换）',round_changed:'任务已进入新一轮',basis_changed:'任务依据已更新，需要重新认领',lease_expired:'执行保活已过期，请先续期',not_reviewer:'你不是本任务验收人'};for(let [a,r] of Object.entries(w.Blocked||{}))section.append(el('p','暂不能'+(actions[a]||a)+'：'+(reasons[r]||r),'muted'));
- async function send(route,input){await api(path+route,'POST',input);await show();await list()}
- function button(text,fn){let b=el('button',text,'secondary');b.style.margin='4px';b.onclick=handle(fn);section.append(b)}
- if(w.CanManage&&w.Position.Status==='active'&&w.Position.State==='executing'&&w.SafeToExit){let f=el('form'),label=el('label','分配 Agent ID'),input=el('input');input.required=true;label.append(input);f.append(label,el('button','分配执行者'));f.onsubmit=handle(()=>send('/execution/assign',{...base,Subject:input.value}));section.append(f)}
- if(w.CanOpen)button('认领并开始执行',()=>send('/execution/open',base));
- if(w.CanRenew){button('续期执行',()=>send('/execution/renew',ref));button('报告主运行结束',()=>send('/execution/end',ref))}
- if(w.CanSubmit){let f=el('form'),label=el('label','明确提交结果'),body=el('textarea');body.required=true;label.append(body);f.append(label,el('button','提交结果'));f.onsubmit=handle(()=>send('/results',{...base,...ref,Body:body.value}));section.append(f)}
- if(w.Submission){let sub=w.Submission;section.append(el('p','当前结果：'+sub.ID+' · '+(w.Review?w.Review.Outcome:'此流程无需人工验收'),'muted'));let c=w.ResultCommit;if(c)section.append(el('p',c.Body));if(w.CanReview){let reason=el('input');reason.placeholder='验收意见（可选）';reason.setAttribute('aria-label','验收意见');section.append(reason);for(let [title,outcome] of [['验收通过','approved'],['验收不通过','rejected']])button(title,()=>send('/review',{...base,SubmissionID:sub.ID,CommitID:sub.CommitID,Outcome:outcome,Reason:reason.value}))}if(w.CanManage&&w.Position.Status==='active')button('撤回当前结果',()=>send('/withdraw',{...base,SubmissionID:sub.ID}))}
- if(w.Position.Status==='active'&&w.CanManage){button('取消任务',()=>send('/cancel',base));if(w.SafeToExit)button('退回并开始新轮',()=>send('/return',base))}
- if(w.Position.Status!=='active'&&w.CanManage&&w.SafeToExit)button('重开任务',()=>send('/reopen',base));
- if(ex&&!ex.Safe){section.append(el('p','停止证据尚未完整确认；执行结束或断线均不会自动解除等待。','muted'));if(w.CanIsolate){let details=el('details'),f=el('form');details.append(el('summary','管理员记录外部隔离证明'),f);let reasonLabel=el('label','隔离依据与原因'),reason=el('textarea');reason.required=true;reasonLabel.append(reason);let scopeLabel=el('label','已覆盖的执行及外部工作范围'),scope=el('textarea');scope.required=true;scopeLabel.append(scope);f.append(reasonLabel,scopeLabel,el('p','该操作记录管理员提供的隔离依据，不会声称工具已经停止。','muted'),el('button','记录隔离证明'));f.onsubmit=handle(()=>send('/execution/isolate',{...base,...ref,Reason:reason.value,Scope:scope.value}));section.append(details)}}
- root.append(section)
+/* Tokens. CSP forbids external fonts or libraries, so everything stays inline. */
+:root {
+  --bg: #f6f7f9; --panel: #ffffff; --ink: #1d2433; --muted: #667085; --line: #e4e7ec;
+  --accent: #3b5bdb; --accent-soft: #edf2ff; --warn: #b54708; --warn-soft: #fffaeb;
+  --ok: #067647; --ok-soft: #ecfdf3; --danger: #b42318; --danger-soft: #fef3f2;
+  --radius: 10px; --shadow: 0 1px 2px rgba(16, 24, 40, .06);
 }
-$('login').onsubmit=handle(async()=>{await api('/session','POST',null,{Authorization:'Bearer '+$('token').value});$('token').value='';await start()});$('create').onsubmit=handle(async()=>{let d=await api('/tasks','POST',formdata($('create')));selected=d.Task.ID;$('create').reset();await list();await show()});$('logout').onclick=handle(async()=>{await api('/session','DELETE');selected='';cursor='';$('work').hidden=true;$('login').hidden=false;$('logout').hidden=true});$('refresh').onclick=handle(async()=>{await start();if(selected)await show()});setInterval(async()=>{if(!cursor||busy||$('work').hidden)return;try{let p=await api('/changes?cursor='+encodeURIComponent(cursor));cursor=p.Cursor;pendingRefresh=pendingRefresh||p.Changes.length>0;let editing=document.activeElement?.matches('input,textarea,select');if(pendingRefresh&&!editing){await list();if(selected)await show();pendingRefresh=false}else if(selected){let state=await api('/tasks/'+encodeURIComponent(selected)+'/workflow'),live=$('execution-live-status');if(live)live.textContent='执行者：'+(state.AssignedAgent||'待分配')+(state.Execution?' · 第 '+state.Execution.Generation+' 代 · '+state.Execution.Status:'');if(pendingRefresh&&editing)notice('任务有新变化，已保留输入；完成编辑后刷新。')}}catch(e){cursor='';if(e.status===403){selected='';$('tasks').replaceChildren();$('detail').replaceChildren(el('h2','访问权限已变更'))}notice(e.message+'；请刷新同步。')}},4000);start().catch(()=>{});
-</script></html>
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0f1115; --panel: #171a21; --ink: #e6e8ee; --muted: #98a2b3; --line: #2a2f3a;
+    --accent: #7b93ff; --accent-soft: #1c2340; --warn: #fdb022; --warn-soft: #2b2112;
+    --ok: #47cd89; --ok-soft: #11261c; --danger: #f97066; --danger-soft: #2c1513;
+    --shadow: none;
+  }
+}
+* { box-sizing: border-box }
+[hidden] { display: none !important }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.6 -apple-system, BlinkMacSystemFont, "PingFang SC", "Segoe UI", "Microsoft YaHei", sans-serif }
+h1, h2, h3, h4 { margin: 0; line-height: 1.3 }
+p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere }
+button, input, textarea { font: inherit; color: inherit }
+code { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere }
+
+/* Controls */
+button { border: 1px solid var(--line); background: var(--panel); padding: 7px 14px; border-radius: 8px; cursor: pointer }
+button:hover { border-color: var(--muted) }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff }
+button.danger { color: var(--danger); border-color: var(--danger) }
+button.link { border: 0; background: none; padding: 0; color: var(--accent) }
+button:disabled { opacity: .45; cursor: default }
+input, textarea { width: 100%; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 8px 11px }
+input:focus, textarea:focus { outline: 2px solid var(--accent-soft); border-color: var(--accent) }
+textarea { min-height: 84px; resize: vertical }
+label { display: block; margin: 10px 0 4px; color: var(--muted); font-size: 13px }
+form { margin: 0 }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px }
+
+/* Layout */
+header { display: flex; align-items: center; justify-content: space-between; padding: 12px 24px; background: var(--panel); border-bottom: 1px solid var(--line) }
+header h1 { font-size: 17px }
+header h1 span { color: var(--accent) }
+#notice { margin: 0 24px; padding: 0; min-height: 0 }
+#notice:not(:empty) { margin-top: 12px; padding: 10px 14px; border-radius: 8px; background: var(--warn-soft); color: var(--warn) }
+#work { display: grid; grid-template-columns: 320px 1fr; gap: 20px; max-width: 1400px; margin: 0 auto; padding: 20px 24px }
+aside, #detail { min-width: 0 }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); padding: 16px }
+.panel + .panel { margin-top: 14px }
+.panel h3 { font-size: 14px; margin-bottom: 10px }
+.muted { color: var(--muted) }
+.small { font-size: 12px }
+
+/* Task list */
+.tabs { display: flex; gap: 4px; padding: 3px; background: var(--bg); border-radius: 8px; margin-bottom: 10px }
+.tabs button { flex: 1; border: 0; background: none; padding: 6px }
+.tabs button.on { background: var(--panel); box-shadow: var(--shadow); font-weight: 600 }
+.count { display: inline-block; min-width: 18px; padding: 0 6px; margin-left: 4px; border-radius: 9px; background: var(--accent); color: #fff; font-size: 11px }
+#tasks { display: flex; flex-direction: column; gap: 6px }
+.task { display: block; width: 100%; text-align: left; padding: 10px 12px; border-radius: 8px }
+.task.selected { border-color: var(--accent); background: var(--accent-soft) }
+.task strong { display: block; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+.task .meta { display: flex; gap: 6px; align-items: center; margin-top: 4px }
+
+/* Pills */
+.pill { display: inline-block; padding: 1px 8px; border-radius: 99px; font-size: 12px; background: var(--bg); color: var(--muted); border: 1px solid var(--line) }
+.pill.active { background: var(--accent-soft); color: var(--accent); border-color: transparent }
+.pill.done { background: var(--ok-soft); color: var(--ok); border-color: transparent }
+.pill.stopped { background: var(--danger-soft); color: var(--danger); border-color: transparent }
+.pill.mine { background: var(--warn-soft); color: var(--warn); border-color: transparent }
+
+/* Detail */
+.head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px }
+.head h2 { font-size: 22px }
+.head .meta { display: flex; gap: 8px; align-items: center; margin-top: 6px; flex-wrap: wrap }
+.next { border-left: 4px solid var(--accent) }
+.next.mine { border-left-color: var(--warn); background: var(--warn-soft) }
+.next h3 { font-size: 15px }
+.reasons { margin: 8px 0 0; padding-left: 18px; color: var(--muted) }
+.cols { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 14px; margin-top: 14px; align-items: start }
+.cols > div > .panel:first-child { margin-top: 0 }
+.result { padding: 12px; border-radius: 8px; background: var(--bg); margin-top: 8px }
+.kv { display: grid; grid-template-columns: 76px 1fr; gap: 4px 10px }
+.kv dt { color: var(--muted) }
+.kv dd { margin: 0; overflow-wrap: anywhere }
+details > summary { cursor: pointer; color: var(--accent); margin-top: 10px }
+details[open] > summary { margin-bottom: 4px }
+.debug { border-style: dashed }
+
+/* Timeline */
+.timeline { list-style: none; margin: 0; padding: 0 }
+.timeline li { position: relative; padding: 0 0 14px 18px; border-left: 2px solid var(--line); margin-left: 4px }
+.timeline li::before { content: ""; position: absolute; left: -6px; top: 5px; width: 10px; height: 10px; border-radius: 50%; background: var(--panel); border: 2px solid var(--muted) }
+.timeline li.result::before { border-color: var(--ok) }
+.timeline .who { font-size: 12px; color: var(--muted) }
+.timeline p { margin-top: 2px }
+
+#login { max-width: 420px; margin: 80px auto }
+.empty { padding: 40px 10px; text-align: center; color: var(--muted) }
+@media (max-width: 1100px) { .cols { grid-template-columns: 1fr } }
+@media (max-width: 760px) { #work { grid-template-columns: 1fr; padding: 12px } header { padding: 12px } }
+</style>
+</head>
+<body>
+<header>
+  <h1>Taskloom <span>/</span> 工作台</h1>
+  <button id="logout" hidden>退出</button>
+</header>
+<div id="notice" role="status" aria-live="polite"></div>
+
+<form id="login" class="panel">
+  <h2>进入工作台</h2>
+  <p class="muted" style="margin-top:6px">使用管理员签发的凭据登录。凭据只用于建立本次会话。</p>
+  <label for="token">访问凭据</label>
+  <input id="token" type="password" autocomplete="off" required>
+  <div class="actions"><button class="primary">登录</button></div>
+</form>
+
+<main id="work" hidden>
+  <aside>
+    <div class="panel">
+      <div class="head" style="align-items:center;margin-bottom:10px">
+        <h3 style="margin:0">任务</h3>
+        <button id="refresh" class="link">刷新</button>
+      </div>
+      <div class="tabs" role="tablist">
+        <button id="tab-mine" role="tab">待我处理<span id="mine-count" class="count" hidden></span></button>
+        <button id="tab-all" role="tab">全部</button>
+      </div>
+      <nav id="tasks" aria-label="任务列表"></nav>
+    </div>
+    <div class="panel">
+      <details id="create-box">
+        <summary style="margin:0">+ 新建任务</summary>
+        <form id="create">
+          <label>标题<input name="Title" required maxlength="200"></label>
+          <label>目标<textarea name="Goal" placeholder="要达成什么"></textarea></label>
+          <label>验收标准<textarea name="Criteria" placeholder="怎样算完成"></textarea></label>
+          <div class="actions"><button class="primary">创建</button></div>
+        </form>
+      </details>
+    </div>
+  </aside>
+  <section id="detail"><div class="panel empty">选择左侧任务，或新建一个任务。</div></section>
+</main>
+
+<script>
+// ---------- Labels (display only; flow rules stay on the server) ----------
+const STATE_LABEL = { ready: '准备', executing: '执行中', accepting: '验收中', checkpoint: '待确认', factcheck: '检查中' };
+const ACTOR_LABEL = { owner: '负责人', agent: '执行 Agent', reviewer: '验收人' };
+const ACTION_LABEL = { open: '认领执行', renew: '续期执行', submit: '提交结果', review: '验收' };
+const REASON_LABEL = {
+  task_not_active: '任务已结束或已取消',
+  business_credential_required: '需要 Agent 业务凭据',
+  not_assigned: '任务未分配给你',
+  execution_in_progress: '本轮已有执行在进行',
+  previous_execution_not_stopped: '上一次执行尚未确认安全停止',
+  step_not_open: '当前步骤还不能执行（检查目标/标准或前置步骤）',
+  not_your_execution: '当前执行不属于你的实例',
+  execution_not_active: '执行已结束',
+  execution_fenced: '执行已失效（取消或被替换）',
+  round_changed: '任务已进入新一轮',
+  basis_changed: '任务依据已更新，需要重新认领',
+  lease_expired: '执行保活已过期，请先续期',
+  not_reviewer: '你不是本任务验收人',
+};
+const EXEC_LABEL = { active: '运行中', unknown: '状态未知（保活过期）', ended: '已结束' };
+const OUTCOME_LABEL = { pending: '待验收', approved: '已通过', rejected: '未通过' };
+const KIND_LABEL = { comment: '留言', result: '结果', question: '提问', answer: '回答', 'task.created': '创建任务', 'task.basis': '修改约定' };
+const AGENT_ACTIONS = ['open', 'renew', 'submit'];
+
+// ---------- State ----------
+const $ = id => document.getElementById(id);
+const prefix = location.pathname.replace(/\/app$/, '');
+const retryKeys = new Map();
+let selected = '', cursor = '', busy = false, pendingRefresh = false, view = 'mine';
+let inboxIDs = new Set(); // tasks currently waiting on the signed-in user
+
+// ---------- Helpers ----------
+function el(tag, text, cls) {
+  const n = document.createElement(tag);
+  if (text !== undefined && text !== null) n.textContent = text;
+  if (cls) n.className = cls;
+  return n;
+}
+function h(tag, cls, ...children) {
+  const n = el(tag, undefined, cls);
+  for (const c of children) if (c !== null && c !== undefined && c !== false) n.append(c);
+  return n;
+}
+function notice(s) { $('notice').textContent = s }
+function formdata(form) { return Object.fromEntries(new FormData(form)) }
+function handle(fn) {
+  return async e => {
+    e?.preventDefault();
+    if (busy) return;
+    busy = true;
+    try { await fn(e); notice('') } catch (x) { notice(x.message) } finally { busy = false }
+  };
+}
+function button(text, fn, cls = '') {
+  const b = el('button', text, cls);
+  b.type = 'button';
+  b.onclick = handle(fn);
+  return b;
+}
+function field(labelText, input) { const l = el('label', labelText); l.append(input); return l }
+function textarea(name, required, placeholder) {
+  const t = el('textarea'); t.name = name; t.required = !!required; if (placeholder) t.placeholder = placeholder; return t;
+}
+function time(v) { return v ? new Date(v).toLocaleString() : '' }
+
+// Writes reuse the same Idempotency-Key until a definite answer arrives.
+async function api(path, method = 'GET', data, headers = {}) {
+  const fingerprint = method + ' ' + path + ' ' + JSON.stringify(data);
+  let requestKey = '';
+  if (method !== 'GET') {
+    requestKey = retryKeys.get(fingerprint) || crypto.randomUUID();
+    if (retryKeys.size >= 256) retryKeys.delete(retryKeys.keys().next().value);
+    retryKeys.set(fingerprint, requestKey);
+  }
+  const r = await fetch(prefix + path, {
+    method,
+    headers: { 'Content-Type': 'application/json', 'X-Taskloom-Request': '1', ...(method === 'GET' ? {} : { 'Idempotency-Key': requestKey }), ...headers },
+    ...(data ? { body: JSON.stringify(data) } : {}),
+  });
+  if (!r.ok) {
+    if (r.status >= 400 && r.status < 500) retryKeys.delete(fingerprint);
+    if (r.status === 401) showLogin();
+    const error = Error(await r.text());
+    error.status = r.status;
+    throw error;
+  }
+  const result = await r.json();
+  retryKeys.delete(fingerprint);
+  return result;
+}
+
+// ---------- Status presentation ----------
+function stateOf(position) {
+  if (position.Status === 'completed') return { text: '已完成', cls: 'done' };
+  if (position.Status === 'cancelled') return { text: '已取消', cls: 'stopped' };
+  return { text: STATE_LABEL[position.State] || position.State, cls: 'active' };
+}
+function pill(s) { return el('span', s.text, 'pill ' + s.cls) }
+
+// ---------- Session ----------
+// Leaving the session must not leave another user's task details on screen.
+function showLogin() {
+  selected = ''; cursor = ''; inboxIDs = new Set();
+  $('detail').replaceChildren(h('div', 'panel empty', '选择左侧任务，或新建一个任务。'));
+  $('tasks').replaceChildren();
+  $('work').hidden = true; $('login').hidden = false; $('logout').hidden = true;
+}
+async function start() {
+  const p = await api('/changes');
+  cursor = p.Cursor;
+  // Open on "待我处理" only when something is actually waiting.
+  view = (await api('/inbox')).length ? 'mine' : 'all';
+  await list();
+  $('work').hidden = false; $('login').hidden = true; $('logout').hidden = false;
+}
+
+// ---------- Task list ----------
+async function list() {
+  const [tasks, inbox] = await Promise.all([api('/tasks'), api('/inbox')]);
+  const mine = new Map(inbox.map(x => [x.TaskID, x.NextActor]));
+  inboxIDs = new Set(mine.keys());
+  $('mine-count').hidden = !mine.size;
+  $('mine-count').textContent = mine.size;
+  $('tab-mine').classList.toggle('on', view === 'mine');
+  $('tab-all').classList.toggle('on', view === 'all');
+  const shown = view === 'mine' ? tasks.filter(d => mine.has(d.Task.ID)) : tasks;
+  const nav = $('tasks');
+  nav.replaceChildren();
+  if (!shown.length) nav.append(el('p', view === 'mine' ? '没有等你处理的任务' : '还没有可见任务', 'empty'));
+  for (const d of shown) {
+    const b = h('button', 'task' + (d.Task.ID === selected ? ' selected' : ''),
+      el('strong', d.Task.Title),
+      h('span', 'meta', pill(stateOf(d.Position)), mine.has(d.Task.ID) ? el('span', '等你：' + ACTOR_LABEL[mine.get(d.Task.ID)], 'pill mine') : null));
+    b.type = 'button';
+    b.onclick = handle(async () => { selected = d.Task.ID; await list(); await show() });
+    nav.append(b);
+  }
+  if (selected && !tasks.some(d => d.Task.ID === selected)) {
+    selected = '';
+    $('detail').replaceChildren(h('div', 'panel empty', '任务访问权限已变更'));
+  }
+}
+
+// ---------- Task detail ----------
+async function show() {
+  const path = '/tasks/' + encodeURIComponent(selected);
+  const [d, w] = await Promise.all([api(path), api(path + '/workflow')]);
+  let commits = d.Commits || [];
+  while (commits.length && commits.length % 100 === 0) {
+    const page = await api(path + '?after=' + commits.at(-1).Sequence);
+    if (!page.Commits.length) break;
+    commits.push(...page.Commits);
+    if (page.Commits.length < 100) break;
+  }
+  const ctx = makeContext(d, w, path);
+  ctx.commits = new Map(commits.map(c => [c.ID, c]));
+  $('detail').replaceChildren(
+    renderHead(ctx),
+    renderNext(ctx),
+    h('div', 'cols',
+      h('div', null, renderResult(ctx), renderTimeline(ctx, commits)),
+      h('div', null, renderBasis(ctx), renderExecution(ctx), renderParticipants(ctx), renderManage(ctx), renderAgentDebug(ctx))));
+}
+
+function makeContext(d, w, path) {
+  const ex = w.Execution;
+  const active = w.Position.Status === 'active';
+  return {
+    d, w, ex, active, path,
+    base: { RoundID: w.Position.RoundID, BasisVersion: d.Task.BasisVersion, ExpectedRevision: w.Position.Revision },
+    ref: ex ? { ExecutionID: ex.ID, Generation: ex.Generation } : {},
+    running: !!ex && !ex.Safe,
+    // Blocked only lists agent actions for agent viewers, so this marks an agent session.
+    isAgent: w.CanOpen || w.CanRenew || w.CanSubmit || AGENT_ACTIONS.some(a => (w.Blocked || {})[a]),
+    // Refresh the list first: it decides which tasks are waiting on me.
+    async send(route, input) { await api(path + route, 'POST', input); await list(); await show() },
+  };
+}
+
+function renderHead({ d }) {
+  return h('div', 'panel',
+    h('div', 'head',
+      h('div', null,
+        el('h2', d.Task.Title),
+        h('div', 'meta muted small', el('span', '负责人 ' + d.Task.Owner), el('span', '依据 v' + d.Task.BasisVersion), el('span', '任务 v' + d.Task.Version)))));
+}
+
+function renderNext(ctx) {
+  const { d, w, active, base } = ctx;
+  const panel = h('div', 'panel next' + (inboxIDs.has(d.Task.ID) ? ' mine' : ''));
+  const s = stateOf(w.Position);
+  let title;
+  if (w.Position.Status === 'completed') title = '已完成：结果与验收已满足，执行已安全退出';
+  else if (w.NextActor) title = '下一步等待：' + ACTOR_LABEL[w.NextActor];
+  else title = w.Position.Complete ? '当前步骤已完成' : '暂无需要处理的事项';
+  panel.append(h('div', 'head', el('h3', title), pill(s)));
+  if (w.Questions?.length) panel.append(el('p', '执行 Agent 提出了问题，回答前任务不能完成。', 'muted'));
+  else if (w.Position.Waiting) panel.append(el('p', w.Position.Waiting, 'muted'));
+  if (w.Blocked?.review && !ctx.isAgent) panel.append(el('p', '暂不能验收：' + (REASON_LABEL[w.Blocked.review] || w.Blocked.review), 'muted'));
+
+  renderQuestions(ctx, panel);
+  const actions = h('div', 'actions');
+  // Review is the main human decision; it lives here, next to the result summary.
+  if (w.CanReview && w.Submission && w.Review?.Outcome === 'pending') {
+    panel.classList.add('mine');
+    const reason = el('input');
+    reason.placeholder = '验收意见（不通过时必填）';
+    reason.setAttribute('aria-label', '验收意见');
+    const sub = w.Submission;
+    const verdict = outcome => {
+      if (outcome === 'rejected' && !reason.value.trim()) { reason.focus(); throw Error('验收不通过时请写明需要修改的地方') }
+      return ctx.send('/review', { ...base, SubmissionID: sub.ID, CommitID: sub.CommitID, Outcome: outcome, Reason: reason.value });
+    };
+    panel.append(h('div', null, el('label', '验收当前结果'), reason));
+    actions.append(button('验收通过', () => verdict('approved'), 'primary'), button('不通过，退回修改', () => verdict('rejected'), 'danger'));
+  }
+  // Assigning an executor is the owner's next step when nobody is assigned yet.
+  if (w.CanManage && active && w.SafeToExit && !w.AssignedAgent && w.NextActor === 'owner') {
+    panel.classList.add('mine');
+    panel.append(assignForm(ctx, '分配执行 Agent'));
+  }
+  if (!active && w.CanManage && w.SafeToExit) actions.append(button('重开任务', () => confirmThen('重开会开始新一轮，旧结果保留在历史中。继续？', () => ctx.send('/reopen', base))));
+  if (actions.children.length) panel.append(actions);
+  return panel;
+}
+
+// Open requests for input from the executor. Only the addressee (the owner,
+// who then has the task in "待我处理") gets an answer box.
+function renderQuestions(ctx, panel) {
+  const qs = ctx.w.Questions || [];
+  if (!qs.length) return;
+  const canAnswer = inboxIDs.has(ctx.d.Task.ID) && !ctx.isAgent;
+  for (const q of qs) {
+    const asked = ctx.commits?.get(q.CommitID);
+    const box = h('div', 'result',
+      el('div', q.Asker + ' 提问 · ' + time(q.CreatedAt), 'muted small'),
+      el('p', asked ? asked.Body : '（问题正文见时间线）'));
+    if (canAnswer) {
+      const body = textarea('Body', true, '回答后执行 Agent 会收到通知');
+      const f = h('form', null, body, h('div', 'actions', el('button', '回答', 'primary')));
+      f.onsubmit = handle(() => ctx.send('/questions/' + encodeURIComponent(q.ID) + '/answer', { Body: body.value }));
+      box.append(f);
+    }
+    panel.append(box);
+  }
+  if (canAnswer) panel.classList.add('mine');
+}
+
+function assignForm(ctx, text) {
+  const input = el('input');
+  input.required = true;
+  input.placeholder = 'Agent ID';
+  const f = h('form', null, field(text, input), h('div', 'actions', el('button', '分配', 'primary')));
+  f.onsubmit = handle(() => ctx.send('/execution/assign', { ...ctx.base, Subject: input.value }));
+  return f;
+}
+
+function confirmThen(message, fn) { if (confirm(message)) return fn() }
+
+function renderResult({ w, active, base, send, ...ctx }) {
+  const panel = h('div', 'panel', el('h3', '当前结果'));
+  if (!w.Submission) {
+    panel.append(el('p', '还没有提交结果。执行 Agent 明确提交后会显示在这里；普通评论不算交付。', 'muted'));
+    return panel;
+  }
+  const sub = w.Submission;
+  const outcome = w.Review ? (OUTCOME_LABEL[w.Review.Outcome] || w.Review.Outcome) : '此流程无需人工验收';
+  panel.append(h('div', 'meta muted small', el('span', outcome)));
+  if (w.ResultCommit) panel.append(h('div', 'result', el('p', w.ResultCommit.Body), el('p', (w.ResultCommit.Author || '') + ' · ' + time(w.ResultCommit.CreatedAt), 'muted small')));
+  if (w.Review?.Reason) panel.append(el('p', '验收意见：' + w.Review.Reason, 'muted'));
+  if (w.CanManage && active) {
+    panel.append(h('div', 'actions', button('撤回当前结果', () => confirmThen('撤回后当前结果失效，且不会恢复更早的结果。继续？', () => send('/withdraw', { ...base, SubmissionID: sub.ID })))));
+  }
+  return panel;
+}
+
+function renderTimeline({ d, path }, commits) {
+  const panel = h('div', 'panel', el('h3', '时间线'));
+  if (d.CanComment) {
+    const ref = el('input'); ref.name = 'RefID'; ref.type = 'hidden';
+    const f = h('form', null,
+      field('给执行 Agent 留言 / 引导', textarea('Body', true, '补充说明、纠正方向或提出要求，执行 Agent 会收到通知；留言不算交付结果')),
+      ref, h('div', 'actions', el('button', '发送留言', 'primary')));
+    f.id = 'comment';
+    f.onsubmit = handle(async () => { await api(path + '/commits', 'POST', formdata(f)); await show() });
+    panel.append(f);
+  }
+  const byID = new Map(commits.map(c => [c.ID, c]));
+  const ul = el('ul', undefined, 'timeline');
+  ul.style.marginTop = '14px';
+  if (!commits.length) ul.append(el('p', '暂无记录', 'muted'));
+  for (const c of commits) {
+    const li = h('li', c.Kind === 'result' ? 'result' : '',
+      el('div', (KIND_LABEL[c.Kind] || c.Kind) + ' · ' + c.Author + ' · ' + time(c.CreatedAt), 'who'),
+      c.Kind === 'answer' && byID.has(c.RefID) ? el('div', '回答：' + byID.get(c.RefID).Body, 'muted small') : null,
+      el('p', c.Body),
+      c.RefID && c.Kind === 'comment' ? el('code', '更正引用 ' + c.RefID, 'muted') : null);
+    if (d.CanComment && c.Kind === 'comment') {
+      li.append(button('追加更正', () => {
+        const f = $('comment');
+        f.elements.RefID.value = c.ID;
+        f.elements.Body.focus();
+        notice('更正将追加新记录，原内容保留。');
+        f.scrollIntoView({ block: 'center' });
+      }, 'link'));
+    }
+    ul.append(li);
+  }
+  panel.append(ul);
+  return panel;
+}
+
+function renderBasis({ d, w, ex, active, path }) {
+  const panel = h('div', 'panel', el('h3', '任务约定'),
+    el('label', '目标'), el('p', d.Task.Goal || '待补充'),
+    el('label', '验收标准'), el('p', d.Task.Criteria || '待补充'));
+  // The server enforces CheckEdit; this only hides the form once work has started.
+  const editable = d.CanEdit && active && !w.Submission && (!ex || (ex.RoundID !== w.Position.RoundID && ex.Safe));
+  if (editable) {
+    const f = el('form');
+    for (const [name, text] of [['Title', '标题'], ['Goal', '目标'], ['Criteria', '验收标准']]) {
+      const input = name === 'Title' ? el('input') : el('textarea');
+      input.name = name;
+      input.value = d.Task[name];
+      f.append(field(text, input));
+    }
+    f.append(h('div', 'actions', el('button', '保存新依据', 'primary')));
+    f.onsubmit = handle(async () => { await api(path, 'PATCH', { ...formdata(f), ExpectedVersion: d.Task.Version }); await list(); await show() });
+    panel.append(h('details', null, el('summary', '修改约定'), f));
+  } else if (d.CanEdit && active) {
+    panel.append(el('p', '执行已开始，约定暂不能直接修改：补充要求请在时间线给执行 Agent 留言；需要正式改目标或标准时，先在「任务控制」中退回并开始新一轮，再修改。', 'muted small'));
+    panel.lastChild.style.marginTop = '10px';
+  }
+  return panel;
+}
+
+function renderExecution(ctx) {
+  const { w, ex } = ctx;
+  const dl = el('dl', undefined, 'kv');
+  const add = (k, v) => dl.append(el('dt', k), el('dd', v));
+  add('执行者', w.AssignedAgent || '待分配');
+  if (ex) {
+    add('状态', (EXEC_LABEL[ex.Status] || ex.Status) + (ex.Safe ? ' · 已安全退出' : ''));
+    add('代次', '第 ' + ex.Generation + ' 代');
+    if (ex.Status === 'active') add('保活至', time(ex.LeaseUntil));
+  }
+  const live = el('div', undefined, 'muted small'); live.id = 'execution-live-status';
+  const panel = h('div', 'panel', el('h3', '执行'), dl, live);
+  if (ctx.running) panel.append(el('p', '停止证据尚未完整确认；执行结束或断线都不会自动解除等待。', 'muted small'));
+  if (w.CanManage && ctx.active && w.SafeToExit && w.AssignedAgent) panel.append(h('details', null, el('summary', '更换执行 Agent'), assignForm(ctx, '新的 Agent ID')));
+  return panel;
+}
+
+function renderParticipants({ d, path }) {
+  if (!d.CanEdit) return null;
+  const input = el('input'); input.required = true; input.placeholder = '成员 ID';
+  const change = present => async () => {
+    await api(path + '/participants', 'POST', { Subject: input.value, Present: present });
+    notice(present ? '参与者已加入' : '参与者已移出');
+  };
+  const f = h('form', null, input, h('div', 'actions', el('button', '加入任务'), button('移出任务', () => { if (!input.reportValidity()) return; return change(false)() })));
+  f.onsubmit = handle(change(true));
+  return h('div', 'panel', h('details', null, el('summary', '管理参与者'), f));
+}
+
+function renderManage(ctx) {
+  const { w, active, base, ref, send } = ctx;
+  if (!w.CanManage && !w.CanIsolate) return null;
+  const panel = h('div', 'panel', el('h3', '任务控制'));
+  const actions = h('div', 'actions');
+  if (active && w.CanManage) {
+    if (w.SafeToExit) actions.append(button('退回并开始新轮', () => confirmThen('退回会开始新一轮，当前结果和验收结论只保留在历史中。继续？', () => send('/return', base))));
+    actions.append(button('取消任务', () => confirmThen('取消后旧执行将无法再写入，但外部工作仍需停止确认。继续？', () => send('/cancel', base)), 'danger'));
+  }
+  if (actions.children.length) panel.append(actions);
+  if (ctx.running && w.CanIsolate) {
+    const reason = textarea('Reason', true), scope = textarea('Scope', true);
+    const f = h('form', null, field('隔离依据与原因', reason), field('已覆盖的执行及外部工作范围', scope),
+      el('p', '该操作只记录管理员提供的隔离依据，不代表工具已经停止。', 'muted small'),
+      h('div', 'actions', el('button', '记录隔离证明', 'danger')));
+    f.onsubmit = handle(() => send('/execution/isolate', { ...base, ...ref, Reason: reason.value, Scope: scope.value }));
+    panel.append(h('details', null, el('summary', '管理员：记录外部隔离证明'), f));
+  }
+  return panel.children.length > 1 ? panel : null;
+}
+
+// Agent actions normally go through the API; this panel exists for local debugging.
+function renderAgentDebug(ctx) {
+  const { w, base, ref, send } = ctx;
+  if (!ctx.isAgent) return null;
+  const panel = h('div', 'panel debug', el('h3', 'Agent 调试'), el('p', '正式运行时由 Agent 通过 API 完成这些操作。', 'muted small'));
+  const blocked = AGENT_ACTIONS.filter(a => (w.Blocked || {})[a]);
+  if (blocked.length) {
+    const ul = el('ul', undefined, 'reasons small');
+    for (const a of blocked) ul.append(el('li', '暂不能' + ACTION_LABEL[a] + '：' + (REASON_LABEL[w.Blocked[a]] || w.Blocked[a])));
+    panel.append(ul);
+  }
+  const actions = h('div', 'actions');
+  if (w.CanOpen) actions.append(button('认领并开始执行', () => send('/execution/open', base), 'primary'));
+  if (w.CanRenew) actions.append(button('续期执行', () => send('/execution/renew', ref)), button('报告主运行结束', () => send('/execution/end', ref)));
+  if (actions.children.length) panel.append(actions);
+  if (ctx.active) {
+    const q = textarea('Body', true, '说明问题、为什么卡住、可选方案和建议');
+    const f = h('form', null, field('向负责人提问（未回答前任务不能完成）', q), h('div', 'actions', el('button', '提问')));
+    f.onsubmit = handle(() => send('/questions', { RoundID: w.Position.RoundID, Body: q.value }));
+    panel.append(f);
+  }
+  if (w.CanSubmit) {
+    const body = textarea('Body', true, '这是正式交付的结果正文');
+    const f = h('form', null, field('提交结果', body), h('div', 'actions', el('button', '提交结果', 'primary')));
+    f.onsubmit = handle(() => send('/results', { ...base, ...ref, Body: body.value }));
+    panel.append(f);
+  }
+  return panel;
+}
+
+// ---------- Wiring ----------
+$('login').onsubmit = handle(async () => {
+  await api('/session', 'POST', null, { Authorization: 'Bearer ' + $('token').value });
+  $('token').value = '';
+  await start();
+});
+$('create').onsubmit = handle(async () => {
+  const d = await api('/tasks', 'POST', formdata($('create')));
+  selected = d.Task.ID;
+  $('create').reset();
+  $('create-box').open = false;
+  view = 'all';
+  await list();
+  await show();
+});
+$('logout').onclick = handle(async () => {
+  await api('/session', 'DELETE');
+  showLogin();
+});
+$('refresh').onclick = handle(async () => { await start(); if (selected) await show() });
+$('tab-mine').onclick = handle(async () => { view = 'mine'; await list() });
+$('tab-all').onclick = handle(async () => { view = 'all'; await list() });
+
+// Poll the authorized change feed; never overwrite a form the user is editing.
+setInterval(async () => {
+  if (!cursor || busy || $('work').hidden) return;
+  try {
+    const p = await api('/changes?cursor=' + encodeURIComponent(cursor));
+    cursor = p.Cursor;
+    pendingRefresh = pendingRefresh || p.Changes.length > 0;
+    const editing = document.activeElement?.matches('input,textarea,select');
+    if (pendingRefresh && !editing) {
+      await list();
+      if (selected) await show();
+      pendingRefresh = false;
+    } else if (selected) {
+      const state = await api('/tasks/' + encodeURIComponent(selected) + '/workflow');
+      const live = $('execution-live-status');
+      if (live) live.textContent = '实时：' + (state.AssignedAgent || '待分配') + (state.Execution ? ' · 第 ' + state.Execution.Generation + ' 代 · ' + (EXEC_LABEL[state.Execution.Status] || state.Execution.Status) : '');
+      if (pendingRefresh && editing) notice('任务有新变化，已保留你的输入；完成编辑后刷新。');
+    }
+  } catch (e) {
+    cursor = '';
+    if (e.status === 403) {
+      selected = '';
+      $('tasks').replaceChildren();
+      $('detail').replaceChildren(h('div', 'panel empty', '访问权限已变更'));
+    }
+    notice(e.message + '；请刷新同步。');
+  }
+}, 4000);
+
+start().catch(() => {});
+</script>
+</body>
+</html>

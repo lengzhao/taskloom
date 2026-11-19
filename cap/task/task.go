@@ -20,10 +20,15 @@ type Reader interface {
 	GetTask(ctx context.Context, tenant, taskID string) (Task, error)
 }
 
-// Store is the task use-case consumer's cohesive read/write capability.
-type Store interface {
+// Lister adds tenant-wide listing for read-only aggregations.
+type Lister interface {
 	Reader
 	ListTasks(ctx context.Context, tenant string) ([]Task, error)
+}
+
+// Store is the task use-case consumer's cohesive read/write capability.
+type Store interface {
+	Lister
 	CreateTask(ctx context.Context, value Task) error
 	UpdateBasis(ctx context.Context, change BasisChange) (Task, error)
 }

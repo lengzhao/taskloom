@@ -12,6 +12,7 @@ import (
 	"github.com/lengzhao/taskloom/cap/fault"
 	"github.com/lengzhao/taskloom/cap/flow"
 	"github.com/lengzhao/taskloom/cap/identity"
+	"github.com/lengzhao/taskloom/cap/question"
 	"github.com/lengzhao/taskloom/cap/task"
 	"github.com/lengzhao/taskloom/cap/unitofwork"
 	api "github.com/lengzhao/taskloom/cap/workflow"
@@ -21,19 +22,22 @@ import (
 type QueryDeps struct {
 	Commits       commit.Lookup          `json:"commits"`
 	Transactions  unitofwork.Manager     `json:"transactions"`
-	Tasks         task.Reader            `json:"tasks"`
+	Tasks         task.Lister            `json:"tasks"`
 	Flow          flow.Controller        `json:"flow"`
 	Executions    execution.Reader       `json:"executions"`
 	Results       delivery.Reader        `json:"results"`
 	Reviews       acceptance.Reader      `json:"reviews"`
 	Identity      identity.Authenticator `json:"identity"`
 	Authorization az.Authorizer          `json:"authorization"`
+	// Questions keeps the snapshot and "waiting on" in step with open requests
+	// for input; the query stays a read-only aggregation of ten readers.
+	Questions question.Reader `json:"questions"`
 }
 type Query struct{ d QueryDeps }
 
 func init() {
 	pluginkit.Register("query/workflow", func(_ struct{}, d QueryDeps) (*Query, error) {
-		if d.Commits == nil || d.Transactions == nil || d.Tasks == nil || d.Flow == nil || d.Executions == nil || d.Results == nil || d.Reviews == nil || d.Identity == nil || d.Authorization == nil {
+		if d.Commits == nil || d.Transactions == nil || d.Tasks == nil || d.Flow == nil || d.Executions == nil || d.Results == nil || d.Reviews == nil || d.Identity == nil || d.Authorization == nil || d.Questions == nil {
 			return nil, fault.ErrInput
 		}
 		return &Query{d}, nil
@@ -84,6 +88,15 @@ func (s *Query) ReadFacts(ctx context.Context, t task.Task) (api.Snapshot, error
 	} else if !errors.Is(e, fault.ErrNotFound) {
 		return out, e
 	}
+	if pos.Status == flow.PhaseActive {
+		qs, e := s.d.Questions.OpenQuestions(ctx, t.Tenant, t.ID, pos.RoundID)
+		if e != nil {
+			return out, e
+		}
+		if len(qs) > 0 {
+			out.Questions = qs
+		}
+	}
 	out.NextActor = s.nextActor(ctx, t, out)
 	return out, nil
 }
@@ -127,6 +140,54 @@ func (s *Query) Read(ctx context.Context, token, taskID string) (api.Snapshot, e
 		return e
 	})
 	return out, e
+}
+
+// Inbox derives "waiting on me" from the same facts as Read; it keeps no
+// separate inbox records, so it cannot drift from the task's real state.
+func (s *Query) Inbox(ctx context.Context, token string) ([]api.Pending, error) {
+	out := []api.Pending{}
+	e := s.d.Transactions.Do(ctx, func(tx context.Context) error {
+		p, e := s.d.Identity.Authenticate(tx, token)
+		if e != nil {
+			return e
+		}
+		ts, e := s.d.Tasks.ListTasks(tx, p.Tenant)
+		if e != nil {
+			return e
+		}
+		for _, t := range ts {
+			if s.d.Authorization.Check(tx, p, "task.read", t.ID) != nil {
+				continue
+			}
+			v, e := s.ReadFacts(tx, t)
+			if e != nil {
+				return e
+			}
+			if waitsOn(p, t, v) {
+				out = append(out, api.Pending{TaskID: t.ID, Title: t.Title, NextActor: v.NextActor})
+			}
+		}
+		return nil
+	})
+	return out, e
+}
+
+func waitsOn(p identity.Principal, t task.Task, v api.Snapshot) bool {
+	switch v.NextActor {
+	case api.ActorOwner:
+		return p.Kind == "human" && p.ID == t.Owner
+	case api.ActorReviewer:
+		return p.Kind == "human" && v.Review != nil && p.ID == v.Review.Reviewer
+	case api.ActorAgent:
+		if p.Kind != "agent" {
+			return false
+		}
+		if v.Execution != nil && !v.Execution.Safe {
+			return v.Execution.Subject == p.ID
+		}
+		return v.AssignedAgent == p.ID
+	}
+	return false
 }
 
 // Each *Block returns the first reason an action is unavailable, or "" when the
@@ -217,6 +278,9 @@ func (s *Query) nextActor(ctx context.Context, t task.Task, out api.Snapshot) ap
 			return api.ActorAgent
 		}
 		return ""
+	case len(out.Questions) > 0:
+		// Questions are addressed to the owner; answering unblocks the agent.
+		return api.ActorOwner
 	case out.Review != nil && out.Review.Outcome == "pending":
 		return api.ActorReviewer
 	case out.Execution != nil && !out.Execution.Safe:

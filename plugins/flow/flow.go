@@ -13,6 +13,7 @@ import (
 	"github.com/lengzhao/taskloom/cap/execution"
 	"github.com/lengzhao/taskloom/cap/fault"
 	capflow "github.com/lengzhao/taskloom/cap/flow"
+	"github.com/lengzhao/taskloom/cap/question"
 	"github.com/lengzhao/taskloom/cap/task"
 )
 
@@ -25,6 +26,8 @@ type Deps struct {
 	Positions   capflow.PositionStore   `json:"positions"`
 	States      []capflow.State         `json:"states"`
 	Executions  execution.Reader        `json:"executions,omitempty"`
+	// Questions holds completion while a request for input of the round is open.
+	Questions question.Reader `json:"questions,omitempty"`
 }
 type Controller struct {
 	c   Config
@@ -57,8 +60,8 @@ func New(c Config, d Deps) (*Controller, error) {
 		}
 		descs = append(descs, v)
 	}
-	if len(d.States) > 1 && (descs[0].Role != capflow.RoleReady || !terminal || d.Executions == nil) {
-		return nil, errors.New("workflow requires ready, terminal and execution safety")
+	if len(d.States) > 1 && (descs[0].Role != capflow.RoleReady || !terminal || d.Executions == nil || d.Questions == nil) {
+		return nil, errors.New("workflow requires ready, terminal, execution safety and open-question gate")
 	}
 	var b []byte
 	if len(descs) == 1 {
@@ -86,6 +89,26 @@ func (c *Controller) safe(ctx context.Context, t task.Task) (bool, error) {
 		return true, nil
 	}
 	return c.d.Executions.SafeToExit(ctx, t.Tenant, t.ID)
+}
+
+// held returns the fixed, flow-independent reason a task may not complete yet:
+// unsafe executions or an unanswered request for input in the current round.
+func (c *Controller) held(ctx context.Context, t task.Task, p capflow.Position) (string, error) {
+	safe, e := c.safe(ctx, t)
+	if e != nil || !safe {
+		return "等待全部执行安全停止", e
+	}
+	if c.d.Questions == nil {
+		return "", nil
+	}
+	open, e := c.d.Questions.OpenQuestions(ctx, t.Tenant, t.ID, p.RoundID)
+	if e != nil {
+		return "", e
+	}
+	if len(open) > 0 {
+		return "等待负责人回答问题", nil
+	}
+	return "", nil
 }
 func (c *Controller) Initialize(ctx context.Context, t task.Task) (capflow.Position, error) {
 	p := capflow.Position{Tenant: t.Tenant, TaskID: t.ID, RoundID: id(), EntryID: id(), State: c.d.States[0].Describe().Key, Flow: c.ref, Status: capflow.PhaseActive}
@@ -188,13 +211,13 @@ func (c *Controller) Refresh(ctx context.Context, t task.Task) (capflow.Position
 		}
 		if p.Index == len(c.d.States)-1 {
 			if c.d.States[p.Index].Describe().Role == capflow.RoleCompleted {
-				safe, e := c.safe(ctx, t)
+				held, e := c.held(ctx, t, p)
 				if e != nil {
 					return p, e
 				}
-				if !safe {
+				if held != "" {
 					p.Complete = false
-					p.Waiting = "等待全部执行安全停止"
+					p.Waiting = held
 					break
 				}
 				p.Status = capflow.PhaseCompleted
@@ -216,12 +239,12 @@ func (c *Controller) Refresh(ctx context.Context, t task.Task) (capflow.Position
 			break
 		}
 		if c.d.States[next].Describe().Role == capflow.RoleCompleted {
-			safe, e := c.safe(ctx, t)
+			held, e := c.held(ctx, t, p)
 			if e != nil {
 				return p, e
 			}
-			if !safe {
-				p.Waiting = "等待全部执行安全停止"
+			if held != "" {
+				p.Waiting = held
 				break
 			}
 		}

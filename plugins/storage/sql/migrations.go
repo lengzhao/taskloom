@@ -27,6 +27,7 @@ var migrations = []migration{
 	{"membership/001", "tenant-members-and-task-participants-v1", []any{&memberRow{}, &participantRow{}}},
 	{"workflow/001", "execution-submission-and-state-owned-review-v1", []any{&stopEvidenceRow{}, &assignmentRow{}, &executionRow{}, &submissionRow{}, &reviewRow{}, &verdictRow{}, &positionHistoryRow{}}},
 	{"checkpoint/001", "state-owned-checkpoint-records-v1", []any{&checkpointRow{}}},
+	{"question/001", "round-scoped-input-requests-v1", []any{&questionRow{}}},
 }
 
 func migrate(ctx context.Context, db *gorm.DB, driver string) error {

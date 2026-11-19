@@ -1,6 +1,6 @@
 # M05 实际默认依赖图
 
-由当前 base.yaml 的已实现实例整理；25 个实例，含 M05 之后新增的 catalog、question-commands 与 mcp-api（见[请求输入与人工引导](m05-workflow.md#请求输入与人工引导)）。跨阶段的 52 节点规划不等于此运行图。字段与接口职责见 [M05](m05-workflow.md)。
+由当前 base.yaml 的已实现实例整理；25 个实例，含 M05 之后新增的 catalog、question-commands 与 mcp-api（见[请求输入与人工引导](m05-workflow.md#请求输入与人工引导)）。只记录已实现实例，不预列未来插件。字段与接口职责见 [M05](m05-workflow.md)。
 
 ```mermaid
 flowchart TD

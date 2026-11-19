@@ -35,7 +35,7 @@ type ResultDeps struct {
 	Executions execution.ResultAccess `json:"executions"`
 	Results    delivery.Store         `json:"results"`
 	Commits    commit.Log             `json:"commits"`
-	Accepting  acceptance.Actions     `json:"accepting,omitempty"`
+	Reviews    acceptance.Records     `json:"reviews"`
 	Snapshots  api.FactsReader        `json:"snapshots"`
 	Events     record.EventWriter     `json:"events"`
 }
@@ -63,10 +63,10 @@ func NewExecution(_ struct{}, d ExecutionDeps) (*ExecutionModule, error) {
 	return &ExecutionModule{&Service{dependencies{Commands: d.Commands, Tasks: d.Tasks, Flow: d.Flow, Executions: d.Executions, ExecutionWrites: d.Executions, Principals: d.Principals, Members: d.Members, Participants: d.Participants, Snapshots: d.Snapshots, Events: d.Events}}}, nil
 }
 func NewResults(_ struct{}, d ResultDeps) (*ResultModule, error) {
-	if d.Commands == nil || d.Tasks == nil || d.Flow == nil || d.Executions == nil || d.Results == nil || d.Commits == nil || d.Snapshots == nil || d.Events == nil {
+	if d.Commands == nil || d.Tasks == nil || d.Flow == nil || d.Executions == nil || d.Results == nil || d.Commits == nil || d.Reviews == nil || d.Snapshots == nil || d.Events == nil {
 		return nil, fault.ErrInput
 	}
-	return &ResultModule{&Service{d: dependencies{Commands: d.Commands, Tasks: d.Tasks, Flow: d.Flow, Executions: d.Executions, ResultExecutions: d.Executions, Results: d.Results, Commits: d.Commits, Accepting: d.Accepting, Snapshots: d.Snapshots, Events: d.Events}}}, nil
+	return &ResultModule{&Service{d: dependencies{Commands: d.Commands, Tasks: d.Tasks, Flow: d.Flow, Executions: d.Executions, ResultExecutions: d.Executions, Results: d.Results, Commits: d.Commits, Reviews: d.Reviews, Snapshots: d.Snapshots, Events: d.Events}}}, nil
 }
 func NewControl(_ struct{}, d ControlDeps) (*ControlModule, error) {
 	if d.Commands == nil || d.Tasks == nil || d.Flow == nil || d.Executions == nil || d.Snapshots == nil || d.Events == nil {

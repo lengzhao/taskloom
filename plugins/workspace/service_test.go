@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	capflow "github.com/lengzhao/taskloom/cap/flow"
 	capsecurity "github.com/lengzhao/taskloom/cap/security"
 	"path/filepath"
 	"sync"
@@ -19,7 +18,6 @@ import (
 	access "github.com/lengzhao/taskloom/plugins/access/default"
 	flow "github.com/lengzhao/taskloom/plugins/flow"
 	local "github.com/lengzhao/taskloom/plugins/identity/local"
-	ready "github.com/lengzhao/taskloom/plugins/state/ready"
 	store "github.com/lengzhao/taskloom/plugins/storage/sql"
 	workspace "github.com/lengzhao/taskloom/plugins/workspace"
 	"github.com/lengzhao/taskloom/runtime/command"
@@ -54,7 +52,7 @@ func fixtureWithStore(t *testing.T) (*workspace.Service, *security.Service, stri
 	if e != nil {
 		t.Fatal(e)
 	}
-	f, e := flow.New(flow.Config{ID: "ready-only", Version: "1"}, flow.Deps{Definitions: s, Positions: s, States: []capflow.State{&ready.State{}}})
+	f, e := flow.New(flow.Config{}, flow.Deps{Positions: s, Results: s, Reviews: s, Questions: s, Executions: s})
 	if e != nil {
 		t.Fatal(e)
 	}

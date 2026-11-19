@@ -43,7 +43,7 @@ func init() {
 	})
 }
 func (s *Query) ReadFacts(ctx context.Context, t task.Task) (api.Snapshot, error) {
-	pos, e := s.d.Flow.Read(ctx, t.Tenant, t.ID)
+	pos, e := s.d.Flow.Read(ctx, t)
 	out := api.Snapshot{Position: pos}
 	assigned, assignedErr := s.d.Executions.Assignee(ctx, t.Tenant, t.ID)
 	if assignedErr == nil {
@@ -73,6 +73,9 @@ func (s *Query) ReadFacts(ctx context.Context, t task.Task) (api.Snapshot, error
 			out.Review = &r
 		} else if !errors.Is(e, fault.ErrNotFound) {
 			return out, e
+		} else if pos.State == flow.StepAccepting {
+			// A result awaiting acceptance with no verdict yet is pending; nothing is stored for it.
+			out.Review = &acceptance.Review{Tenant: t.Tenant, TaskID: t.ID, RoundID: pos.RoundID, SubmissionID: v.ID, CommitID: v.CommitID, Reviewer: t.Owner, Outcome: acceptance.OutcomePending, BasisVersion: v.BasisVersion}
 		}
 	} else if !errors.Is(e, fault.ErrNotFound) {
 		return out, e
@@ -86,7 +89,7 @@ func (s *Query) ReadFacts(ctx context.Context, t task.Task) (api.Snapshot, error
 			out.Questions = qs
 		}
 	}
-	out.NextActor = s.nextActor(ctx, t, out)
+	out.NextActor = nextActor(out)
 	return out, nil
 }
 func (s *Query) Read(ctx context.Context, token, taskID string) (api.Snapshot, error) {
@@ -236,7 +239,7 @@ func submitBlock(p identity.Principal, t task.Task, pos flow.Position, v executi
 }
 
 // nextActor is viewer independent and derived only from facts already read.
-func (s *Query) nextActor(ctx context.Context, t task.Task, out api.Snapshot) api.Actor {
+func nextActor(out api.Snapshot) api.Actor {
 	pos := out.Position
 	switch {
 	case pos.Status != flow.PhaseActive:
@@ -244,21 +247,14 @@ func (s *Query) nextActor(ctx context.Context, t task.Task, out api.Snapshot) ap
 	case len(out.Questions) > 0:
 		// Whoever was asked must answer before the task can complete.
 		return api.ActorAddressee
-	case out.Review != nil && out.Review.Outcome == "pending":
+	case pos.State == flow.StepReady:
+		return api.ActorOwner
+	case pos.State == flow.StepAccepting && out.Review != nil && out.Review.Outcome == acceptance.OutcomePending:
 		return api.ActorReviewer
-	case out.Review != nil && out.Review.Outcome == "rejected":
-		return api.ActorAssignee
-	case out.Submission != nil:
+	case pos.Waiting == "":
 		return ""
-	}
-	if _, e := s.d.Flow.CheckOpen(ctx, t); e == nil {
-		if out.Assignee == "" {
-			return api.ActorOwner
-		}
-		return api.ActorAssignee
-	}
-	if pos.Waiting != "" && s.d.Flow.CheckEdit(ctx, t) == nil {
+	case out.Assignee == "":
 		return api.ActorOwner
 	}
-	return ""
+	return api.ActorAssignee
 }

@@ -23,9 +23,8 @@ go run ./cmd/taskloom
 | --- | --- |
 | cap/task | Reader.GetTask；Store 组合读取/列表/创建/依据写入；只任务事实 |
 | cap/commit | Log.Append/Get/List；精确 ID 和提交序分页，不可编辑 |
-| cap/flow | DefinitionStore / PositionStore 分别固定定义/读写位置；Controller.Initialize/Refresh/Read；State 四方法 |
-| state/ready | 无 Deps；目标/标准不齐返回明确等待 |
-| task/flow | definitions:flow.DefinitionStore→sql、positions:flow.PositionStore→sql、state:flow.State→ready；位置唯一写入者 |
+| cap/flow | PositionStore 读写阶段/轮次/验收方式；Controller.Initialize/Read/Refresh 等，步骤由事实推导 |
+| task/flow | 阶段与轮次唯一写入者；目标/标准不齐时推导为 ready 并给出等待原因（M05 后的依赖见 [任务流程](task-flow-plugins.md)） |
 | workspace/tasks | transactions、tasks、commits、flow、identity、authorization、commands、members、participants、events，分别指向能力接口 |
 | api/workspace | commands:workspace.Commands、queries:workspace.Queries、changes:workspace.ChangeFeed、identity:identity.Authenticator、security:security.MemberCommands；协议/会话与内嵌薄界面 |
 
@@ -35,7 +34,7 @@ workspace/tasks 的 10 个 Deps（共享命令生命周期，成员只读与参�
 
 ## 业务与协议
 
-创建只允许人，默认负责人为当前主体；初始版本/BasisVersion=1。创建事务同时保存准备 FlowRef、RoundID、位置、初始 commit、审计、outbox 和幂等回执。当前默认定义见 [M05](m05-workflow.md)（standard/1）；信息不全时停在准备步骤并显示等待原因。相同 FlowRef ID/版本的行为摘要不可改变；不支持旧定义时拒绝读取/刷新。M05 新执行流程使用新的定义，不能悄悄扩展旧任务绑定。
+创建只允许人，默认负责人为当前主体；初始版本/BasisVersion=1。创建事务同时保存 RoundID、阶段、验收方式、初始 commit、审计、outbox 和幂等回执；信息不全时推导为准备步骤并显示等待原因。
 
 正式依据修改要求有效成员且为负责人或租户管理员、ExpectedVersion 匹配；更新目标/标准、递增任务与依据版本，追加 task.basis commit，同事务刷新准备原因。当前没有活跃执行；M05 扩展编辑时必须保留退回/采用新依据保护，不能直接套用于运行中任务。
 
@@ -72,4 +71,4 @@ SQLite/HTTP 测试覆盖：原子初始化、信息不足、并发创建幂等�
 
 内置浏览器在独立临时 SQLite 环境实际操作登录、创建、追加评论与更正，页面同时显示原文和新 commit。未连接生产数据库、未做负载测试；MySQL/PostgreSQL 仍为编入驱动而非真实服务验收。M04 不代表 M05 的执行/交付/验收、结构化阻塞问答或扩展 State 已实现。
 
-当前 cap 已按消费者收敛，实际接口/Deps 以 `cap/*` 代码为准，不保留旧 Repository/Service 别名。State.Check 使用明确状态，Position.Complete 表达准备完成，Waiting 仅保存真实阻塞原因。
+当前 cap 已按消费者收敛，实际接口/Deps 以 `cap/*` 代码为准，不保留旧 Repository/Service 别名。Position.State/Waiting 每次读取时推导，不落库。

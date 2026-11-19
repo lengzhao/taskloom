@@ -69,25 +69,3 @@ func (s *Store) SavePosition(ctx context.Context, p flow.Position, expected int6
 		return db.Create(&positionHistoryRow{Key: randomID(), Data: old.Data}).Error
 	})
 }
-
-type flowDefinitionRow struct {
-	Key    string `gorm:"primaryKey;size:64;column:row_key"`
-	Digest string `gorm:"size:64"`
-}
-
-func (s *Store) EnsureDefinition(ctx context.Context, ref flow.DefinitionRef) error {
-	return s.use(ctx, true, func(db *gorm.DB) error {
-		var row flowDefinitionRow
-		r := db.Where("row_key = ?", key(ref.ID, ref.Version)).Find(&row)
-		if r.Error != nil {
-			return r.Error
-		}
-		if r.RowsAffected == 1 {
-			if row.Digest != ref.Digest {
-				return fault.ErrConflict
-			}
-			return nil
-		}
-		return db.Create(&flowDefinitionRow{Key: key(ref.ID, ref.Version), Digest: ref.Digest}).Error
-	})
-}

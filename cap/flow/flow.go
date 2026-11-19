@@ -1,3 +1,7 @@
+// Package flow defines a task's lifecycle. Only the phase, the round and
+// whether the task needs human acceptance are stored; the current step and
+// what it waits on are derived from task facts on every read, so they can
+// never drift from those facts.
 package flow
 
 import (
@@ -5,8 +9,6 @@ import (
 
 	"github.com/lengzhao/taskloom/cap/task"
 )
-
-type DefinitionRef struct{ ID, Version, Digest string }
 
 // Phase is the task-level lifecycle owned by the flow controller.
 type Phase string
@@ -17,36 +19,40 @@ const (
 	PhaseCompleted Phase = "completed"
 )
 
-// Role is the fixed contract a State declares to the controller. Only these
-// roles carry controller semantics; any other step leaves Role empty.
-//   - RoleReady must be first in a multi-step flow; task edits are allowed there.
-//   - RoleExecuting is the only step where OpenExecution may be checked.
-//   - RoleCompleted must be last; completion checks results, acceptance and open questions only.
-//   - RoleAccepting marks the human acceptance step (informational).
-type Role string
+// Step is derived from facts, never stored.
+type Step string
 
 const (
-	RoleReady     Role = "ready"
-	RoleExecuting Role = "executing"
-	RoleAccepting Role = "accepting"
-	RoleCompleted Role = "completed"
+	// StepReady: the goal or criteria are still missing; work cannot be claimed.
+	StepReady Step = "ready"
+	// StepExecuting: no valid result for the current basis yet.
+	StepExecuting Step = "executing"
+	// StepAccepting: a valid result waits for the owner's approval.
+	StepAccepting Step = "accepting"
+	// StepCompleted: the task is completed.
+	StepCompleted Step = "completed"
 )
 
-// Position is a task's place in its bound flow. Steps run in order and only
-// move forward within a round, so the reached steps are the definition's first
-// Index+1 states and each is entered at most once per RoundID.
+// Acceptance is fixed per task at creation; deployment changes never alter it.
+type Acceptance string
+
+const (
+	AcceptanceManual Acceptance = "manual"
+	AcceptanceNone   Acceptance = "none"
+)
+
+// Position is a task's place in its lifecycle. Revision, Status, RoundID and
+// Acceptance are stored; State and Waiting are derived on read.
 type Position struct {
-	// Revision changes only when the stored position actually changes.
-	Revision                                int64
-	Status                                  Phase
-	Index                                   int
-	Tenant, TaskID, RoundID, State, Waiting string
-	Flow                                    DefinitionRef
-	Complete                                bool
+	// Revision changes only when the stored phase or round changes.
+	Revision                int64
+	Status                  Phase
+	Tenant, TaskID, RoundID string
+	Acceptance              Acceptance
+	State                   Step
+	Waiting                 string
 }
-type DefinitionStore interface {
-	EnsureDefinition(ctx context.Context, ref DefinitionRef) error
-}
+
 type PositionReader interface {
 	GetPosition(ctx context.Context, tenant, taskID string) (Position, error)
 }
@@ -56,46 +62,22 @@ type PositionStore interface {
 	// SavePosition fails with fault.ErrConflict unless the stored revision equals expected.
 	SavePosition(ctx context.Context, value Position, expected int64) error
 }
-type Description struct {
-	Key, Version string
-	Role         Role `json:",omitempty"`
-}
-type Context struct {
-	Task     task.Task
-	Position Position
-}
-type Status string
 
-const (
-	Allow  Status = "allow"
-	Wait   Status = "wait"
-	Reject Status = "reject"
-)
-
-type Check struct {
-	Status Status
-	Reason string
-}
-type State interface {
-	Describe() Description
-	CheckEnter(ctx context.Context, value Context) (Check, error)
-	Enter(ctx context.Context, value Context) error
-	CheckComplete(ctx context.Context, value Context) (Check, error)
-}
-type Definition interface {
-	Controller
-	Reference() DefinitionRef
-}
+// Controller is the only writer of phase and round. Every method runs inside
+// the caller's command transaction.
 type Controller interface {
+	Initialize(ctx context.Context, value task.Task) (Position, error)
+	// Read returns the stored position with its derived step.
+	Read(ctx context.Context, value task.Task) (Position, error)
+	// Refresh completes the task once its facts satisfy completion.
+	Refresh(ctx context.Context, value task.Task) (Position, error)
+	// CheckEdit allows basis changes while no live claim of this round exists
+	// and no valid result waits for acceptance.
 	CheckEdit(ctx context.Context, value task.Task) error
+	// CheckOpen allows assignment and claims on an active task with a complete basis.
 	CheckOpen(ctx context.Context, value task.Task) (Position, error)
 	Cancel(ctx context.Context, value task.Task) (Position, error)
+	// Return starts a new round of an active task; Reopen of a terminal one.
 	Return(ctx context.Context, value task.Task) (Position, error)
 	Reopen(ctx context.Context, value task.Task) (Position, error)
-	Initialize(ctx context.Context, value task.Task) (Position, error)
-	Refresh(ctx context.Context, value task.Task) (Position, error)
-	Read(ctx context.Context, tenant, taskID string) (Position, error)
-	// Step returns the State context of an already reached step with this key in
-	// the current active round, so step-owned actions never rebuild positions.
-	Step(ctx context.Context, value task.Task, key string) (Context, error)
 }

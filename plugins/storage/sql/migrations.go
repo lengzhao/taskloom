@@ -23,7 +23,6 @@ var migrations = []migration{
 	{"identity/001", "principal-v1+credential-v2", []any{&principalRow{}, &credentialRow{}}},
 	{"command/001", "receipt-v1+audit-v1+event-v1", []any{&receiptRow{}, &auditRow{}, &eventRow{}}},
 	{"task/001", "task-facts-and-immutable-commits-v1", []any{&taskRow{}, &commitRow{}, &positionRow{}}},
-	{"flow/001", "immutable-flow-definition-v1", []any{&flowDefinitionRow{}}},
 	{"membership/001", "tenant-members-and-task-participants-v1", []any{&memberRow{}, &participantRow{}}},
 	{"workflow/001", "execution-submission-and-state-owned-review-v2", []any{&assignmentRow{}, &executionRow{}, &submissionRow{}, &reviewRow{}, &verdictRow{}, &positionHistoryRow{}}},
 	{"question/001", "round-scoped-input-requests-v1", []any{&questionRow{}}},

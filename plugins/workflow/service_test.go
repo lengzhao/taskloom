@@ -278,7 +278,7 @@ func TestNewCandidateReplacesPendingReviewAndWithdrawDoesNotRestoreOld(t *testin
 	}
 }
 func TestFlowWithoutAcceptanceCompletesOnSubmission(t *testing.T) {
-	f := setup(t, map[string]any{"flow-standard": map[string]any{"deps": map[string]any{"states": []string{"ready", "executing", "completed"}}}})
+	f := setup(t, map[string]any{"flow": map[string]any{"config": map[string]any{"acceptance": "none"}}})
 	d := f.create(t)
 	s := f.open(t, d)
 	var e error

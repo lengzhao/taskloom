@@ -28,19 +28,17 @@ Task 与 Flow position 分表/接口归属，task/facts 不写状态。正文唯
 - decision/facts：阻塞问题、答案与解决事实，引用 commit；普通评论不解除阻塞。
 - execution/facts：执行记录（ExecutionID）、写入资格、最近进展，旧实例写入隔离。
 - delivery/reply：结果登记及当前轮候选引用，不保存正文或评审规则。
-- State：准备、执行、事实审核、人工验收、完成等步骤；需要审核记录的步骤拥有自己的仓储。
-- task/flow：状态/轮次/位置唯一写入者；通过有序 states 调用步骤，保留“未答问题不完成”等固定保护。
+- acceptance/facts：负责人对某次交付的结论（approved/rejected）及历史；待验收不存记录。
+- task/flow：阶段/轮次唯一写入者；当前步骤由依据、交付、结论和未答问题推导。
 - 命名命令与查询：依赖上述能力及事务、身份、权限；HTTP 只协议适配，薄界面调用同一 API。
 
 当前实例与依赖以 [base.yaml](../base.yaml) 为准，接口以 `cap/*` 代码为准。SQL 实现各领域仓储，不能把领域规则放入 SQL。插件不直接 import 其他插件实现；共享事务不代表共享领域所有权。超过五个 Deps 记录协调职责及拆分理由，不把不同接口打包规避计数。
 
 ## 流程组合
 
-默认目标链 ready → executing → accepting → completed；额外事实审核以新 State 插入，省略 accepting 表示无需人工验收。任务绑定不可变 FlowRef，不能改同版本配置偷偷改变旧任务行为；不能把尚未实现的状态配置成假成功。
+步骤 ready → executing → accepting → completed 不是插件链，而是从事实推导的结果（规则见[任务流程](task-flow-plugins.md)）。flow 只存阶段、轮次与创建时固定的验收方式 manual/none；部署改默认值只影响新任务。不能把尚未实现的条件配置成假成功。
 
-State 的 Describe、CheckEnter、Enter、CheckComplete 保持不变。检查只读；Enter 在本地事务幂等准备/同步记录，远端请求只写 outbox。当前证据变化重查所有已到达步骤，未来步骤不提前 Enter，前序失效保留位置和原因。步骤在一轮内最多进入一次，Enter 幂等依据为 RoundID、步骤键与真实证据组合，不使用自己写入后必变的 TaskVersion。
-
-正常推进保留 RoundID，退回/重开新轮；执行以 ExecutionID + 写资格单独隔离。认领在同事务通过 CheckOpen 重查。任务完成必须满足有效候选、当前依据、全部相关步骤及无未答问题；转交、重新认领、退回、重开、取消立即失效旧执行写资格；普通 commit 或 Hook 不能绕过。Taskloom 不跟踪外部进程是否停止。
+正常推进保留 RoundID，退回/重开新轮；执行以 ExecutionID + 写资格单独隔离。认领在同事务通过 CheckOpen 重查。任务完成必须满足有效候选、当前依据、需要时的负责人通过及无未答问题；转交、重新认领、退回、重开、取消立即失效旧执行写资格；普通 commit 或 Hook 不能绕过。Taskloom 不跟踪外部进程是否停止。
 
 ## 一致性、权限与变化流
 

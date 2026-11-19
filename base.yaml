@@ -31,41 +31,16 @@ access:
   deps:
     store: sql
     tasks: sql
-ready:
-  use: state/ready
 flow:
-  use: flow/directory
-  config:
-    defaultID: standard
-    defaultVersion: '1'
-  deps:
-    positions: sql
-    flows: [flow-standard]
-flow-standard:
   use: task/flow
   config:
-    id: standard
-    version: '1'
+    acceptance: manual
   deps:
-    definitions: sql
     positions: sql
-    executions: sql
-    questions: sql
-    states: [ready, executing, accepting, completed]
-executing:
-  use: state/executing
-  deps:
-    results: sql
-accepting:
-  use: state/accepting
-  deps:
     results: sql
     reviews: sql
-    members: sql
-completed:
-  use: state/completed
-  deps:
-    results: sql
+    questions: sql
+    executions: sql
 command-runtime:
   use: commands/runtime
   deps:
@@ -157,7 +132,7 @@ result-commands:
     executions: sql
     results: sql
     commits: sql
-    accepting: accepting
+    reviews: sql
     snapshots: workflow-query
     events: sql
 question-commands:

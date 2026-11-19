@@ -4,7 +4,7 @@ M04/权限/cap 简化已提交为 `f71bde2`。M05 在其上提供本地任务执
 
 ## 运行与身份
 
-沿用 M04 的私有管理员凭据、两层配置和本地工作台 `/v1/app`。默认新任务绑定 standard/1：ready → executing → accepting → completed。不兼容旧定义：旧任务的 FlowRef 不存在于当前目录时明确冲突，不偷偷升级。
+沿用 M04 的私有管理员凭据、两层配置和本地工作台 `/v1/app`。步骤 ready → executing → accepting → completed 由事实推导（见[任务流程](task-flow-plugins.md)），新任务按 `flow.config.acceptance` 固定验收方式。
 
 管理员可通过本地受控 CLI 登记 Agent 并分别签发业务/运行时证明凭据：
 
@@ -22,26 +22,22 @@ CLI 不打印秘密，不覆盖文件，保留操作者、原因、owner/实例�
 | 模块 | 当前职责与 Deps |
 | --- | --- |
 | commands/execution | 分配、认领（新认领失效旧执行），并提供 execution.Progress（记录执行者最近进展）；9 项：principals、members、participants、commands、tasks、flow、executions、snapshots、events |
-| commands/result | 原子提交正文/交付、撤回、调用验收 State 的命名动作；9 项：commands、tasks、flow、executions、results、commits、accepting、snapshots、events |
+| commands/result | 原子提交正文/交付、撤回、记录负责人验收结论；9 项：commands、tasks、flow、executions、results、commits、reviews、snapshots、events |
 | commands/flow | 取消、退回、重开；6 项：commands、tasks、flow、executions、snapshots、events |
 | query/workflow | 当前执行/交付/验收与操作提示；9 项：commits、transactions、tasks、flow、executions、results、reviews、identity、authorization |
-| task/flow | 定义固定、位置/轮次唯一写入者；definitions、positions、states、executions；states 有序组合 |
-| flow/directory | defaultID/version 与 flows 列表，按任务绑定引用路由；positions 只读、flows 列表 |
-| state/executing | 检查当前轮当前依据的有效交付；只读 results |
-| state/accepting | 自有 pending/结论记录和当前资格判断；results、reviews、members；提供 RecordVerdict，不依赖 flow/命令 |
-| state/completed | 当前交付有效性；只读 results；控制器只另加“未回答问题”这一道固定完成门 |
+| task/flow | 阶段/轮次唯一写入者，步骤由事实推导；positions、results、reviews、questions、executions 五项，config.acceptance 为新任务验收方式 |
 | api/workflow | 独立协议模块；executions、results、controls、workflow 查询、questions、security 六项 |
 | api/mcp | MCP（Streamable HTTP）协议适配，见 [MCP 接入](mcp-adapter.md)；tasks、comments、workflow、executions、results、questions、security 七项，均为面向执行 Agent 的局部窄接口 |
 
 超过五字段保留理由：各命令模块必须显式协调事务内领域事实，但分配/执行、交付/验收、流程控制保持独立 provider；只读聚合单独提供内部 FactsReader，命令不额外持有查询仓储写能力。共同代码是包内辅助逻辑，不是依赖包或服务定位器。HTTP 的 Origin/CSRF/会话凭据解析作为内聚 RequestSecurity 复用，HTTP owner 只启动/关闭一次会话模块。没有新增 registry 或配置层。
 
-根默认图以 [base.yaml](../base.yaml) 为准（含后续新增的 catalog、question-commands 与 mcp-api），由 PluginKit 真实构建校验引用与无环。标准定义的行为摘要包含有序状态描述。改同 ID/版本的步骤/规则导致不匹配时拒绝，不能继续沿旧位置执行新规则：新建任务时 EnsureDefinition 比对已登记摘要，已绑定任务读取时摘要不符明确冲突；尚无启动前的全量摘要校验。示例片段必须并入同一个 config.yaml；不能作为第三层加载。
+根默认图以 [base.yaml](../base.yaml) 为准（含后续新增的 catalog、question-commands 与 mcp-api），由 PluginKit 真实构建校验引用与无环。验收方式在创建时写入任务位置，部署改默认值不影响旧任务；未记录验收方式的旧位置明确冲突。示例片段必须并入同一个 config.yaml；不能作为第三层加载。
 
 ## 执行、进展与写入隔离
 
-执行只以 ExecutionID 和写资格对外表达，没有代次（Generation）；流程位置不保存进入标识（EntryID），评审与确认记录以轮次 + 候选交付标识。该 schema（workflow/001 v2）不兼容此前的本地数据库：迁移校验和不一致时服务拒绝启动，需删除旧 SQLite 文件后重新 bootstrap。
+执行只以 ExecutionID 和写资格对外表达，没有代次（Generation）；流程位置只存阶段、轮次、验收方式和 Revision，评审结论以轮次 + 候选交付标识。该 schema（workflow/001 v2）不兼容此前的本地数据库：迁移校验和不一致时服务拒绝启动，需删除旧 SQLite 文件后重新 bootstrap；移除 flow/001 流程定义表后同样如此。
 
-认领在同 SQL 写事务内检查任务/轮次/依据、流程 Revision、明确分配、主体/实例、已到达步骤以及执行角色。两个并发认领最多一个成功；客户端只按 ExecutionID 识别执行，存储内部按认领顺序找当前执行。正常状态推进保留 RoundID，步骤在一轮内只前进、最多进入一次。
+认领在同 SQL 写事务内检查任务/轮次/依据、流程 Revision、明确分配、主体/实例以及依据是否完整（CheckOpen）。两个并发认领最多一个成功；客户端只按 ExecutionID 识别执行，存储内部按认领顺序找当前执行。正常推进保留 RoundID。
 
 执行没有租约、心跳或超时。执行记录 `ProgressAt`：认领、执行者本人留言（workspace 经 execution.Progress）、提问（question-commands 经 execution.Progress）和提交结果时在同一事务内更新；他人留言不算。它只供负责人和 Agent 判断进展，不推动流程 Revision、不产生状态变化，也不自动重派；长期沉默的执行由负责人留言、转交或取消处理。没有后台扫描器。
 
@@ -52,15 +48,15 @@ CLI 不打印秘密，不覆盖文件，保留操作者、原因、owner/实例�
 
 ## 交付、验收与一致性
 
-Submit 原子追加不可变 result commit、登记 Submission，再核对已到达步骤；正文只存一份，交付/评审引用 CommitID。当前首版提交新文本；普通评论不能伪造 result 类型。同执行、轮次、依据下重复相同正文的新请求键会返回当前候选，不重复登记；不同正文生成新 commit 和候选。并发/旧依据请求冲突，技术失败回滚正文/交付/步骤/事件/回执。
+Submit 原子追加不可变 result commit、登记 Submission，再由 flow 推导是否完成；正文只存一份，交付/评审引用 CommitID。当前首版提交新文本；普通评论不能伪造 result 类型。同执行、轮次、依据下重复相同正文的新请求键会返回当前候选，不重复登记；不同正文生成新 commit 和候选。并发/旧依据请求冲突，技术失败回滚正文/交付/阶段/事件/回执。
 
-人工验收 State 默认绑定创建时负责人（当前负责人无转移 API）；记录绑定轮次、SubmissionID、CommitID、BasisVersion 和 reviewer。首版不提供策略编辑/职责分离开关；未知配置或请求字段拒绝，不假称复杂策略已实现。角色授权不代替验收资格，管理员不是自动 reviewer。
+人工验收结论由负责人记录（验收人固定为负责人，当前负责人无转移 API）；记录绑定轮次、SubmissionID、CommitID、BasisVersion 和 reviewer。首版不提供策略编辑/职责分离开关；未知配置或请求字段拒绝，不假称复杂策略已实现。角色授权不代替验收资格，管理员不是自动 reviewer。
 
-新候选使旧结论不再当前：同步所有已到达状态的 Enter，创建对应候选的新 pending 记录，再重查整个前序。审核 wait/reject 保留合法交付，技术错误整体回滚；旧验收点击或外部确认不能覆盖新候选。撤回当前候选不恢复旧候选，历史正文/交付/结论保留。
+新候选使旧结论不再当前：结论绑定 SubmissionID/CommitID/BasisVersion，新候选没有结论即推导为待验收，不存 pending 记录。验收等待/退回保留合法交付，技术错误整体回滚；旧验收点击或外部确认不能覆盖新候选。撤回当前候选不恢复旧候选，历史正文/交付/结论保留。
 
-验收通过与任务完成分别记录。完成前重查当前轮全部已到达步骤与未回答问题；末状态完成才保存 completed。终态拒绝后续写入，普通评论不重开任务，也不能提交/撤回改变当前结果。流程乐观版本使用 Position.Revision，任务依据写入仍使用 Task.Version。
+验收通过与任务完成分别记录。每个命令末尾 Refresh 重新推导；有效交付、需要时的负责人通过和无未答问题同时满足才保存 completed。终态拒绝后续写入，普通评论不重开任务，也不能提交/撤回改变当前结果。流程乐观版本使用 Position.Revision，任务依据写入仍使用 Task.Version。
 
-退回只走显式受权命令，新轮回准备位置；重开只允许 cancelled/completed。均失效旧执行写资格，当前轮候选/结论为空，历史不删除。新轮尚无可写执行时可更新依据；本轮已有人认领则拒绝编辑，不能在运行中悄改标准。初版通过“退回→修改依据”完成采用新要求，冲突时需刷新。
+退回只走显式受权命令，新轮从事实重新推导步骤；重开只允许 cancelled/completed。均失效旧执行写资格，当前轮候选/结论为空，历史不删除。新轮尚无可写执行时可更新依据；本轮已有人认领则拒绝编辑，不能在运行中悄改标准。初版通过“退回→修改依据”完成采用新要求，冲突时需刷新。
 
 ## API 与薄界面
 
@@ -90,14 +86,14 @@ Submit 原子追加不可变 result commit、登记 Submission，再核对已到
 
 任务参与者（处理人、负责人或其他参与者）需要输入或协助时用 `commands/question` 提问：问题正文是不可变的 question commit，`cap/question` 记录只保存轮次、提问人、被提问人、状态及回答 commit 引用。被提问人默认是负责人，也可以指定一位当前参与者（有效成员，不能是自己）；协助人需先由负责人加入任务，处理人不能自行拉人。未回答的问题使快照 `Questions` 非空、`NextActor=addressee`，并进入被提问人的 inbox（人看“待我处理”，Agent 经 MCP inbox）。只有被提问人可以回答（人或 Agent 均可），回答追加 answer commit（RefID 指向问题），以“仍为 open”条件更新，重复回答冲突，且只限当前活跃轮。旧轮或已取消/完成任务的问题不再显示也不可回答。独立的协作工作留给子任务（M07+）。
 
-当前轮存在未回答问题时任务不能完成：这道门由 flow 控制器固定执行（`task/flow` 多步定义必须注入 questions），不进入状态描述和 FlowRef 摘要，因此不改变已有定义的版本。Agent 仍可继续执行、提交结果和被验收，只是最后完成被挡住，Waiting 显示“等待被提问人回答问题”；回答命令同事务刷新流程，条件满足即完成。
+当前轮存在未回答问题时任务不能完成：这道门是 flow 推导的固定一项。Agent 仍可继续执行、提交结果和被验收，只是最后完成被挡住，Waiting 显示“等待被提问人回答问题”；回答命令同事务刷新流程，条件满足即完成。
 
 question-commands 有 9 个 Deps（命令生命周期、任务、流程、时间线、问题记录、执行进展、用于校验被提问人的成员/参与关系、快照、事件），与其他命令模块同理保留；query/workflow 为 10 个只读依赖，api/workflow 为 6 个协议依赖，均不引入写接口或服务定位。
 
-## 状态扩展示例
+## 配置示例
 
-- `examples/flows/automatic.config.yaml`：新增 automatic/1，省略人工验收 State，仍检查有效交付，不另设 acceptanceMode；由 runtime/config 测试真实构建。
-- 状态组合与 API 装配的通用性由测试中的 `test/failure-state`（技术失败整体回滚）和 `test/collision-api`（路由冲突启动前拒绝）覆盖；仓库不保留无消费者的示例步骤。
+- `examples/flows/automatic.config.yaml`：新任务验收方式改为 none，仍检查有效交付；由 runtime/config 测试真实构建。
+- API 装配的通用性由测试中的 `test/collision-api`（路由冲突启动前拒绝）覆盖。
 
 命令可提供由服务端代码构造的具名资格检查（command.Request.Authorize），在首次执行和重放前都运行；该回调不来自 HTTP，不是跳过授权开关，未提供时使用固定业务规则，未知操作仍拒绝。
 
@@ -105,7 +101,7 @@ question-commands 有 9 个 Deps（命令生命周期、任务、流程、时间
 
 真实 SQLite/HTTP 测试覆盖并发认领、进展时间记录与沉默不改变执行、换实例重新认领失效旧执行、错实例写入拒绝、取消与旧写入、旧执行隔离、同轮重试、新轮/新依据、结果更换/撤回及终态保护。C01—C11/C13 的本阶段基础场景均有对应回归；文件/链接的 C12 留 M07。
 
-扩展性当前由测试状态/模块验证：新增 State 装配后技术失败整体回滚、新增 API 模块路由冲突启动前拒绝、无验收流程真实构建。E01/E02 的事实审核与人工/异步确认示例已删除，待出现真实需求时随具体步骤实现并验收。
+扩展性当前由测试验证：提交后事件写入失败整体回滚、新增 API 模块路由冲突启动前拒绝、无验收配置真实构建。事实审核与人工/异步确认待出现真实需求时随具体条件实现并验收。
 
 内置浏览器在独立临时数据库完成负责人创建/分配→业务 Agent 认领/提交/结束→负责人验收等待；独立测试 runtime 通过实际 HTTP 提交匹配证明后，界面补拉显示 completed。这是协议与本地 UI 验证，不是实际进程清理证明。真实 Harness/运行实例、受管子进程和外部工作覆盖，以及 MySQL/PostgreSQL 与生产负载仍未验收，归 M06/后续阶段。
 

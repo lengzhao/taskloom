@@ -7,7 +7,6 @@ import (
 	"github.com/lengzhao/pluginkit"
 	"github.com/lengzhao/pluginkit/build"
 	"github.com/lengzhao/taskloom/cap/fault"
-	"github.com/lengzhao/taskloom/cap/flow"
 	"github.com/lengzhao/taskloom/cap/httpapi"
 	"github.com/lengzhao/taskloom/cap/record"
 	capsecurity "github.com/lengzhao/taskloom/cap/security"
@@ -20,46 +19,13 @@ import (
 	"time"
 )
 
-type failureState struct{}
-
-func (failureState) Describe() flow.Description {
-	return flow.Description{Key: "technical-failure", Version: "1"}
-}
-func (failureState) CheckEnter(context.Context, flow.Context) (flow.Check, error) {
-	return flow.Check{Status: flow.Allow}, nil
-}
-func (failureState) Enter(context.Context, flow.Context) error {
-	return errors.New("injected local storage failure")
-}
-func (failureState) CheckComplete(context.Context, flow.Context) (flow.Check, error) {
-	return flow.Check{Status: flow.Allow}, nil
-}
-
 type collisionAPI struct{}
 
 func (collisionAPI) Routes() []httpapi.Route {
 	return []httpapi.Route{{Method: "POST", Path: "/tasks/{id}/review", Operation: "test.collision", Handler: http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})}}
 }
 func init() {
-	pluginkit.Register("test/failure-state", func() (*failureState, error) { return &failureState{}, nil })
 	pluginkit.Register("test/collision-api", func() (*collisionAPI, error) { return &collisionAPI{}, nil })
-}
-func TestSubmitTechnicalFailureRollsBackCommitAndDelivery(t *testing.T) {
-	f := setup(t, map[string]any{"failure": map[string]any{"use": "test/failure-state"}, "flow-standard": map[string]any{"deps": map[string]any{"states": []string{"ready", "executing", "failure", "accepting", "completed"}}}})
-	d := f.create(t)
-	s := f.open(t, d)
-	version := s.Position.Revision
-	if _, e := f.results.Submit(f.ctx, f.agent, "failure", api.Submit{Basis: basis(d, s), ExecutionID: s.Execution.ID, Body: "must rollback"}); e == nil {
-		t.Fatal("technical failure accepted")
-	}
-	s = f.read(t, d.Task.ID)
-	if s.Submission != nil || s.Review != nil || s.Position.State != "executing" || s.Position.Revision != version {
-		t.Fatal("facts leaked")
-	}
-	cs, e := f.commits.List(f.ctx, "t", d.Task.ID, 0, 100)
-	if e != nil || len(cs) != 1 {
-		t.Fatal("commit leaked", len(cs), e)
-	}
 }
 func TestNewModuleRouteConflictRejectedBeforeStart(t *testing.T) {
 	dir := t.TempDir()
@@ -95,7 +61,7 @@ func TestIdenticalResultDifferentKeyDoesNotDuplicateCandidate(t *testing.T) {
 	}
 }
 func TestNoAcceptanceVerdictAndWrongInstanceRejected(t *testing.T) {
-	f := setup(t, map[string]any{"flow-standard": map[string]any{"deps": map[string]any{"states": []string{"ready", "executing", "completed"}}}})
+	f := setup(t, map[string]any{"flow": map[string]any{"config": map[string]any{"acceptance": "none"}}})
 	d := f.create(t)
 	s := f.open(t, d)
 	issued, e := f.security.Issue(f.ctx, f.owner, "other-instance", capsecurity.IssueInput{Tenant: "t", Subject: "agent", InstanceID: "other-machine", Incarnation: "boot", ExpiresAt: time.Now().Add(time.Hour)})

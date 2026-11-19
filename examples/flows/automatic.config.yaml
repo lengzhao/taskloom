@@ -1,18 +1,5 @@
-# Optional new definition; keep old definitions referenced by existing tasks.
+# New tasks complete on a valid result without human acceptance.
+# Existing tasks keep the acceptance mode they were created with.
 flow:
   config:
-    defaultID: automatic
-    defaultVersion: '1'
-  deps:
-    flows: [flow-standard, flow-automatic]
-flow-automatic:
-  use: task/flow
-  config:
-    id: automatic
-    version: '1'
-  deps:
-    definitions: sql
-    positions: sql
-    executions: sql
-    questions: sql
-    states: [ready, executing, completed]
+    acceptance: none

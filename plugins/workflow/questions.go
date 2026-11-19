@@ -59,7 +59,7 @@ func (m *QuestionModule) activeRound(ctx context.Context, p identity.Principal, 
 	if e != nil {
 		return t, flow.Position{}, e
 	}
-	pos, e := m.s.d.Flow.Read(ctx, t.Tenant, t.ID)
+	pos, e := m.s.d.Flow.Read(ctx, t)
 	if e != nil {
 		return t, pos, e
 	}

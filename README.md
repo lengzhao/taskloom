@@ -6,7 +6,7 @@
 
 只建设任务系统，复用已有管理平台及 Agent 运行能力，不建设模型推理、工具执行、上下文组装或远端派发。
 
-采用模块化单体：接口清晰的模块通过 Deps 与配置组合，共享一个 SQL 事务边界。所有流程步骤统一为 State，任务绑定版本化流程定义与策略；同任务结果/评审/阶段原子更新，跨任务影响与通知异步处理。新增流程步骤和 API 通过新实现及配置接入，不修改原消费者。权威设计见[架构](docs/architecture.md)。
+采用模块化单体：接口清晰的模块通过 Deps 与配置组合，共享一个 SQL 事务边界。流程只存阶段、轮次和创建时固定的验收方式，当前步骤由任务事实推导；同任务结果/评审/阶段原子更新，跨任务影响与通知异步处理。新增 API 通过新实现及配置接入，不修改原消费者。权威设计见[架构](docs/architecture.md)。
 
 ## 当前状态
 
@@ -22,7 +22,7 @@
 
 | 主题 | 文档 |
 | --- | --- |
-| 设计 | [架构](docs/architecture.md)、[核心契约 C01—C18](docs/core-contracts.md)、[状态模块与流程](docs/task-flow-plugins.md)、[Commit 与结果交付](docs/reply-delivery.md) |
+| 设计 | [架构](docs/architecture.md)、[核心契约 C01—C18](docs/core-contracts.md)、[任务流程](docs/task-flow-plugins.md)、[Commit 与结果交付](docs/reply-delivery.md) |
 | 协议与权限 | [共用 API 与变化流](docs/shared-api-and-realtime.md)、[MCP 接入](docs/mcp-adapter.md)、[成员与任务权限](docs/permissions.md) |
 | 配置与工程 | [两层配置](docs/configuration.md)、[开发说明](docs/development.md) |
 | 阶段实现 | [M03 存储](docs/m03-storage.md)、[M04 工作台](docs/m04-workspace.md)、[M05 流程闭环](docs/m05-workflow.md)、[开发清单](todo.md) |

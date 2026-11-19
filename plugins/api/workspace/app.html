@@ -489,7 +489,7 @@ function renderNext(ctx) {
   let title;
   if (w.Position.Status === 'completed') title = '已完成：结果与验收已满足';
   else if (w.NextActor) title = '下一步等待：' + ACTOR_LABEL[w.NextActor];
-  else title = w.Position.Complete ? '当前步骤已完成' : '暂无需要处理的事项';
+  else title = '暂无需要处理的事项';
   panel.append(h('div', 'head', el('h3', title), pill(s)));
   if (w.Questions?.length) panel.append(el('p', '有待回答的问题，回答前任务不能完成。', 'muted'));
   else if (w.Position.Waiting) panel.append(el('p', w.Position.Waiting, 'muted'));

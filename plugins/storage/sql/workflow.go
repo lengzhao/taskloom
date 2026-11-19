@@ -147,15 +147,6 @@ func (s *Store) WithdrawSubmission(ctx context.Context, tenant, id string) error
 func reviewKey(v acceptance.Review) string {
 	return key(v.Tenant, v.TaskID, v.RoundID, v.SubmissionID)
 }
-func (s *Store) EnsureReview(ctx context.Context, v acceptance.Review) error {
-	return s.use(ctx, true, func(db *gorm.DB) error {
-		b, e := json.Marshal(v)
-		if e != nil {
-			return e
-		}
-		return db.Clauses(clause.OnConflict{DoNothing: true}).Create(&reviewRow{Key: reviewKey(v), Data: b}).Error
-	})
-}
 func (s *Store) GetReview(ctx context.Context, tenant, taskID, round, submission string) (acceptance.Review, error) {
 	var v acceptance.Review
 	e := s.use(ctx, false, func(db *gorm.DB) error {
@@ -167,7 +158,9 @@ func (s *Store) GetReview(ctx context.Context, tenant, taskID, round, submission
 	})
 	return v, e
 }
-func (s *Store) SaveVerdict(ctx context.Context, v acceptance.Review) error {
+
+// SaveReview keeps every verdict as history and the latest per submission as current.
+func (s *Store) SaveReview(ctx context.Context, v acceptance.Review) error {
 	return s.use(ctx, true, func(db *gorm.DB) error {
 		b, e := json.Marshal(v)
 		if e != nil {
@@ -176,14 +169,7 @@ func (s *Store) SaveVerdict(ctx context.Context, v acceptance.Review) error {
 		if e = db.Create(&verdictRow{ID: randomID(), Data: b}).Error; e != nil {
 			return e
 		}
-		r := db.Model(&reviewRow{}).Where("row_key = ?", reviewKey(v)).Update("data", b)
-		if r.Error != nil {
-			return r.Error
-		}
-		if r.RowsAffected != 1 {
-			return fault.ErrConflict
-		}
-		return nil
+		return db.Clauses(clause.OnConflict{UpdateAll: true}).Create(&reviewRow{Key: reviewKey(v), Data: b}).Error
 	})
 }
 

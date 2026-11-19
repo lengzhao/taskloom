@@ -37,7 +37,7 @@ type dependencies struct {
 	ResultExecutions execution.ResultAccess
 	Results          delivery.Store
 	Commits          commit.Log
-	Accepting        acceptance.Actions
+	Reviews          acceptance.Records
 	Snapshots        api.FactsReader
 	Events           record.EventWriter
 }
@@ -57,7 +57,7 @@ func (s *Service) load(ctx context.Context, p identity.Principal, in api.Basis) 
 	if e != nil {
 		return t, flow.Position{}, e
 	}
-	pos, e := s.d.Flow.Read(ctx, t.Tenant, t.ID)
+	pos, e := s.d.Flow.Read(ctx, t)
 	if e != nil {
 		return t, pos, e
 	}
@@ -150,7 +150,7 @@ func (s *Service) owned(ctx context.Context, p identity.Principal, taskID, execu
 	return t, v, nil
 }
 func (s *Service) active(ctx context.Context, t task.Task, v execution.Execution) error {
-	pos, e := s.d.Flow.Read(ctx, t.Tenant, t.ID)
+	pos, e := s.d.Flow.Read(ctx, t)
 	if e != nil {
 		return e
 	}
@@ -233,14 +233,28 @@ func (s *Service) Review(ctx context.Context, token, key string, in api.Review) 
 		if e != nil {
 			return nil, e
 		}
-		if pos.Status != flow.PhaseActive || s.d.Accepting == nil {
+		if pos.Status != flow.PhaseActive || pos.Acceptance != flow.AcceptanceManual {
 			return nil, fault.ErrConflict
 		}
-		step, e := s.d.Flow.Step(tx, t, s.d.Accepting.Describe().Key)
+		if p.Kind != "human" || p.ID != t.Owner {
+			return nil, az.ErrForbidden
+		}
+		if (in.Outcome != acceptance.OutcomeApproved && in.Outcome != acceptance.OutcomeRejected) || len(in.Reason) > 20000 {
+			return nil, fault.ErrInput
+		}
+		// A rejection returns work to the executor, which needs to know what to change.
+		if in.Outcome == acceptance.OutcomeRejected && strings.TrimSpace(in.Reason) == "" {
+			return nil, fault.ErrInput
+		}
+		v, e := s.d.Results.CurrentSubmission(tx, t.Tenant, t.ID, pos.RoundID)
 		if e != nil {
 			return nil, e
 		}
-		if e = s.d.Accepting.RecordVerdict(tx, step, p, in.Verdict); e != nil {
+		if v.ID != in.SubmissionID || v.CommitID != in.CommitID || v.BasisVersion != t.BasisVersion {
+			return nil, fault.ErrConflict
+		}
+		r := acceptance.Review{Tenant: t.Tenant, TaskID: t.ID, ID: id(), RoundID: pos.RoundID, SubmissionID: v.ID, CommitID: v.CommitID, Reviewer: p.ID, Outcome: in.Outcome, Reason: in.Reason, BasisVersion: t.BasisVersion}
+		if e = s.d.Reviews.SaveReview(tx, r); e != nil {
 			return nil, e
 		}
 		return s.finish(tx, t)

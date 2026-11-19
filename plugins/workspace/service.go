@@ -208,7 +208,7 @@ func (s *Service) detail(ctx context.Context, p identity.Principal, t task.Task,
 	if e := s.d.Authorization.Check(ctx, p, "task.read", t.ID); e != nil {
 		return d, e
 	}
-	pos, e := s.d.Flow.Read(ctx, t.Tenant, t.ID)
+	pos, e := s.d.Flow.Read(ctx, t)
 	if e != nil {
 		return d, e
 	}

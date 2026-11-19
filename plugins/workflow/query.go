@@ -198,7 +198,7 @@ func (s *Query) openBlock(ctx context.Context, p identity.Principal, t task.Task
 	switch {
 	case out.Position.Status != flow.PhaseActive:
 		return api.ReasonTaskNotActive
-	case p.Kind != "human" && (p.Kind != "agent" || p.CredentialPurpose != "business"):
+	case p.Kind != "human" && (p.Kind != "agent" || p.InstanceID == "" || p.Incarnation == ""):
 		return api.ReasonCredential
 	case out.Assignee != p.ID:
 		return api.ReasonNotAssigned
@@ -223,8 +223,6 @@ func submitBlock(p identity.Principal, t task.Task, pos flow.Position, v executi
 	switch {
 	case pos.Status != flow.PhaseActive:
 		return api.ReasonTaskNotActive
-	case p.Kind != "human" && p.CredentialPurpose != "business":
-		return api.ReasonCredential
 	case !ownExecution(p, v):
 		return api.ReasonNotYourExecution
 	case !v.Writable:

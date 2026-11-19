@@ -5,7 +5,6 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
 
@@ -268,24 +267,6 @@ func TestRootDefaultGraphBuilds(t *testing.T) {
 	}
 	if app == nil {
 		t.Fatal("missing root application")
-	}
-}
-
-func TestRetiredFlowOverlaysPreserveCurrentDefaults(t *testing.T) {
-	expected, err := cfg.LoadFiles("../../base.yaml", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, name := range []string{"standard", "no-review"} {
-		t.Run(name, func(t *testing.T) {
-			actual, err := cfg.LoadFiles("../../base.yaml", "../../examples/flows/"+name+".config.yaml")
-			if err != nil {
-				t.Fatal(err)
-			}
-			if !reflect.DeepEqual(actual, expected) {
-				t.Fatal("retired overlay changed runnable graph")
-			}
-		})
 	}
 }
 

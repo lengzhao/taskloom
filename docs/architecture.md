@@ -32,7 +32,7 @@ Task 与 Flow position 分表/接口归属，task/facts 不写状态。正文唯
 - task/flow：状态/轮次/位置唯一写入者；通过有序 states 调用步骤，保留“未答问题不完成”等固定保护。
 - 命名命令与查询：依赖上述能力及事务、身份、权限；HTTP 只协议适配，薄界面调用同一 API。
 
-当前实例与依赖见[运行依赖图](m05-dependencies.md)，接口见[cap 清单](cap-interfaces.md)。SQL 实现各领域仓储，不能把领域规则放入 SQL。插件不直接 import 其他插件实现；共享事务不代表共享领域所有权。超过五个 Deps 记录协调职责及拆分理由，不把不同接口打包规避计数。
+当前实例与依赖以 [base.yaml](../base.yaml) 为准，接口见[cap 清单](cap-interfaces.md)。SQL 实现各领域仓储，不能把领域规则放入 SQL。插件不直接 import 其他插件实现；共享事务不代表共享领域所有权。超过五个 Deps 记录协调职责及拆分理由，不把不同接口打包规避计数。
 
 ## 流程组合
 

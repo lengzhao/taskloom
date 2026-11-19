@@ -40,7 +40,7 @@ func (s *Service) actor(ctx context.Context, token string) (identity.Principal, 
 		return p, e
 	}
 	m, e := s.d.Members.GetMember(ctx, p.Tenant, p.ID)
-	if e != nil || !m.Active || (m.Role != "admin" && m.Role != "member") || (p.CredentialPurpose != "" && p.CredentialPurpose != "business") {
+	if e != nil || !m.Active || (m.Role != "admin" && m.Role != "member") {
 		return p, az.ErrForbidden
 	}
 	return p, nil

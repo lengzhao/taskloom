@@ -64,7 +64,7 @@ func (m *Module) loginToken(w http.ResponseWriter, r *http.Request, token string
 			if !view.CanAdmin || exists {
 				return "", identity.ErrUnauthenticated
 			}
-		} else if p.Kind != "agent" || p.CredentialPurpose != "business" {
+		} else if p.Kind != "agent" {
 			return "", identity.ErrUnauthenticated
 		}
 		return token, nil

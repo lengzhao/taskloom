@@ -7,11 +7,11 @@
 - 本项目只建设任务系统；软件分发、管理平台、Agent 运行时复用已有能力，不重新建设模型推理、工具执行、远端派发或上下文组装。
 - 人是默认负责人，处理人可以是人或 Agent（Buddy），人工处理人可以再转交给 Agent；任务、commit 时间线、执行记录、实例分别表达，更换 Buddy/实例不自动更换负责人。
 - 先读 [README](README.md)；涉及能力边界读 [模块化单体](docs/architecture.md)及[插件边界](docs/plugin-contracts.md)；流转读 [状态模块与流程控制](docs/task-flow-plugins.md)；交付读 [结果回复契约](docs/reply-delivery.md)；API/推送读 [通信契约](docs/shared-api-and-realtime.md)；配置读 [两层配置](docs/configuration.md)。
-- 已初始化 go.mod，核心行为以 [核心契约](docs/core-contracts.md)及[阶段覆盖表](docs/requirements-coverage.md)为准；已实现 M03 的 GORM/SQLite 存储与身份/安全命令基础，见 [M03 实现](docs/m03-storage.md)，M04 已有本地任务/commit/准备流程闭环，见 [M04 实现](docs/m04-workspace.md)，M05 已有本地执行/结果/验收/取消闭环，见 [M05 实现](docs/m05-workflow.md)，真实运行时验证仍属 M06；工作前检查实际文件，不把文档中的 kind、接口或默认值视为已经实现。待决策项和已确认约束分开，发现冲突先指出，不自行扩大范围。
+- 已初始化 go.mod，核心行为以 [核心契约](docs/core-contracts.md)及[开发清单](todo.md)为准；已实现 M03 的 GORM/SQLite 存储与身份/安全命令基础，见 [M03 实现](docs/m03-storage.md)，M04 已有本地任务/commit/准备流程闭环，见 [M04 实现](docs/m04-workspace.md)，M05 已有本地执行/结果/验收/取消闭环，见 [M05 实现](docs/m05-workflow.md)，真实运行时验证仍属 M06；工作前检查实际文件，不把文档中的 kind、接口或默认值视为已经实现。待决策项和已确认约束分开，发现冲突先指出，不自行扩大范围。
 
 ## 插件与接口
 
-- 外部项目和 Nex V2 调研以吸取优点、查缺补漏为主，代码复用/组件引入优先级最低；不为迁移旧实现改变本项目边界。已确认的 PluginKit 和已有管理平台/Agent 能力复用保持不变，具体映射见 [参考清单](docs/nex-v2-references.md)。
+- 外部项目和 Nex V2 只用于吸取优点、查缺补漏，代码复用/组件引入优先级最低；不为迁移旧实现改变本项目边界。已确认的 PluginKit 和已有管理平台/Agent 能力复用保持不变。
 - 组合优先：先找现有能力；确有缺口再选择最小实现位置，不因一个辅助函数新增插件，也不为减少实例数合并不同职责。
 - 每个接口表达一种内聚能力；插件就是接口清晰、依赖经 Deps 声明并由配置组合的模块。采用单体部署/共享事务，命令、领域能力、状态步骤、API 均可配置组合；准备/执行/事实审核/人工验收/完成统一实现 State，不另建审核引擎；内部辅助函数不单独装配。配置连接模块，代码负责模块内部业务与动作顺序。
 - 复用 PluginKit 注册、配置识别及实例图构建；不另建 registry、全局服务容器或依赖注入机制。
@@ -49,7 +49,7 @@
 
 - 运行时只有 `base.yaml`（当前实际可运行默认图及全局默认值）与 `config.yaml`（日常部署覆盖）两层。默认维护者只改 config，项目开发维护 base；不为普通部署复制全图或增加第三层。
 - 同 ID 且 use 未变时递归合并；标量覆盖、列表整体替换；use 改变时整节点替换。复用 AgentKit MergeYAML，不另写一套不兼容合并语义；真实构建用 PluginKit，不照搬 AgentKit runner resolver。
-- `examples/flows/*.config.yaml` 暂为空覆盖，待可组合流程模块实现后提供真实构建示例。未来能力仅在真实实现后加入 base；目标架构留在文档，不预置未实现业务 kind。
+- `examples/flows/*.config.yaml` 只放能真实构建的流程覆盖示例。未来能力仅在真实实现后加入 base；目标架构留在文档，不预置未实现业务 kind。
 - 固定不变量不做无意义开关；有用参数提供明确默认值。删除空通知链等无行为节点，不隐藏真实依赖或弱化生命周期。
 - 修改后运行与范围匹配的验证。当前文档/配置需检查 YAML、两层合并、引用、依赖环、根可达、生命周期 owner 及文档链接；最小工程另运行 `sh scripts/check.sh all` 和 `sh scripts/check.sh race`，见 [工程入口](docs/development.md)；当前 health 图不能冒充业务可运行。
 - 不照搬 AgentKit 的脚本路径和测试命令；先查本仓库实际验证入口。运行态改动覆盖相关事务、并发、取消、恢复和授权边界。报告实际通过、未运行及受限项，静态检查不能表述为系统可运行。

@@ -11,7 +11,7 @@
 ## 当前状态
 
 - 已实现：Go/PluginKit 底座；M03 GORM/SQLite 存储、共享事务、身份、幂等、审计/outbox 与管理员 CLI；M04 任务/commit 工作台；M05 本地执行、结果提交、验收、取消及安全退回/重开。
-- 根 base/config 为 24 实例的 SQLite 工作台图（见 [M05 运行图](docs/m05-dependencies.md)），`examples/minimal` 保留纯 health 图；health 不表示数据库或业务就绪。
+- 根 [base.yaml](base.yaml)/config 为当前 SQLite 工作台图，`examples/minimal` 保留纯 health 图；health 不表示数据库或业务就绪。
 - 未实现：Harness 适配与真实 Agent 联调（下一步 M06）、WebSocket、文件/S3、任务树、提醒与历史恢复。本地测试不代表真实进程清理或生产数据库验收。
 - 本地工作台：`http://127.0.0.1:8080/v1/app`，初始化与启动见 [M04](docs/m04-workspace.md)，执行与验收见 [M05](docs/m05-workflow.md)。
 - Docker：`docker build -t taskloom:local .`，再 `docker run -d --name taskloom -p 8899:8899 -v taskloom-data:/data taskloom:local`，访问 `http://localhost:8899/v1/app`。端口由 `TASKLOOM_PORT`（默认 8899，宿主机与容器同端口）决定，Origin 默认 `http://localhost:端口`，可用 `TASKLOOM_ORIGIN` 覆盖；非 localhost 访问须走 HTTPS。首次启动前用同一数据卷执行 `docker run --rm -v taskloom-data:/data taskloom:local taskloom-admin -base /app/base.yaml -config /app/config.yaml -mode bootstrap ... -credential-file /data/admin.json` 初始化管理员。需要内部 Go 模块代理时用构建参数传入本机设置：`docker build --build-arg GOPROXY="$(go env GOPROXY)" --build-arg GOSUMDB="$(go env GOSUMDB)" -t taskloom:local .`（也支持 `GOPRIVATE`）；离线构建可在构建上下文先执行 `go mod vendor`。
@@ -23,11 +23,11 @@
 | 主题 | 文档 |
 | --- | --- |
 | 设计 | [架构](docs/architecture.md)、[核心契约 C01—C18](docs/core-contracts.md)、[状态模块与流程](docs/task-flow-plugins.md)、[Commit 与结果交付](docs/reply-delivery.md) |
-| 边界与接口 | [插件契约](docs/plugin-contracts.md)、[cap 能力清单](docs/cap-interfaces.md)、[当前依赖图](docs/m05-dependencies.md) |
-| 协议与权限 | [共用 API 与变化流](docs/shared-api-and-realtime.md)、[独立接入契约](docs/integration-contract.md)、[MCP 接入](docs/mcp-adapter.md)、[成员与任务权限](docs/permissions.md) |
+| 边界与接口 | [插件契约](docs/plugin-contracts.md)、[cap 能力清单](docs/cap-interfaces.md) |
+| 协议与权限 | [共用 API 与变化流](docs/shared-api-and-realtime.md)、[MCP 接入](docs/mcp-adapter.md)、[成员与任务权限](docs/permissions.md) |
 | 配置与工程 | [两层配置](docs/configuration.md)、[开发说明](docs/development.md) |
 | 阶段实现 | [M03 存储](docs/m03-storage.md)、[M04 工作台](docs/m04-workspace.md)、[M05 流程闭环](docs/m05-workflow.md)、[开发清单](todo.md) |
-| 需求与参考 | [产品需求](docs/product-requirements.md)、[阶段覆盖](docs/requirements-coverage.md)、[外部参考](docs/open-source-references.md)、[Nex V2 参考](docs/nex-v2-references.md) |
+| 需求与参考 | [产品需求](docs/product-requirements.md)、[开发清单与阶段对照](todo.md) |
 
 分期：第一阶段薄界面与真实 Buddy 文本闭环，第二阶段文件/任务树协作，第三阶段历史恢复与治理。
 

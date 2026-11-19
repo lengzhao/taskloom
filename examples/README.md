@@ -1,5 +1,5 @@
 # 示例
 
-根 base/config 与 [minimal/base.yaml](minimal/base.yaml)、[minimal/config.yaml](minimal/config.yaml) 均为当前可运行 HTTP health 图，只表示进程存活。每次运行只选择一对文件，不叠加成三层。
+根 base/config 与 [minimal/base.yaml](minimal/base.yaml)、[minimal/config.yaml](minimal/config.yaml) 均可直接运行；minimal 只有 HTTP health，只表示进程存活。每次运行只选择一对文件，不叠加成三层。
 
-[standard](flows/standard.config.yaml) 和 [no-review](flows/no-review.config.yaml) 旧流程片段已退役为注释空覆盖，暂不装配尚未实现的状态链，也不启用验收业务；实现后按新接口恢复真实示例。任务策略与分期见[架构](../docs/architecture.md)。
+[automatic](flows/automatic.config.yaml)（无人工验收）和 [with-checkpoint](flows/with-checkpoint.config.yaml)（新增确认步骤与 API）是并入同一 config.yaml 的流程覆盖示例，均由 `plugins/workflow` 扩展测试真实构建。任务策略与分期见[架构](../docs/architecture.md)。

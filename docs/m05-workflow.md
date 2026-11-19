@@ -11,12 +11,11 @@ M04/权限/cap 简化已提交为 `f71bde2`。M05 在其上提供本地任务执
 ```sh
 go run ./cmd/taskloom-admin -mode enroll-agent -tenant example \
   -subject worker-1 -owner admin -instance machine-1 -incarnation boot-1 \
-  -purpose business -operator local-operator -reason agent-enrollment \
-  -credential-file /private/tmp/taskloom-worker-business.json
-# 同一绑定另行执行 -purpose runtime，使用新的私有输出文件。
+  -operator local-operator -reason agent-enrollment \
+  -credential-file /private/tmp/taskloom-worker.json
 ```
 
-CLI 不打印秘密，不覆盖文件，保留操作者、原因、owner/实例/用途审计。登记/签发不自动分配任务；负责人或管理员通过“分配 Agent ID”显式分配，原子建立该 Agent 的任务参与关系。Agent 只能认领自己的分配，仍需有效成员身份、业务用途凭据和匹配的实例/incarnation。owner 归属不授予任务或验收权限。更换实例需新的凭据绑定，新实例重新认领会失效旧执行。
+CLI 不打印秘密，不覆盖文件，保留操作者、原因、owner/实例审计。登记/签发不自动分配任务；负责人或管理员通过“分配 Agent ID”显式分配，原子建立该 Agent 的任务参与关系。Agent 只能认领自己的分配，仍需有效成员身份、有效凭据和匹配的实例/incarnation。owner 归属不授予任务或验收权限。更换实例需新的凭据绑定，新实例重新认领会失效旧执行。
 
 ## 领域与装配
 
@@ -36,7 +35,7 @@ CLI 不打印秘密，不覆盖文件，保留操作者、原因、owner/实例/
 
 超过五字段保留理由：各命令模块必须显式协调事务内领域事实，但分配/执行、交付/验收、流程控制保持独立 provider；只读聚合单独提供内部 FactsReader，命令不额外持有查询仓储写能力。共同代码是包内辅助逻辑，不是依赖包或服务定位器。HTTP 的 Origin/CSRF/会话凭据解析作为内聚 RequestSecurity 复用，HTTP owner 只启动/关闭一次会话模块。没有新增 registry 或配置层。
 
-根默认图为 25 个实际实例（含后续新增的 catalog、question-commands 与 mcp-api），见[逐字段依赖图](m05-dependencies.md)，122 条字段目标边，无环且全部根可达。准备定义与标准定义共存；标准定义的行为摘要包含有序状态描述。改同 ID/版本的步骤/规则导致不匹配时拒绝，不能继续沿旧位置执行新规则。示例片段必须并入同一个 config.yaml；不能作为第三层加载。
+根默认图以 [base.yaml](../base.yaml) 为准（含后续新增的 catalog、question-commands 与 mcp-api），由 PluginKit 真实构建校验引用与无环。准备定义与标准定义共存；标准定义的行为摘要包含有序状态描述。改同 ID/版本的步骤/规则导致不匹配时拒绝，不能继续沿旧位置执行新规则：新建任务时 EnsureDefinition 比对已登记摘要，已绑定任务读取时摘要不符明确冲突；尚无启动前的全量摘要校验。示例片段必须并入同一个 config.yaml；不能作为第三层加载。
 
 ## 执行、进展与写入隔离
 

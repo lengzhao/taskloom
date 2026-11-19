@@ -28,7 +28,6 @@ type credentialRow struct {
 	Revoked      bool
 	InstanceID   string `gorm:"size:128"`
 	Incarnation  string `gorm:"size:128"`
-	Purpose      string `gorm:"size:16"`
 }
 type receiptRow struct {
 	Key    string `gorm:"primaryKey;size:64;column:row_key"`

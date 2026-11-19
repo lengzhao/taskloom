@@ -48,9 +48,6 @@ func valid(s string) bool {
 	return len(s) > 0 && len(s) <= 128 && strings.TrimSpace(s) == s && !strings.ContainsAny(s, "\x00\n\r*")
 }
 func credential(p identity.Principal, expires time.Time) (identity.Credential, capsecurity.Issued, error) {
-	if p.CredentialPurpose == "" {
-		p.CredentialPurpose = "business"
-	}
 	if !expires.After(time.Now()) || expires.After(time.Now().Add(90*24*time.Hour)) {
 		return identity.Credential{}, capsecurity.Issued{}, fault.ErrInput
 	}
@@ -111,7 +108,7 @@ func (s *Service) Create(ctx context.Context, token, key string, p identity.Prin
 			return nil, fault.ErrInput
 		}
 		if p.Kind == "agent" {
-			if !valid(p.OwnerID) || p.InstanceID != "" || p.Incarnation != "" || p.CredentialPurpose != "" {
+			if !valid(p.OwnerID) || p.InstanceID != "" || p.Incarnation != "" {
 				return nil, fault.ErrInput
 			}
 			owner, err := s.d.Principals.Resolve(tx, p.Tenant, p.OwnerID)
@@ -155,7 +152,6 @@ func (s *Service) Issue(ctx context.Context, token, key string, in capsecurity.I
 		}
 		subject.InstanceID = in.InstanceID
 		subject.Incarnation = in.Incarnation
-		subject.CredentialPurpose = "business"
 		c, out, err := credential(subject, in.ExpiresAt)
 		if err != nil {
 			return nil, err
@@ -259,8 +255,7 @@ func (s *Service) Recover(ctx context.Context, in BootstrapInput) (capsecurity.I
 }
 
 // EnrollAgent is an explicitly invoked offline operator capability. It binds a
-// service credential to one runtime incarnation and never exposes a model/tool
-// credential as runtime stop-proof authority.
+// credential to one runtime instance and incarnation.
 type AgentEnrollment struct {
 	BootstrapInput
 	Owner, InstanceID, Incarnation string
@@ -296,7 +291,6 @@ func (s *Service) EnrollAgent(ctx context.Context, in AgentEnrollment) (capsecur
 		}
 		p.InstanceID = in.InstanceID
 		p.Incarnation = in.Incarnation
-		p.CredentialPurpose = "business"
 		c, out, e := credential(p, in.ExpiresAt)
 		if e != nil {
 			return e

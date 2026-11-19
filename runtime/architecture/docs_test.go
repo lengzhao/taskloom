@@ -18,7 +18,7 @@ var (
 func TestDocumentLinksAndFences(t *testing.T) {
 	root := filepath.Join("..", "..")
 	files := []string{"README.md", "AGENTS.md", "todo.md"}
-	for _, pattern := range []string{"docs/*.md", "docs/plans/*.md", "examples/*.md"} {
+	for _, pattern := range []string{"docs/*.md", "examples/*.md"} {
 		matches, err := filepath.Glob(filepath.Join(root, pattern))
 		if err != nil {
 			t.Fatal(err)

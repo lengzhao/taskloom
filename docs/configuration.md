@@ -1,6 +1,6 @@
 # 两层配置与实际可运行图
 
-根 base/config 只描述已实现能力，当前为 22 实例的 SQLite 工作台与 M05 流程图（见[运行图](m05-dependencies.md)）；examples/minimal 保留纯 health。未来架构只在[设计](architecture.md)描述，不提供未实现的完整业务图。
+根 base/config 只描述已实现能力，当前为 SQLite 工作台与 M05 流程图（见 [base.yaml](../base.yaml)）；examples/minimal 保留纯 health。未来架构只在[设计](architecture.md)描述，不提供未实现的完整业务图。
 
 ## 规则
 
@@ -24,7 +24,7 @@ server 以 resources 管 SQL、以 components 管 http，http 管各 API 模块�
 
 `storage/sql` 内部使用 GORM；连接字段为 `driver` 和 `dsn`。本地默认 `driver: sqlite`、`dsn: taskloom.db`（相对工作目录），生产通过同一 config.yaml 覆盖。切换到 MySQL/PostgreSQL 时同时选择对应 driver 和原生 DSN；同类型数据库只需改 DSN。业务 Deps、接口及状态配置不变，不新增配置层或通用 DSN 猜测规则。携带凭据的 DSN 不进入日志，当前通过受限部署 config 文件提供，不隐式插值环境变量。
 
-SQL resource 由 server 打开和关闭。支持范围以实际编入并验证的驱动为准；数据库切换与已有数据搬迁是两件事。存储一致性与迁移要求见[接入契约](integration-contract.md)。
+SQL resource 由 server 打开和关闭。支持范围以实际编入并验证的驱动为准；数据库切换与已有数据搬迁是两件事。存储一致性与迁移要求见 [M03](m03-storage.md)。
 
 实际接口、数据库支持与运维边界见[M03 实现](m03-storage.md)；origin/localHTTP、Cookie 与生产 HTTPS 配置见[M04 说明](m04-workspace.md)。
 

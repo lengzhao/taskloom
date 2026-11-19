@@ -38,7 +38,7 @@ FlowRef 的归属移至 flow.DefinitionRef，task.Task 不依赖 flow 或持有�
 
 ## 实际装配变化
 
-M04 提交时为 12 个实例；M05 为 22 个，当前含项目目录、请求输入与 MCP 接入共 25 个，见[实际图](m05-dependencies.md)。以下保留 M04 基础模块说明，M05 的 task/flow 改为 states 列表：
+M04 提交时为 12 个实例；M05 为 22 个，当前另含项目目录、请求输入与 MCP 接入，以 [base.yaml](../base.yaml) 为准。以下保留 M04 基础模块说明，M05 的 task/flow 改为 states 列表：
 
 - identity/local：store→identity.CredentialLookup（sql），不再提供 Directory 转发。
 - access/default：store→authorization.Relations（sql）、tasks→task.Reader（sql）。

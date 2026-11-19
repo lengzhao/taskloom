@@ -96,7 +96,7 @@ func (s *Service) Open(ctx context.Context, token, key string, in api.Open) (api
 		if e != nil {
 			return nil, e
 		}
-		if p.Kind != "human" && (p.Kind != "agent" || p.CredentialPurpose != "business" || p.InstanceID == "" || p.Incarnation == "") {
+		if p.Kind != "human" && (p.Kind != "agent" || p.InstanceID == "" || p.Incarnation == "") {
 			return nil, az.ErrForbidden
 		}
 		assigned, e := s.d.Executions.Assignee(tx, t.Tenant, t.ID)

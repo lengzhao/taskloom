@@ -40,11 +40,6 @@ func (s *Service) Check(ctx context.Context, p identity.Principal, op, resource 
 	if !m.Active || (m.Role != "admin" && m.Role != "member") {
 		return az.ErrForbidden
 	}
-	// Only business credentials act; stale runtime-purpose credentials from
-	// before stop proofs were removed are refused everywhere.
-	if p.CredentialPurpose != "" && p.CredentialPurpose != "business" {
-		return az.ErrForbidden
-	}
 	switch op {
 	case "space.edit", "identity.create", "identity.issue", "identity.revoke", "identity.password", "member.set":
 		if resource == p.Tenant && m.Role == "admin" && p.Kind == "human" {

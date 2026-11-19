@@ -40,7 +40,7 @@ func (s *Store) Resolve(ctx context.Context, tenant, id string) (identity.Princi
 }
 func (s *Store) SaveCredential(ctx context.Context, c identity.Credential) error {
 	return s.use(ctx, true, func(db *gorm.DB) error {
-		return db.Create(&credentialRow{ID: c.ID, PrincipalKey: key(c.Principal.Tenant, c.Principal.ID), Digest: c.Digest, ExpiresAt: c.ExpiresAt, Revoked: c.Revoked, InstanceID: c.Principal.InstanceID, Incarnation: c.Principal.Incarnation, Purpose: c.Principal.CredentialPurpose}).Error
+		return db.Create(&credentialRow{ID: c.ID, PrincipalKey: key(c.Principal.Tenant, c.Principal.ID), Digest: c.Digest, ExpiresAt: c.ExpiresAt, Revoked: c.Revoked, InstanceID: c.Principal.InstanceID, Incarnation: c.Principal.Incarnation}).Error
 	})
 }
 func (s *Store) FindCredential(ctx context.Context, digest string) (identity.Credential, error) {
@@ -49,7 +49,6 @@ func (s *Store) FindCredential(ctx context.Context, digest string) (identity.Cre
 	p := toPrincipal(row.Principal)
 	p.InstanceID = row.InstanceID
 	p.Incarnation = row.Incarnation
-	p.CredentialPurpose = row.Purpose
 	return identity.Credential{ID: row.ID, Principal: p, Digest: row.Digest, ExpiresAt: row.ExpiresAt, Revoked: row.Revoked}, err
 }
 func (s *Store) RevokeCredential(ctx context.Context, tenant, id string) error {

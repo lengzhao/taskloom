@@ -50,7 +50,7 @@ func (s *Service) Check(ctx context.Context, p identity.Principal, op, resource 
 		return nil
 	}
 	switch op {
-	case "identity.create", "identity.issue", "identity.revoke", "member.set":
+	case "identity.create", "identity.issue", "identity.revoke", "identity.password", "member.set":
 		if resource == p.Tenant && m.Role == "admin" && p.Kind == "human" {
 			return nil
 		}

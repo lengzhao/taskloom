@@ -42,7 +42,7 @@ func fixtureWithStore(t *testing.T) (*workspace.Service, *security.Service, stri
 	id, _ := local.New(local.Deps{Store: s})
 	az, _ := access.New(access.Deps{Store: s, Tasks: s})
 	r, _ := command.New(command.Deps{Transactions: s, Identity: id, Authorization: az, Requests: s, Audit: s, Events: s})
-	sec := security.New(security.Deps{Commands: r, Transactions: s, Principals: s, Credentials: s, Bootstrap: s, Members: s, Audit: s, Events: s})
+	sec := security.New(security.Deps{Passwords: s, Commands: r, Transactions: s, Principals: s, Credentials: s, Bootstrap: s, Members: s, Audit: s, Events: s})
 	issued, e := sec.Bootstrap(context.Background(), security.BootstrapInput{Tenant: "t", Subject: "u", Operator: "test", Reason: "test", ExpiresAt: time.Now().Add(time.Hour)})
 	if e != nil {
 		t.Fatal(e)

@@ -68,7 +68,8 @@ func run(ctx context.Context, args []string, out, errout io.Writer) int {
 	events, ok5 := build.GetByID[record.EventWriter](graph, *id)
 	credentials, ok6 := build.GetByID[identity.Credentials](graph, *id)
 	bootstrap, ok7 := build.GetByID[identity.BootstrapClaim](graph, *id)
-	if !ok1 || !ok2 || !ok3 || !ok4 || !ok5 || !ok6 || !ok7 {
+	passwords, ok8 := build.GetByID[identity.Passwords](graph, *id)
+	if !ok1 || !ok2 || !ok3 || !ok4 || !ok5 || !ok6 || !ok7 || !ok8 {
 		fmt.Fprintln(errout, "storage lacks administrative capabilities")
 		return 1
 	}
@@ -90,7 +91,7 @@ func run(ctx context.Context, args []string, out, errout io.Writer) int {
 		return 1
 	}
 	defer resource.Close(context.Background())
-	svc := security.New(security.Deps{Transactions: tx, Principals: identities, Credentials: credentials, Bootstrap: bootstrap, Members: members, Audit: audit, Events: events})
+	svc := security.New(security.Deps{Passwords: passwords, Transactions: tx, Principals: identities, Credentials: credentials, Bootstrap: bootstrap, Members: members, Audit: audit, Events: events})
 	in := security.BootstrapInput{Tenant: *tenant, Subject: *subject, Operator: *operator, Reason: *reason, ExpiresAt: time.Now().Add(*ttl)}
 	var issued capsecurity.Issued
 	if *mode == "enroll-agent" {

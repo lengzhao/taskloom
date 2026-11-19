@@ -45,7 +45,7 @@ func fixture(t *testing.T) (*store.Store, *command.Runner, *security.Service, st
 	if err != nil {
 		t.Fatal(err)
 	}
-	svc := security.New(security.Deps{Commands: runner, Transactions: s, Principals: s, Credentials: s, Bootstrap: s, Members: s, Audit: s, Events: s})
+	svc := security.New(security.Deps{Passwords: s, Commands: runner, Transactions: s, Principals: s, Credentials: s, Bootstrap: s, Members: s, Audit: s, Events: s})
 	issued, err := svc.Bootstrap(context.Background(), security.BootstrapInput{Tenant: "t", Subject: "admin", Operator: "test-operator", Reason: "initial setup", ExpiresAt: time.Now().Add(time.Hour)})
 	if err != nil {
 		t.Fatal(err)

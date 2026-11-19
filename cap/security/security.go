@@ -14,6 +14,11 @@ type MemberCommands interface {
 
 // Administration exposes ordinary authenticated administration, never bootstrap/recovery.
 type Administration interface {
+	CreateUser(ctx context.Context, credential, key string, value UserInput) error
+	SetPassword(ctx context.Context, credential, key string, value PasswordInput) error
+	ChangePassword(ctx context.Context, credential, key string, value ChangePasswordInput) error
+	Login(ctx context.Context, value LoginInput) (Issued, error)
+	HasPassword(ctx context.Context, tenant, subject string) (bool, error)
 	MemberCommands
 	Create(ctx context.Context, credential, idempotencyKey string, value identity.Principal) error
 	Issue(ctx context.Context, credential, idempotencyKey string, value IssueInput) (Issued, error)
@@ -26,3 +31,11 @@ type IssueInput struct {
 	ExpiresAt                        time.Time
 }
 type RevokeInput struct{ Tenant, CredentialID string }
+
+type UserInput struct{ Tenant, Username, Password string }
+type PasswordInput struct{ Tenant, Subject, Password string }
+type ChangePasswordInput struct {
+	PasswordInput
+	CurrentPassword string
+}
+type LoginInput struct{ Tenant, Username, Password string }

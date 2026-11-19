@@ -28,6 +28,7 @@ var migrations = []migration{
 	{"workflow/001", "execution-submission-and-state-owned-review-v1", []any{&stopEvidenceRow{}, &assignmentRow{}, &executionRow{}, &submissionRow{}, &reviewRow{}, &verdictRow{}, &positionHistoryRow{}}},
 	{"checkpoint/001", "state-owned-checkpoint-records-v1", []any{&checkpointRow{}}},
 	{"question/001", "round-scoped-input-requests-v1", []any{&questionRow{}}},
+	{"password/001", "salted-human-password-hash-v1", []any{&passwordRow{}}},
 }
 
 func migrate(ctx context.Context, db *gorm.DB, driver string) error {

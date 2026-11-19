@@ -14,11 +14,11 @@ SQL 可以实现多个能力，但消费者只通过 typed Deps 得到需要的�
 | --- | --- | --- |
 | task | Reader.GetTask；Store 组合 Reader、ListTasks、CreateTask、UpdateBasis | access 仅拿 Reader；workspace 同时读写所以保留完整 Store，不额外预造 Writer |
 | commit | Log.Append/Get/List | workspace 真实同时追加/回读/分页，保留一个内聚不可变 Log；无编辑、删除或任意 Execute |
-| identity | Authenticator；CredentialLookup；Principals；Credentials；BootstrapClaim | HTTP/命令用认证；认证插件仅拿 CredentialLookup；管理命令用主体与凭据管理；离线初始化使用 BootstrapClaim。目录读取留在 Principals，不再经认证插件转发；没有独立消费者就不预留 Directory |
+| identity | Authenticator；CredentialLookup；Principals；Credentials；Passwords；BootstrapClaim | HTTP/命令用认证；认证插件仅拿 CredentialLookup；管理命令用主体与凭据管理；离线初始化使用 BootstrapClaim。目录读取留在 Principals，不再经认证插件转发；没有独立消费者就不预留 Directory |
 | authorization | MemberReader/MemberWriter；Relations（成员+参与只读）；ParticipantWriter；Authorizer | access 只读关系和任务；workspace 只查成员并写参与关系；成员管理只拿 MemberWriter。固定业务规则保留，没有 Scope/Grant |
 | flow | DefinitionRef、DefinitionStore、PositionStore、State、Controller、Role、Phase | 版本化定义和可变位置分开；flow controller 显式组合两者；workspace 调用 Controller，不能绕过它写位置。SavePosition 带预期版本；Controller.Step 按步骤 key 返回已到达条目的上下文，供步骤自有动作使用 |
 | workspace | Commands、Queries、ChangeFeed | HTTP 各命名写入/快照查询/变化补拉分别依赖能力，可独立替换；仍由同一 workspace 实例提供，无新增容器或服务分发 |
-| security | Administration（Create/Issue/Revoke/SetMember） | HTTP 仅持有已认证管理员的日常管理命令，不包含 bootstrap/recover；凭据 DTO 位于 cap/security |
+| security | Administration（身份、密码、登录及 Agent 凭据管理） | HTTP 仅持有已认证管理员的日常管理命令，不包含 bootstrap/recover；凭据 DTO 位于 cap/security |
 | record | Receipts；AuditWriter；EventWriter；EventLog | 命令回执 find/save 总在一起；审计只追加；命令和安全管理只写事件；workspace 同时写/扫描，才使用 EventLog（写入加内部扫描）；没有只读消费者，不预留 EventReader |
 | command | Handler.Do，typed Request | security/workspace 注入共享命令生命周期接口，不依赖具体 Runner；runtime 的泛型 Run 只计算类型化输入摘要并调用 Handler，不派发业务动作 |
 | unitofwork | Manager.Do | 保留同事务及 rollback-only 机制；只包含 ErrTransaction/ErrRollback，不承载通用业务错误 |
@@ -44,7 +44,7 @@ M04 提交时为 12 个实例；M05 为 22 个，加入请求输入后为 23 个
 - access/default：store→authorization.Relations（sql）、tasks→task.Reader（sql）。
 - task/flow：definitions→flow.DefinitionStore（sql）、positions→flow.PositionStore（sql）、state→ready。
 - commands/runtime：6 字段，transactions、requests、identity、authorization、audit、events；同事务生命周期，不分发业务。
-- commands/security：8 字段，分别为 commands、transactions、principals、credentials、bootstrap、members、audit、events。HTTP 使用 Administration，不获得离线初始化/恢复能力；members 使用 MemberStore 校验所属人和签发对象的有效性。
+- commands/security：9 字段，分别为 commands、transactions、principals、credentials、passwords、bootstrap、members、audit、events。HTTP 使用 Administration，不获得离线初始化/恢复能力；members 使用 MemberStore 校验所属人和签发对象的有效性。
 - workspace/tasks：10 字段，transactions、tasks、commits、flow、identity、authorization、commands、members、participants、events。它是当前纵向切片编排边界，事实所有权未合并；成员只读与参与写入明确分开。members 使用 MemberDirectory（GetMember + ListActiveMembers + ListMembers），由现有 SQL 联查成员和主体供候选选择，不增加依赖字段或新表；workflow 等其他消费者仍只获得 MemberReader。
 - api/workspace：5 字段，commands、queries、changes 分别指向同一个 workspace 实例，identity 与 security 提供认证和成员命令。
 
@@ -72,4 +72,4 @@ workspace 不再自行构造第二个 Runner：配置将 commands 指向现有 c
 
 人工处理复用 workflow 的分配/执行/交付命令；execution.Reader.Assignee 和 Store.AssignSubject 使用中性处理人命名。ResultAccess 只在 Reader 上增加 SaveExecution，供交付事务结束人工执行；其余只读消费者仍使用 Reader。authorization.Relations 增加 IsAssigned 用于人工处理人的有限转交资格；字段数量、配置及插件数量不变。公共 Snapshot 增加 CanAssign/ViewerKind，Assignee 和 NextActor=assignee 同时服务用户与 Agent。
 
-用户/Agent 管理复用 workspace 的只读成员查询和 security 的已有命令：Viewer 返回当前身份及 CanAdmin，Members 仅返回当前租户管理目录（含停用成员）。API/workspace 仍为 5 个 Deps，Security 改为 Administration；workspace/安全模块的依赖字段数量不变。原 domain/security 的凭据 DTO 移至 cap/security，所有 CLI/API/测试消费者同步更新，无别名兼容层。
+用户/Agent 管理复用 workspace 的只读成员查询和 security 的已有命令：Viewer 返回当前身份及 CanAdmin，Members 仅返回当前租户管理目录（含停用成员）。API/workspace 仍为 5 个 Deps，Security 改为 Administration；workspace 的依赖字段数量不变；安全模块增加 Passwords 依赖，用于密码存储与单租户登录范围发现。原 domain/security 的凭据 DTO 移至 cap/security，所有 CLI/API/测试消费者同步更新，无别名兼容层。

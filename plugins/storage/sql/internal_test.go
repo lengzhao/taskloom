@@ -141,7 +141,7 @@ func TestCredentialPersistenceContainsOnlyDigestAndExpiryIsChecked(t *testing.T)
 	if err := s.Open(ctx); err != nil {
 		t.Fatal(err)
 	}
-	svc := security.New(security.Deps{Transactions: s, Principals: s, Credentials: s, Bootstrap: s, Members: s, Audit: s, Events: s})
+	svc := security.New(security.Deps{Passwords: s, Transactions: s, Principals: s, Credentials: s, Bootstrap: s, Members: s, Audit: s, Events: s})
 	issued, err := svc.Bootstrap(ctx, security.BootstrapInput{Tenant: "t", Subject: "admin", Operator: "op", Reason: "test", ExpiresAt: time.Now().Add(time.Hour)})
 	if err != nil {
 		t.Fatal(err)

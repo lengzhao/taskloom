@@ -39,6 +39,7 @@ type Commands interface {
 type Viewer struct {
 	Tenant, Subject, Kind string
 	CanAdmin              bool
+	PasswordSet           bool
 }
 type Queries interface {
 	Viewer(ctx context.Context, credential string) (Viewer, error)

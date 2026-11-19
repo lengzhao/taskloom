@@ -52,3 +52,12 @@ type Credentials interface {
 type BootstrapClaim interface {
 	ClaimBootstrap(ctx context.Context) error
 }
+
+// Passwords stores only salted password hashes, keyed by tenant and human subject.
+type Passwords interface {
+	PasswordHash(ctx context.Context, tenant, subject string) (string, error)
+	SetPasswordHash(ctx context.Context, tenant, subject, hash string) error
+	// SingleLoginTenant is used only when deployment has not configured loginTenant.
+	// Ambiguous multi-tenant deployments must configure an explicit login scope.
+	SingleLoginTenant(ctx context.Context) (string, error)
+}

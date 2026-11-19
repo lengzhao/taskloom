@@ -49,8 +49,14 @@ workspace.SetParticipant 只允许有效管理员/负责人，加入对象必须
 
 - GET /v1/me：当前有效成员的 Tenant、Subject、Kind、CanAdmin。
 - GET /v1/members：仅管理员可读，返回本租户用户与 Agent（含停用成员）的标识、类型、所属人、角色、启用状态，无凭据信息。
-- POST /v1/identities：Subject、Kind（human/agent）、OwnerID；创建有效普通成员，Agent 的所属人须为同租户有效用户。
-- POST /v1/credentials：Subject、ExpiresAt；Agent 还需 InstanceID、Incarnation、Purpose（business/runtime）。仅为有效成员签发，最长 90 天。
+- POST /v1/identities：Subject、Kind（human/agent）、OwnerID、Password（仅用户）；创建有效普通成员，Agent 的所属人须为同租户有效用户。
+- POST /v1/credentials：Subject、ExpiresAt、InstanceID、Incarnation、Purpose（business/runtime）。仅为有效 Agent 签发，最长 90 天。
 - POST /v1/credentials/revoke：CredentialID；管理员撤销本租户凭据。
 
 新增身份和凭据 API 的租户由可信认证主体确定，浏览器不能提交 Tenant 或创建管理员角色。凭据明文只在首次签发响应中返回，可复制或下载；数据库/幂等回执只保存摘要或编号，重试只返回编号。明文关闭窗口即清空，不写浏览器持久化存储。网络结果不明确时页面沿用同一请求及幂等键；重放拿不到明文时可按返回编号撤销，再重新签发。停用不删除历史数据，重新启用恢复仍保留的任务关系。
+
+### 密码登录
+
+管理员在“用户与 Agent”中创建用户时同时填写初始密码；人类用户不再签发页面访问凭据。Agent 保留凭据签发流程。POST /v1/session 接收 Username/Password；POST /v1/account/password 接收 CurrentPassword/Password，用于本人修改密码（首次设置不需要旧密码）；POST /v1/users/{id}/password 仅供管理员重置同租户人类用户密码。两类改密均撤销目标的所有会话和凭据。GET /v1/me 的 PasswordSet 仅报告当前用户是否已设置密码。
+
+POST /v1/identities 创建人类时需要 Password，创建 Agent 时拒绝 Password。POST /v1/credentials 仅接受 Agent。已有管理员可通过旧凭据首次登录设置密码；普通用户由管理员设置初始密码，之后直接用户名/密码登录。

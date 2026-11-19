@@ -29,8 +29,9 @@ import (
 var assets embed.FS
 
 type Config struct {
-	Origin    string `json:"origin"`
-	LocalHTTP bool   `json:"localHTTP"`
+	Origin      string `json:"origin"`
+	LoginTenant string `json:"loginTenant"`
+	LocalHTTP   bool   `json:"localHTTP"`
 }
 type Deps struct {
 	Commands api.Commands            `json:"commands"`
@@ -40,11 +41,12 @@ type Deps struct {
 	Security security.Administration `json:"security"`
 }
 type Module struct {
-	c        Config
-	d        Deps
-	aead     cipher.AEAD
-	mu       sync.Mutex
-	sessions map[string]int64
+	c             Config
+	d             Deps
+	aead          cipher.AEAD
+	mu            sync.Mutex
+	sessions      map[string]int64
+	loginAttempts map[string]loginWindow
 }
 
 func init() { pluginkit.Register("api/workspace", New) }
@@ -67,11 +69,11 @@ func New(c Config, d Deps) (*Module, error) {
 	if e != nil {
 		return nil, e
 	}
-	return &Module{c: c, d: d, aead: aead, sessions: map[string]int64{}}, nil
+	return &Module{c: c, d: d, aead: aead, sessions: map[string]int64{}, loginAttempts: map[string]loginWindow{}}, nil
 }
 func (m *Module) Routes() []httpapi.Route {
 	routes := []httpapi.Route{}
-	for _, r := range []struct{ method, path, op string }{{"GET", "/me", "session.viewer"}, {"GET", "/members", "members.list"}, {"POST", "/identities", "identity.create"}, {"POST", "/credentials", "identity.issue"}, {"POST", "/credentials/revoke", "identity.revoke"}, {"GET", "/app", "ui.app"}, {"POST", "/session", "session.login"}, {"DELETE", "/session", "session.logout"}, {"GET", "/tasks", "tasks.list"}, {"POST", "/tasks", "tasks.create"}, {"GET", "/tasks/{id}", "tasks.get"}, {"PATCH", "/tasks/{id}", "tasks.edit"}, {"POST", "/tasks/{id}/commits", "commits.append"},
+	for _, r := range []struct{ method, path, op string }{{"POST", "/account/password", "identity.password.change"}, {"POST", "/users/{id}/password", "identity.password"}, {"GET", "/me", "session.viewer"}, {"GET", "/members", "members.list"}, {"POST", "/identities", "identity.create"}, {"POST", "/credentials", "identity.issue"}, {"POST", "/credentials/revoke", "identity.revoke"}, {"GET", "/app", "ui.app"}, {"POST", "/session", "session.login"}, {"DELETE", "/session", "session.logout"}, {"GET", "/tasks", "tasks.list"}, {"POST", "/tasks", "tasks.create"}, {"GET", "/tasks/{id}", "tasks.get"}, {"PATCH", "/tasks/{id}", "tasks.edit"}, {"POST", "/tasks/{id}/commits", "commits.append"},
 		{"GET", "/tasks/{id}/candidates", "tasks.candidates"}, {"POST", "/tasks/{id}/participants", "participants.set"}, {"GET", "/changes", "changes.read"}, {"POST", "/members", "members.set"}, {"DELETE", "/members", "members.remove"}} {
 		routes = append(routes, httpapi.Route{Method: r.method, Path: r.path, Operation: r.op, Handler: http.HandlerFunc(m.serve)})
 	}
@@ -134,8 +136,12 @@ func (m *Module) serve(w http.ResponseWriter, r *http.Request) {
 			httpx.Write(w, map[string]bool{"ok": true})
 			return
 		}
-		if _, e := m.d.Identity.Authenticate(r.Context(), token); e != nil {
-			httpx.Fail(w, e)
+		var e error
+		token, e = m.loginToken(w, r, token)
+		if e != nil {
+			if e != errDecoded {
+				httpx.Fail(w, e)
+			}
 			return
 		}
 		plain, _ := json.Marshal(session{token, time.Now().Add(time.Hour).Unix()})
@@ -170,10 +176,15 @@ func (m *Module) serve(w http.ResponseWriter, r *http.Request) {
 	var err error
 	switch {
 	case strings.HasSuffix(path, "/me"):
-		result, err = m.d.Queries.Viewer(ctx, token)
+		var view api.Viewer
+		view, err = m.d.Queries.Viewer(ctx, token)
+		if err == nil && view.Kind == "human" {
+			view.PasswordSet, err = m.d.Security.HasPassword(ctx, view.Tenant, view.Subject)
+		}
+		result = view
 	case strings.HasSuffix(path, "/members") && r.Method == "GET":
 		result, err = m.d.Queries.Members(ctx, token)
-	case strings.HasSuffix(path, "/identities"), strings.HasSuffix(path, "/credentials"), strings.HasSuffix(path, "/credentials/revoke"):
+	case strings.HasSuffix(path, "/password"), strings.HasSuffix(path, "/identities"), strings.HasSuffix(path, "/credentials"), strings.HasSuffix(path, "/credentials/revoke"):
 		result, err = m.administration(w, r, token)
 		if err == errDecoded {
 			return

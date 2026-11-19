@@ -113,17 +113,26 @@ details[open] > summary { margin-bottom: 4px }
 <body>
 <header>
   <h1>Taskloom <span>/</span> 工作台</h1>
-  <div class="actions" style="margin:0"><button id="members-admin" hidden>用户与 Agent</button><button id="logout" hidden>退出</button></div>
+  <div class="actions" style="margin:0"><button id="account-password" hidden>修改密码</button><button id="members-admin" hidden>用户与 Agent</button><button id="logout" hidden>退出</button></div>
 </header>
 <div id="notice" role="status" aria-live="polite"></div>
 
-<form id="login" class="panel">
-  <h2>进入工作台</h2>
-  <p class="muted" style="margin-top:6px">使用管理员签发的凭据登录。凭据只用于建立本次会话。</p>
-  <label for="token">访问凭据</label>
-  <input id="token" type="password" autocomplete="off" required>
-  <div class="actions"><button class="primary">登录</button></div>
-</form>
+<section id="login" class="panel">
+  <h2>登录 Taskloom</h2>
+  <form id="password-login">
+    <label>用户名<input id="username" autocomplete="username" required maxlength="128"></label>
+    <label>密码<input id="password" type="password" autocomplete="current-password" required maxlength="128"></label>
+    <div class="actions"><button class="primary">登录</button></div>
+  </form>
+  <details id="credential-login-box">
+    <summary>Agent 接入 / 已有管理员首次设置密码</summary>
+    <form id="credential-login">
+      <p class="muted small">普通用户请使用用户名和密码。首次迁移的管理员可用原凭据登录后设置密码。</p>
+      <label for="token">接入凭据</label><input id="token" type="password" autocomplete="off" required>
+      <div class="actions"><button>凭据登录</button></div>
+    </form>
+  </details>
+</section>
 
 <main id="work" hidden>
   <aside>
@@ -153,6 +162,17 @@ details[open] > summary { margin-bottom: 4px }
   <section id="detail"><div class="panel empty">选择左侧任务，或新建一个任务。</div></section>
 </main>
 
+<dialog id="password-dialog" aria-labelledby="password-title">
+ <div class="head"><h2 id="password-title">修改密码</h2><button id="password-close" type="button">关闭</button></div>
+ <p id="password-notice" role="status" style="color:var(--warn)"></p>
+ <form id="change-password">
+  <label id="current-password-field">当前密码<input id="current-password" type="password" autocomplete="current-password" maxlength="128"></label>
+  <label>新密码<input id="new-password" type="password" autocomplete="new-password" required minlength="8" maxlength="128" placeholder="8–128 位"></label>
+  <label>确认新密码<input id="confirm-password" type="password" autocomplete="new-password" required minlength="8" maxlength="128"></label>
+  <p class="muted small">保存后，该用户的旧会话和旧凭据会失效，需要用新密码重新登录。</p>
+  <div class="actions"><button class="primary">保存密码</button></div>
+ </form>
+</dialog>
 <dialog id="members-dialog" aria-labelledby="members-title">
  <div class="head"><h2 id="members-title">用户与 Agent</h2><button id="members-close" type="button">关闭</button></div>
  <p id="members-notice" role="status" style="color:var(--warn);margin-top:10px"></p>
@@ -202,14 +222,14 @@ function h(tag, cls, ...children) {
   for (const c of children) if (c !== null && c !== undefined && c !== false) n.append(c);
   return n;
 }
-function notice(s) { $('notice').textContent = s; $('members-notice').textContent = $('members-dialog').open ? s : '' }
+function notice(s) { $('notice').textContent = s; $('members-notice').textContent = $('members-dialog').open ? s : ''; $('password-notice').textContent = $('password-dialog').open ? s : '' }
 function formdata(form) { return Object.fromEntries(new FormData(form)) }
 function handle(fn) {
   return async e => {
     e?.preventDefault();
     if (busy) return;
     busy = true;
-    try { await fn(e); notice('') } catch (x) { notice(x.message) } finally { busy = false }
+    try { notice(''); await fn(e) } catch (x) { notice(x.message) } finally { busy = false }
   };
 }
 function button(text, fn, cls = '') {
@@ -262,7 +282,9 @@ function pill(s) { return el('span', s.text, 'pill ' + s.cls) }
 // Leaving the session must not leave another user's task details on screen.
 let viewer = null;
 function showLogin() {
-  viewer = null;
+  viewer = null; retryKeys.clear();
+  $('account-password').hidden=true;
+  $('password-dialog').close();$('change-password').reset();
   $('members-admin').hidden = true;
   $('members-dialog').close();
   $('members-content').replaceChildren();
@@ -274,12 +296,15 @@ function showLogin() {
 async function start() {
   viewer = await api('/me');
   $('members-admin').hidden = !viewer.CanAdmin;
+  $('account-password').hidden=viewer.Kind!=='human';
+  $('account-password').textContent=viewer.PasswordSet?'修改密码':'设置登录密码';
   const p = await api('/changes');
   cursor = p.Cursor;
   // Open on "待我处理" only when something is actually waiting.
   view = (await api('/inbox')).length ? 'mine' : 'all';
   await list();
   $('work').hidden = false; $('login').hidden = true; $('logout').hidden = false;
+  if(viewer.Kind==='human' && !viewer.PasswordSet) openPassword();
 }
 
 // ---------- Task list ----------
@@ -615,7 +640,8 @@ async function openMembers(preselect = '') {
   const directory = h('section', null, el('h3', '已登记成员'));
   for (const m of members) {
     const actions = h('div', 'actions');
-    if (m.Active) actions.append(button('签发凭据', () => { subject.value = m.Subject; binding(); credentialForm.scrollIntoView({block:'center'}); }));
+    if(m.Kind==='human') actions.append(button('设置 / 重置密码',()=>openPassword(m.Subject)));
+    if (m.Active && m.Kind==='agent') actions.append(button('签发凭据', () => { subject.value = m.Subject; binding(); credentialForm.scrollIntoView({block:'center'}); }));
     if (m.Subject !== viewer.Subject) actions.append(button(m.Active ? '停用' : '启用', () => confirmThen(
       m.Active ? '停用后，该成员将不能访问和处理任务。继续？' : '启用后将恢复仍保留的任务关系。继续？',
       async () => { await api('/members', 'POST', {Tenant:viewer.Tenant,Subject:m.Subject,Role:m.Role,Active:!m.Active}); await openMembers(); }), m.Active ? 'danger' : ''));
@@ -626,20 +652,23 @@ async function openMembers(preselect = '') {
   const kind=el('select');
   for (const [value,text] of [['human','用户'],['agent','Agent']]) {const o=el('option',text);o.value=value;kind.append(o)}
   const id=el('input');id.required=true;id.maxLength=128;id.placeholder='例如 zhangsan 或 assistant-1';
+  const initialPassword=el('input');initialPassword.type='password';initialPassword.autocomplete='new-password';initialPassword.minLength=8;initialPassword.maxLength=128;initialPassword.placeholder='8–128 位';
+  const passwordField=field('初始密码',initialPassword);
   const owner=memberSelect(members.filter(m=>m.Kind==='human' && m.Active),'请选择所属用户');
   const ownerField=field('Agent 所属用户',owner);
-  function chooseKind(){ownerField.hidden=kind.value!=='agent';owner.required=kind.value==='agent'}
+  function chooseKind(){ownerField.hidden=kind.value!=='agent';owner.required=kind.value==='agent';passwordField.hidden=kind.value!=='human';initialPassword.required=kind.value==='human';if(kind.value==='agent')initialPassword.value=''}
   kind.onchange=chooseKind;chooseKind();
-  const create=h('form',null,el('h3','添加用户或 Agent'),field('成员类型',kind),field('成员标识',id),ownerField,
-    el('p','添加后可分配任务；签发凭据后，用户可登录，Agent 可连接任务系统。','muted small'),h('div','actions',el('button','添加成员','primary')));
+  const create=h('form',null,el('h3','添加用户或 Agent'),field('成员类型',kind),field('用户名 / Agent 标识',id),passwordField,ownerField,
+    el('p','用户创建后即可用用户名和密码登录；Agent 添加后再签发接入凭据。','muted small'),h('div','actions',el('button','添加成员','primary')));
   create.onsubmit=handle(async()=>{
     const subjectID=id.value.trim();
-    await api('/identities','POST',{Subject:subjectID,Kind:kind.value,OwnerID:kind.value==='agent'?owner.value:''});
-    await openMembers(subjectID);
-    notice('成员已添加，请在管理窗口中签发登录或接入凭据。');
+    await api('/identities','POST',{Subject:subjectID,Kind:kind.value,OwnerID:kind.value==='agent'?owner.value:'',Password:kind.value==='human'?initialPassword.value:''});
+    const human=kind.value==='human';
+    await openMembers(human?'':subjectID);
+    notice(human?'用户已创建，可用用户名和密码登录。':'Agent 已添加，请签发接入凭据。');
   });
   root.append(h('section',null,create));
-  const active=members.filter(m=>m.Active);
+  const active=members.filter(m=>m.Active && m.Kind==='agent');
   const subject=memberSelect(active,'请选择签发对象');
   if (active.some(m=>m.Subject===preselect)) subject.value=preselect;
   const days=el('select');
@@ -654,7 +683,7 @@ async function openMembers(preselect = '') {
   function binding(){const agent=members.find(m=>m.Subject===subject.value)?.Kind==='agent';agentFields.hidden=!agent;instance.required=agent;incarnation.required=agent}
   subject.onchange=binding;binding();
   const result=h('div',null);result.id='issued-credential';
-  const credentialForm=h('form',null,el('h3','签发登录 / 接入凭据'),field('签发对象',subject),field('有效期',days),agentFields,
+  const credentialForm=h('form',null,el('h3','签发 Agent 接入凭据'),field('签发对象',subject),field('有效期',days),agentFields,
     h('div','actions',el('button','生成凭据','primary')),result);
   let pendingIssue=null;
   credentialForm.onsubmit=handle(async()=>{
@@ -680,7 +709,7 @@ async function openMembers(preselect = '') {
     }
     result.append(el('p','凭据编号：'+issued.ID,'muted small'),button('撤销本次凭据',async()=>{await api('/credentials/revoke','POST',{CredentialID:issued.ID});result.replaceChildren(el('p','凭据已撤销'))},'danger'));
   });
-  root.append(h('section',null,credentialForm));
+  if(active.length) root.append(h('section',null,credentialForm));
   if(preselect) credentialForm.scrollIntoView({block:'center'});
 }
 $('members-admin').onclick=handle(()=>openMembers());
@@ -692,8 +721,36 @@ $('members-dialog').addEventListener('close',()=>{
   if (viewer) pendingRefresh = true;
 });
 
+// ---------- Password account flow ----------
+let passwordTarget=null;
+function openPassword(target=null){
+  passwordTarget=target;$('change-password').reset();$('password-notice').textContent='';
+  const needsCurrent=!target && viewer.PasswordSet;
+  $('current-password-field').hidden=!needsCurrent;$('current-password').required=needsCurrent;
+  $('password-title').textContent=target?'为 '+target+' 设置密码':viewer.PasswordSet?'修改登录密码':'设置登录密码';
+  if(!$('password-dialog').open)$('password-dialog').showModal();
+}
+$('account-password').onclick=()=>openPassword();
+$('password-close').onclick=()=>{$('change-password').reset();$('password-dialog').close()};
+$('password-dialog').addEventListener('close',()=>{$('change-password').reset()});
+$('password-dialog').addEventListener('cancel',()=>{$('change-password').reset()});
+$('change-password').onsubmit=handle(async()=>{
+  if($('new-password').value!==$('confirm-password').value)throw Error('两次输入的密码不一致');
+  const subject=viewer.Subject, target=passwordTarget;
+  const body={Password:$('new-password').value};
+  if(!target)body.CurrentPassword=$('current-password').value;
+  await api(target?'/users/'+encodeURIComponent(target)+'/password':'/account/password','POST',body);
+  $('change-password').reset();$('password-dialog').close();
+  if(!target || target===subject){await api('/session','DELETE');showLogin();$('username').value=subject;notice('密码已设置，请用用户名和新密码登录。')}
+  else notice('用户密码已更新，旧会话已失效。');
+});
+$('password-login').onsubmit=handle(async()=>{
+  try{await api('/session','POST',{Username:$('username').value.trim(),Password:$('password').value});await start()}
+  finally{$('password').value=''}
+});
+
 // ---------- Wiring ----------
-$('login').onsubmit = handle(async () => {
+$('credential-login').onsubmit = handle(async () => {
   await api('/session', 'POST', null, { Authorization: 'Bearer ' + $('token').value });
   $('token').value = '';
   await start();

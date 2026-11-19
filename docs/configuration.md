@@ -27,3 +27,5 @@ server 以 resources 管 SQL、以 components 管 http，http 管各 API 模块�
 SQL resource 由 server 打开和关闭。支持范围以实际编入并验证的驱动为准；数据库切换与已有数据搬迁是两件事。存储一致性与迁移要求见[接入契约](integration-contract.md)。
 
 实际接口、数据库支持与运维边界见[M03 实现](m03-storage.md)；origin/localHTTP、Cookie 与生产 HTTPS 配置见[M04 说明](m04-workspace.md)。
+
+用户登录默认从主体目录确定唯一的人类成员租户，因此单租户部署无需填写租户。多租户数据库须在 `workspace-api.config.loginTenant` 指定本页面的登录租户；不提供匿名租户目录或跨租户用户名搜索。Agent 凭据仍携带可信租户。

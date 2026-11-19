@@ -63,6 +63,7 @@ flowchart TD
   n14 -->|commands| n13
   n14 -->|transactions| n3
   n14 -->|principals| n3
+  n14 -->|passwords| n3
   n14 -->|credentials| n3
   n14 -->|bootstrap| n3
   n14 -->|members| n3
@@ -150,7 +151,7 @@ flowchart TD
 | accepting | state/accepting | results、reviews、members |
 | completed | state/completed | results |
 | command-runtime | commands/runtime | transactions、requests、identity、authorization、audit、events |
-| security | commands/security | commands、transactions、principals、credentials、bootstrap、members、audit、events |
+| security | commands/security | commands、transactions、principals、credentials、passwords、bootstrap、members、audit、events |
 | workspace | workspace/tasks | members、participants、transactions、tasks、commits、flow、identity、authorization、commands、events |
 | workspace-api | api/workspace | commands、queries、changes、identity、security |
 | workflow-query | query/workflow | questions、commits、transactions、tasks、flow、executions、results、reviews、identity、authorization |

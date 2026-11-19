@@ -25,6 +25,7 @@ import (
 // Bootstrap needs five independent capabilities; normal administrative commands
 // additionally use the shared command lifecycle. No hidden service container.
 type Deps struct {
+	Passwords    identity.Passwords        `json:"passwords"`
 	Commands     capcommand.Handler        `json:"commands"`
 	Transactions unitofwork.Manager        `json:"transactions"`
 	Principals   identity.Principals       `json:"principals"`
@@ -230,6 +231,11 @@ func (s *Service) Recover(ctx context.Context, in BootstrapInput) (capsecurity.I
 		}
 		if err = s.d.Credentials.RevokeSubjectCredentials(tx, p.Tenant, p.ID); err != nil {
 			return err
+		}
+		if s.d.Passwords != nil {
+			if err = s.d.Passwords.SetPasswordHash(tx, p.Tenant, p.ID, ""); err != nil {
+				return err
+			}
 		}
 		if err = s.d.Credentials.SaveCredential(tx, c); err != nil {
 			return err

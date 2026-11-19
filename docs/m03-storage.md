@@ -19,7 +19,7 @@
 | domain/security | 创建主体、签发/撤销凭据、授予/撤销权限；bootstrap/recover 仅给离线操作入口 |
 | cmd/taskloom-admin | 显式本地初始化/恢复；通过 PluginKit 结果中的能力接口获取 SQL，不依赖存储实现类型 |
 
-`runtime/command` 的六个 Deps 分别属于原子性、幂等、身份、权限及两种持久记录；保留独立接口，不合并为万能 Service。`domain/security` 八个 Deps 是 Commands 与 bootstrap/recover 所需的 Transactions/Principals/Credentials/Bootstrap/Members/Audit/Events；离线操作不伪造在线认证。普通命令统一经过 Commands，内部仓储写不另开事务。这两处超过五字段是有意保留的协调边界，后续 HTTP 仅包装命名方法。
+`runtime/command` 的六个 Deps 分别属于原子性、幂等、身份、权限及两种持久记录；保留独立接口，不合并为万能 Service。`domain/security` 九个 Deps 是 Commands 与 bootstrap/recover 所需的 Transactions/Principals/Credentials/Passwords/Bootstrap/Members/Audit/Events；离线操作不伪造在线认证。普通命令统一经过 Commands，内部仓储写不另开事务。这两处超过五字段是有意保留的协调边界，后续 HTTP 仅包装命名方法。
 
 identity/access 已注册并有真实配置注入测试；尚无业务 HTTP 消费者，因此不在根图增加无消费者实例。根图只挂 SQL resource。完整 51 节点清单是跨阶段目标图，与本页的实际接口/Deps 区分；尤其未来 access 的树范围、确认仓储尚未实现。
 
@@ -70,3 +70,9 @@ C13/C15—C18 在本阶段验证基础机制；真实任务回复/交付、历�
 权限模型已按用户要求简化，详见[成员与任务关系](permissions.md)；旧 Grant 数据格式不兼容，需开发环境重建数据库。本文已同步当前接口，不再提供动作目录/逐项授权。
 
 本轮删除了无生产消费者的通用版本仓储，事务回滚/并发测试使用真实任务事实。共享错误移至 cap/fault，事务包只保留事务生命周期错误；详见[能力审查](cap-interfaces.md)。
+
+## 用户密码与登录
+
+普通用户由管理员在页面输入用户名和初始密码创建，之后用用户名和密码登录。密码保存为随机盐的 PBKDF2-SHA256（600000 次），长度 8–128 字节；命令回执不保存明文，也不对明文直接做快速摘要。登录签发一小时的内部会话凭据，浏览器只持有 HttpOnly、SameSite Cookie。登录按来源 IP 限制每分钟 20 次尝试。修改或重置密码原子撤销该用户所有旧凭据与会话。
+
+已有管理员可用原凭据首次进入页面设置密码；设置后凭据登录入口仅供 Agent。离线 recover 清空旧密码并撤销凭据，以恢复首次设置流程。新表通过 password/001 迁移创建；回滚旧二进制前必须恢复升级前数据库。

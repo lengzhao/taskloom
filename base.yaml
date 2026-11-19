@@ -87,6 +87,7 @@ command-runtime:
 security:
   use: commands/security
   deps:
+    passwords: sql
     commands: command-runtime
     transactions: sql
     principals: sql

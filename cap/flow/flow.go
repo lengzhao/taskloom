@@ -21,7 +21,7 @@ const (
 // roles carry controller semantics; any other step leaves Role empty.
 //   - RoleReady must be first in a multi-step flow; task edits are allowed there.
 //   - RoleExecuting is the only step where OpenExecution may be checked.
-//   - RoleCompleted must be last; completing it also requires safe execution exit.
+//   - RoleCompleted must be last; completion checks results, acceptance and open questions only.
 //   - RoleAccepting marks the human acceptance step (informational).
 type Role string
 

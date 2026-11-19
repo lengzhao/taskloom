@@ -206,7 +206,7 @@ func TestCancelFencesWritesImmediately(t *testing.T) {
 		t.Fatal("old generation wrote into the new round", e)
 	}
 }
-func TestConcurrentClaimAndUnknownLeaseRecovery(t *testing.T) {
+func TestConcurrentClaimAndSilenceKeepsExecution(t *testing.T) {
 	f := setup(t, nil)
 	d := f.create(t)
 	s := f.read(t, d.Task.ID)

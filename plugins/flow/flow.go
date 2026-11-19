@@ -61,7 +61,7 @@ func New(c Config, d Deps) (*Controller, error) {
 		descs = append(descs, v)
 	}
 	if len(d.States) > 1 && (descs[0].Role != capflow.RoleReady || !terminal || d.Executions == nil || d.Questions == nil) {
-		return nil, errors.New("workflow requires ready, terminal, execution safety and open-question gate")
+		return nil, errors.New("workflow requires ready, terminal, execution edit guard and open-question gate")
 	}
 	var b []byte
 	if len(descs) == 1 {
@@ -242,7 +242,7 @@ func (c *Controller) Refresh(ctx context.Context, t task.Task) (capflow.Position
 }
 
 // save persists p only when it differs from before. A no-op refresh (e.g. after
-// a lease renewal) keeps the revision, so clients' expected versions stay valid.
+// a progress-only write) keeps the revision, so clients' expected versions stay valid.
 func (c *Controller) save(ctx context.Context, before, p capflow.Position) (capflow.Position, error) {
 	if reflect.DeepEqual(before, p) {
 		return before, nil

@@ -73,11 +73,11 @@ Submit 原子追加不可变 result commit、登记 Submission，再核对已到
 | POST /results | Basis + ExecutionID/Generation/Body |
 | POST /review | Basis + SubmissionID/CommitID/Outcome/Reason，Outcome 为 approved/rejected；rejected 必须给出非空 Reason，否则按输入错误拒绝且不改变评审 |
 | POST /withdraw | Basis + SubmissionID |
-| POST /cancel、/return、/reopen | Basis，当前资格、版本与停止门重新检查 |
+| POST /cancel、/return、/reopen | Basis，重新检查当前资格与版本，同事务失效旧执行写资格 |
 | POST /questions | RoundID + Body + 可选 Addressee（默认负责人，否则须为当前参与者且有效成员，不能问自己） |
 | POST /questions/{qid}/answer | Body，仅被提问的人回答当前轮的未答问题 |
 
-界面支持角色切换、分配、认领、结果区、验收/撤回、取消、退回、重开及管理员恢复表单。布局为左侧任务列表（“待我处理/全部”，标出状态与等谁）与右侧详情：顶部“下一步”卡片（等谁、等待原因、待验收时的验收与分配入口），主栏为当前结果与时间线，侧栏为任务约定、执行、参与者、任务控制及仅对 Agent 会话显示的“Agent 调试”。界面不按状态名判断可用操作，只依据快照的 Can*/Blocked/NextActor；状态名仅用于显示。退回、取消、撤回、重开需二次确认；退出登录会清空当前详情。结果正文按稳定引用读取，不依赖时间线首屏。网络结果不明确时保留请求幂等键；编辑期间保留输入并提示刷新。查询操作提示不是授权凭证，服务端每次重新检查。
+界面支持角色切换、分配、认领、结果区、验收/撤回、取消、退回及重开。布局为左侧任务列表（“待我处理/全部”，标出状态与等谁）与右侧详情：顶部“下一步”卡片（等谁、等待原因、待验收时的验收与分配入口），主栏为当前结果与时间线，侧栏为任务约定、执行、参与者、任务控制及仅对 Agent 会话显示的“Agent 调试”。界面不按状态名判断可用操作，只依据快照的 Can*/Blocked/NextActor；状态名仅用于显示。退回、取消、撤回、重开需二次确认；退出登录会清空当前详情。结果正文按稳定引用读取，不依赖时间线首屏。网络结果不明确时保留请求幂等键；编辑期间保留输入并提示刷新。查询操作提示不是授权凭证，服务端每次重新检查。
 
 快照另带两项只读说明：`NextActor`（owner/assignee/reviewer/addressee；addressee 表示当前轮有未答问题，等被提问的人；空表示没有固定角色需要行动，步骤专有原因仍看 `Position.Waiting`）与 `Blocked`（仅对当前查看者相关的 open/submit/review 给出不可用原因码，例如 not_assigned、execution_in_progress、basis_changed、not_reviewer，完整列表见 `cap/workflow`）。每个 Can* 与其原因码出自同一判断函数，避免提示与开关漂移；原因码只解释当前状态，不是授权凭证，也不替代命令写入时的重查。
 
@@ -106,7 +106,7 @@ checkpoint 的写入入口是 POST `/v1/tasks/{id}/checkpoint`，输入 RoundID/
 
 ## 验证范围
 
-真实 SQLite/HTTP 测试覆盖并发认领、进展时间记录与沉默不改变执行、换实例重新认领失效旧代次、错实例写入拒绝、取消与旧写入、旧代次隔离、同轮重试、新轮/新依据、验收收尾等待、结果更换/撤回、终态保护及管理员恢复。C01—C11/C13 的本阶段基础场景均有对应回归；文件/链接的 C12 留 M07。
+真实 SQLite/HTTP 测试覆盖并发认领、进展时间记录与沉默不改变执行、换实例重新认领失效旧代次、错实例写入拒绝、取消与旧写入、旧代次隔离、同轮重试、新轮/新依据、结果更换/撤回及终态保护。C01—C11/C13 的本阶段基础场景均有对应回归；文件/链接的 C12 留 M07。
 
 E01—E03 已通过本地真实配置/SQLite/API 扩展验证：新 State/新 API 装配、业务审核等待保留交付、前序新证据重查、旧确认拒绝、技术失败回滚及路由冲突拒绝。脚本静态图不作为这些运行验收的替代。
 
@@ -120,6 +120,6 @@ E01—E03 已通过本地真实配置/SQLite/API 扩展验证：新 State/新 AP
 
 人工处理人复用 Open/SubmitResult：Open 建立服务端标记的 Manual 执行记录，保留轮次/依据/代次与并发隔离；没有 Agent 实例绑定。人工验收仍按原流程。
 
-负责人/管理员可分配给有效用户或 Agent。仍参与任务的当前人工处理人可以转交，普通参与者和 Agent 不能转交。转交失效原执行写资格，旧结果请求不能写入，原处理者保留参与关系而不保留分配权；负责人/验收人不变。运行中的 Agent 必须先提供原有停止/隔离证据才能转交。已提交的结果仍按现有验收、退回流程处理。
+负责人/管理员可分配给有效用户或 Agent。仍参与任务的当前人工处理人可以转交，普通参与者和 Agent 不能转交。转交失效原执行写资格，旧结果请求不能写入，原处理者保留参与关系而不保留分配权；负责人/验收人不变。转交不等待原执行者停下，旧执行在下次读写时得知已失效。已提交的结果仍按现有验收、退回流程处理。
 
 复用原 assignmentRow 的 Subject 和 executionRow 的 JSON 数据；不新增表、插件或配置。已有 Agent 执行未带 Manual 字段时自然为 false，不变更历史记录或已应用迁移。API/Go 消费者同步改用 Assignee、AssignSubject 与 assignee 角色；不保留旧字段别名。相关验证见 `plugins/workflow/human_test.go`。

@@ -19,7 +19,7 @@
 
 Description.Role 是 State 对控制器的固定契约，类型为 `flow.Role`：多步流程首步骤必须是 `ready`（允许修改依据），`executing` 是唯一可检查 OpenExecution 的步骤，`completed` 必须在最后（进入前检查未回答问题，不等待执行结束），`accepting` 标记人工验收；其他步骤不填 Role。任务生命周期为 `flow.Phase`（active/cancelled/completed）。
 
-Position.Revision 只在位置实际变化时递增，作为流程命令的 ExpectedRevision（任务依据修改用 task.Version 作 ExpectedVersion）；无变化的 Refresh 不写库、不发变化事件。执行保活只更新租约，不触发 Refresh。
+Position.Revision 只在位置实际变化时递增，作为流程命令的 ExpectedRevision（任务依据修改用 task.Version 作 ExpectedVersion）；无变化的 Refresh 不写库、不发变化事件。执行最近进展时间（ProgressAt）只更新执行记录，不触发 Refresh。
 
 ## 顺序推进与证据变化
 

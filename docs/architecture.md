@@ -19,7 +19,7 @@ Task 与 Flow position 分表/接口归属，task/facts 不写状态。正文唯
 
 正式修改目标、提出阻塞问题、回答/解决问题、提交结果、验收、取消和重开分别是命名用例。用例认证、授权、校验版本/依据，然后同事务更新自身领域事实、追加需要的 commit、审计、outbox 和幂等回执。客户端不能通过任意 kind 或正文触发业务动作；commit 类型由对应命令决定。
 
-普通 commit 不增加 BasisVersion，不自动交付，不改变任务终态。结果正文也是 commit，但成为当前结果必须有显式 Submission 登记。验收绑定 SubmissionID、CommitID、Basis、PolicyRevision；更正结果必须重新提交。撤回只撤销当前候选，不恢复旧结果。
+普通 commit 不增加 BasisVersion，不自动交付，不改变任务终态。结果正文也是 commit，但成为当前结果必须有显式 Submission 登记。验收绑定 SubmissionID、CommitID、Basis、PolicyVersion；更正结果必须重新提交。撤回只撤销当前候选，不恢复旧结果。
 
 ## 模块与依赖
 

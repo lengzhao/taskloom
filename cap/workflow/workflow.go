@@ -120,7 +120,7 @@ type Pending struct {
 }
 type Queries interface {
 	Read(ctx context.Context, token, taskID string) (Snapshot, error)
-	// Inbox lists readable active-or-stopping tasks currently waiting on the caller.
+	// Inbox lists readable active tasks currently waiting on the caller.
 	Inbox(ctx context.Context, token string) ([]Pending, error)
 }
 

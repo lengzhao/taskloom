@@ -9,6 +9,7 @@ import (
 	az "github.com/lengzhao/taskloom/cap/authorization"
 	"github.com/lengzhao/taskloom/cap/command"
 	"github.com/lengzhao/taskloom/cap/commit"
+	"github.com/lengzhao/taskloom/cap/execution"
 	"github.com/lengzhao/taskloom/cap/fault"
 	"github.com/lengzhao/taskloom/cap/flow"
 	"github.com/lengzhao/taskloom/cap/identity"
@@ -18,31 +19,34 @@ import (
 	api "github.com/lengzhao/taskloom/cap/workflow"
 )
 
-// QuestionDeps has seven fields: the command lifecycle, the task and its flow
-// position, the timeline that holds the text, the question records, and the
-// snapshot/event pair every task command returns and publishes. Splitting them
-// would only move the same transaction coordination elsewhere.
+// QuestionDeps has eight fields: the command lifecycle, the task and its flow
+// position, the timeline that holds the text, the question records, the
+// executor's progress lease, and the snapshot/event pair every task command
+// returns and publishes. Splitting them would only move the same transaction
+// coordination elsewhere.
 type QuestionDeps struct {
 	Commands  command.Handler    `json:"commands"`
 	Tasks     task.Reader        `json:"tasks"`
 	Flow      flow.Controller    `json:"flow"`
 	Commits   commit.Log         `json:"commits"`
 	Questions question.Store     `json:"questions"`
+	Progress  execution.Progress `json:"progress"`
 	Snapshots api.FactsReader    `json:"snapshots"`
 	Events    record.EventWriter `json:"events"`
 }
 type QuestionModule struct {
 	s *Service
 	q question.Store
+	p execution.Progress
 }
 
 func init() { pluginkit.Register("commands/question", NewQuestions) }
 
 func NewQuestions(_ struct{}, d QuestionDeps) (*QuestionModule, error) {
-	if d.Commands == nil || d.Tasks == nil || d.Flow == nil || d.Commits == nil || d.Questions == nil || d.Snapshots == nil || d.Events == nil {
+	if d.Commands == nil || d.Tasks == nil || d.Flow == nil || d.Commits == nil || d.Questions == nil || d.Progress == nil || d.Snapshots == nil || d.Events == nil {
 		return nil, fault.ErrInput
 	}
-	return &QuestionModule{&Service{d: dependencies{Commands: d.Commands, Tasks: d.Tasks, Flow: d.Flow, Commits: d.Commits, Snapshots: d.Snapshots, Events: d.Events}}, d.Questions}, nil
+	return &QuestionModule{&Service{d: dependencies{Commands: d.Commands, Tasks: d.Tasks, Flow: d.Flow, Commits: d.Commits, Snapshots: d.Snapshots, Events: d.Events}}, d.Questions, d.Progress}, nil
 }
 
 func validText(body string) bool { return strings.TrimSpace(body) != "" && len(body) <= 20000 }
@@ -89,6 +93,9 @@ func (m *QuestionModule) Ask(ctx context.Context, token, key string, in api.Ask)
 			return nil, e
 		}
 		if e = m.q.CreateQuestion(tx, question.Question{Tenant: t.Tenant, TaskID: t.ID, ID: id(), RoundID: pos.RoundID, CommitID: c.ID, Asker: p.ID, Addressee: t.Owner, Status: question.StatusOpen, CreatedAt: time.Now()}); e != nil {
+			return nil, e
+		}
+		if e = m.p.RecordProgress(tx, p, t.Tenant, t.ID); e != nil {
 			return nil, e
 		}
 		return m.s.finish(tx, t)

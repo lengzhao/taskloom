@@ -18,6 +18,7 @@ import (
 	"github.com/lengzhao/pluginkit"
 	az "github.com/lengzhao/taskloom/cap/authorization"
 	"github.com/lengzhao/taskloom/cap/commit"
+	"github.com/lengzhao/taskloom/cap/execution"
 	"github.com/lengzhao/taskloom/cap/fault"
 	"github.com/lengzhao/taskloom/cap/flow"
 	"github.com/lengzhao/taskloom/cap/identity"
@@ -40,6 +41,8 @@ type Deps struct {
 	Members       az.MemberDirectory     `json:"members"`
 	Participants  az.ParticipantWriter   `json:"participants"`
 	Events        record.EventLog        `json:"events"`
+	// Progress lets an Agent's comment count as progress on its own execution.
+	Progress execution.Progress `json:"progress"`
 }
 type Service struct {
 	d      Deps
@@ -50,7 +53,7 @@ func init() {
 	pluginkit.Register("workspace/tasks", func(_ struct{}, d Deps) (*Service, error) { return New(d) })
 }
 func New(d Deps) (*Service, error) {
-	if d.Catalog == nil || d.Transactions == nil || d.Tasks == nil || d.Commits == nil || d.Flow == nil || d.Members == nil || d.Participants == nil || d.Identity == nil || d.Authorization == nil || d.Events == nil {
+	if d.Catalog == nil || d.Transactions == nil || d.Tasks == nil || d.Commits == nil || d.Flow == nil || d.Members == nil || d.Participants == nil || d.Identity == nil || d.Authorization == nil || d.Events == nil || d.Progress == nil {
 		return nil, errors.New("task capabilities required")
 	}
 	if d.Commands == nil {
@@ -185,6 +188,9 @@ func (s *Service) Comment(ctx context.Context, token, key string, in api.Comment
 		}
 		c, e := s.append(tx, p, t, "comment", in.Body, in.RefID)
 		if e != nil {
+			return nil, e
+		}
+		if e = s.d.Progress.RecordProgress(tx, p, t.Tenant, t.ID); e != nil {
 			return nil, e
 		}
 		if e = s.event(tx, t); e != nil {

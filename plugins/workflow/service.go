@@ -23,10 +23,6 @@ import (
 	"time"
 )
 
-type Config struct {
-	LeaseSeconds int `json:"leaseSeconds"`
-}
-
 // dependencies is an internal implementation detail. Registered constructors
 // below declare each injected capability explicitly, never a dependency bag.
 type dependencies struct {
@@ -46,7 +42,6 @@ type dependencies struct {
 	Events           record.EventWriter
 }
 type Service struct {
-	c Config
 	d dependencies
 }
 
@@ -133,11 +128,10 @@ func (s *Service) Open(ctx context.Context, token, key string, in api.Open) (api
 		} else if !errors.Is(e, fault.ErrNotFound) {
 			return nil, e
 		}
-		v := execution.Execution{Tenant: t.Tenant, TaskID: t.ID, ID: id(), RoundID: pos.RoundID, Subject: p.ID, InstanceID: p.InstanceID, Incarnation: p.Incarnation, BasisVersion: t.BasisVersion, Status: "active", Writable: true, EndEvidenceID: id(), LeaseUntil: time.Now().Add(time.Duration(s.c.LeaseSeconds) * time.Second)}
+		v := execution.Execution{Tenant: t.Tenant, TaskID: t.ID, ID: id(), RoundID: pos.RoundID, Subject: p.ID, InstanceID: p.InstanceID, Incarnation: p.Incarnation, BasisVersion: t.BasisVersion, Status: "active", Writable: true, EndEvidenceID: id(), ProgressAt: time.Now()}
 		if p.Kind == "human" {
 			v.Manual, v.Safe = true, true
 			v.InstanceID, v.Incarnation, v.EndEvidenceID = "", "", ""
-			v.LeaseUntil = time.Time{}
 		}
 		_, e = s.d.ExecutionWrites.OpenExecution(tx, v)
 		if e != nil {
@@ -174,30 +168,22 @@ func (s *Service) active(ctx context.Context, t task.Task, v execution.Execution
 	}
 	return nil
 }
-func (s *Service) Renew(ctx context.Context, token, key string, in api.ExecutionRef) (api.Snapshot, error) {
-	return run(ctx, s, token, key, "execution.renew", in.TaskID, in, func(tx context.Context, p identity.Principal) ([]byte, error) {
-		t, v, e := s.owned(tx, p, in)
-		if e != nil {
-			return nil, e
-		}
-		if e = s.active(tx, t, v); e != nil {
-			return nil, e
-		}
-		if v.Status != "active" {
-			return nil, fault.ErrConflict
-		}
-		v.LeaseUntil = time.Now().Add(time.Duration(s.c.LeaseSeconds) * time.Second)
-		if e = s.d.ExecutionWrites.SaveExecution(tx, v); e != nil {
-			return nil, e
-		}
-		// A lease renewal is a heartbeat, not a business change: it must not
-		// re-evaluate the flow, bump its revision or emit a task change.
-		snap, e := s.snapshot(tx, t)
-		if e != nil {
-			return nil, e
-		}
-		return json.Marshal(snap)
-	})
+
+// RecordProgress implements execution.Progress. Callers invoke it inside their
+// own command transaction; it never changes the flow or emits a task change.
+func (s *Service) RecordProgress(ctx context.Context, p identity.Principal, tenant, taskID string) error {
+	v, e := s.d.Executions.Current(ctx, tenant, taskID)
+	if errors.Is(e, fault.ErrNotFound) {
+		return nil
+	}
+	if e != nil {
+		return e
+	}
+	if !v.Writable || v.Status != "active" || !ownExecution(p, v) {
+		return nil
+	}
+	v.ProgressAt = time.Now()
+	return s.d.ExecutionWrites.SaveExecution(ctx, v)
 }
 func (s *Service) End(ctx context.Context, token, key string, in api.ExecutionRef) (api.Snapshot, error) {
 	return run(ctx, s, token, key, "execution.end", in.TaskID, in, func(tx context.Context, p identity.Principal) ([]byte, error) {
@@ -228,14 +214,16 @@ func (s *Service) Submit(ctx context.Context, token, key string, in api.Submit) 
 		if e = s.active(tx, t, v); e != nil {
 			return nil, e
 		}
-		if (v.Status != "ended" && !v.Safe && time.Now().After(v.LeaseUntil)) || strings.TrimSpace(in.Body) == "" || len(in.Body) > 20000 {
+		if strings.TrimSpace(in.Body) == "" || len(in.Body) > 20000 {
 			return nil, fault.ErrConflict
 		}
-		if v.Manual && v.Status != "ended" {
+		// A result is progress; human work also ends with its submission.
+		v.ProgressAt = time.Now()
+		if v.Manual {
 			v.Status = "ended"
-			if e = s.d.ResultExecutions.SaveExecution(tx, v); e != nil {
-				return nil, e
-			}
+		}
+		if e = s.d.ResultExecutions.SaveExecution(tx, v); e != nil {
+			return nil, e
 		}
 		current, currentErr := s.d.Results.CurrentSubmission(tx, t.Tenant, t.ID, v.RoundID)
 		if currentErr == nil && current.ExecutionID == v.ID && current.BasisVersion == t.BasisVersion {

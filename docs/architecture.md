@@ -26,7 +26,7 @@ Task 与 Flow position 分表/接口归属，task/facts 不写状态。正文唯
 - task/facts：目标、标准、负责人和策略；自己的仓储。
 - commit/immutable：追加、精确读取、提交序分页；自己的仓储，文件阶段组合引用保留能力。
 - decision/facts：阻塞问题、答案与解决事实，引用 commit；普通评论不解除阻塞。
-- execution/facts：执行代次、保活、停止事实，实例/代次隔离。
+- execution/facts：执行代次、最近进展、停止事实，实例/代次隔离。
 - delivery/reply：结果登记及当前轮候选引用，不保存正文或评审规则。
 - State：准备、执行、事实审核、人工验收、完成等步骤；需要审核记录的步骤拥有自己的仓储。
 - task/flow：状态/轮次/位置唯一写入者；通过有序 states 调用步骤，保留执行安全退出等固定保护。

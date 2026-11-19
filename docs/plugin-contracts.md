@@ -7,7 +7,7 @@
 | task | 目标、依据、负责人、验收人策略；Reader/Editor | 自己的 SQL 仓储 |
 | commits | 不可变内容及引用；Reader/Appender | 自己的仓储；文件阶段接材料引用 |
 | decisions | 结构化阻塞问题、回答与解决；Reader/Editor | 自己的仓储；正文引用 CommitID |
-| execution | 分配/代次/保活/停止；Reader/Editor | 自己的仓储 |
+| execution | 分配/代次/进展/停止；Reader/Editor | 自己的仓储 |
 | delivery | 提交登记、按轮次的当前候选；Reader/Register/Withdraw | 自己的仓储，不管理评审 |
 | flow | 顺序推进/轮次/控制、CheckOpen、Reader | 状态列表及任务/执行安全能力，不直接读评审表 |
 | State | Describe/CheckEnter/Enter/CheckComplete | 所需事实/本步骤记录，不依赖 flow/外部命令 |

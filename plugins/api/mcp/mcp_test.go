@@ -1,10 +1,10 @@
-package main
+package mcp_test
 
 import (
 	"bytes"
 	"context"
 	"encoding/json"
-	capsecurity "github.com/lengzhao/taskloom/cap/security"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -17,19 +17,19 @@ import (
 	"github.com/lengzhao/taskloom/cap/httpapi"
 	"github.com/lengzhao/taskloom/cap/identity"
 	"github.com/lengzhao/taskloom/cap/lifecycle"
+	capsecurity "github.com/lengzhao/taskloom/cap/security"
 	"github.com/lengzhao/taskloom/domain/security"
 	_ "github.com/lengzhao/taskloom/plugins"
 	"github.com/lengzhao/taskloom/runtime/config"
 )
 
-// fixture runs the real default graph behind an httptest server, with an
-// owner and an agent holding its business credential.
+// fixture serves the real default graph's API modules, with an owner and an
+// agent holding its business credential.
 type fixture struct {
 	t            *testing.T
-	ctx          context.Context
 	srv          *httptest.Server
 	owner, agent string
-	mcp          *server
+	session      string
 	seq          int
 }
 
@@ -42,7 +42,7 @@ func setup(t *testing.T) *fixture {
 	if e := os.WriteFile(overlay, raw, 0600); e != nil {
 		t.Fatal(e)
 	}
-	_, graph, e := config.BuildFiles(ctx, "../../base.yaml", overlay)
+	_, graph, e := config.BuildFiles(ctx, "../../../base.yaml", overlay)
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -52,7 +52,7 @@ func setup(t *testing.T) *fixture {
 	}
 	t.Cleanup(func() { storage.Close(ctx) })
 	mux := http.NewServeMux()
-	for _, id := range []string{"workspace-api", "workflow-api"} {
+	for _, id := range []string{"workspace-api", "workflow-api", "mcp-api"} {
 		m, ok := build.GetByID[httpapi.Module](graph, id)
 		if !ok {
 			t.Fatal(id)
@@ -68,7 +68,7 @@ func setup(t *testing.T) *fixture {
 	if e != nil {
 		t.Fatal(e)
 	}
-	f := &fixture{t: t, ctx: ctx, srv: srv, owner: issued.Secret}
+	f := &fixture{t: t, srv: srv, owner: issued.Secret}
 	if e = sec.Create(ctx, f.owner, "agent", identity.Principal{Tenant: "t", ID: "agent", Kind: "agent", OwnerID: "owner"}); e != nil {
 		t.Fatal(e)
 	}
@@ -77,37 +77,66 @@ func setup(t *testing.T) *fixture {
 		t.Fatal(e)
 	}
 	f.agent = agent.Secret
-	f.mcp = newServer(newClient(srv.URL+"/v1", f.agent), 100*time.Millisecond, &bytes.Buffer{})
-	t.Cleanup(f.mcp.Close)
 	return f
 }
 
-// owner calls the HTTP API directly as the human owner.
+func (f *fixture) post(path, token string, body any, header map[string]string) *http.Response {
+	f.t.Helper()
+	raw, _ := json.Marshal(body)
+	req, _ := http.NewRequest("POST", f.srv.URL+"/v1"+path, bytes.NewReader(raw))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	for k, v := range header {
+		req.Header.Set(k, v)
+	}
+	resp, e := http.DefaultClient.Do(req)
+	if e != nil {
+		f.t.Fatal(e)
+	}
+	return resp
+}
+
+// ownerCall uses the shared HTTP API as the human owner.
 func (f *fixture) ownerCall(method, path string, body, out any) {
 	f.t.Helper()
 	f.seq++
-	c := newClient(f.srv.URL+"/v1", f.owner)
-	if e := c.do(f.ctx, method, path, body, "owner-"+string(rune('a'+f.seq)), out); e != nil {
-		f.t.Fatal(method, path, e)
+	raw, _ := json.Marshal(body)
+	req, _ := http.NewRequest(method, f.srv.URL+"/v1"+path, bytes.NewReader(raw))
+	req.Header.Set("Authorization", "Bearer "+f.owner)
+	req.Header.Set("Idempotency-Key", "owner-"+string(rune('a'+f.seq)))
+	resp, e := http.DefaultClient.Do(req)
+	if e != nil {
+		f.t.Fatal(e)
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 {
+		f.t.Fatal(method, path, resp.StatusCode, string(b))
+	}
+	if out != nil {
+		_ = json.Unmarshal(b, out)
 	}
 }
 
-// rpc sends one JSON-RPC request through the MCP handler.
+// rpc posts one JSON-RPC request to /v1/mcp as the agent.
 func (f *fixture) rpc(method string, params any) map[string]any {
 	f.t.Helper()
 	f.seq++
-	line, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": f.seq, "method": method, "params": params})
-	resp := f.mcp.handle(f.ctx, line)
-	raw, _ := json.Marshal(resp)
+	resp := f.post("/mcp", f.agent, map[string]any{"jsonrpc": "2.0", "id": f.seq, "method": method, "params": params}, map[string]string{"Mcp-Session-Id": f.session, "Accept": "application/json, text/event-stream"})
+	defer resp.Body.Close()
+	if s := resp.Header.Get("Mcp-Session-Id"); s != "" {
+		f.session = s
+	}
 	var out map[string]any
-	_ = json.Unmarshal(raw, &out)
+	if e := json.NewDecoder(resp.Body).Decode(&out); e != nil {
+		f.t.Fatal(method, resp.StatusCode, e)
+	}
 	if out["error"] != nil {
 		f.t.Fatal(method, out["error"])
 	}
 	return out["result"].(map[string]any)
 }
 
-// tool returns the text and error flag of a tools/call.
 func (f *fixture) tool(name string, args map[string]string) (string, bool) {
 	f.t.Helper()
 	r := f.rpc("tools/call", map[string]any{"name": name, "arguments": args})
@@ -129,11 +158,24 @@ func (f *fixture) ok(name string, args map[string]string) map[string]any {
 	return out
 }
 
+type snapshot struct {
+	Position struct {
+		RoundID  string
+		Revision int64
+	}
+	NextActor string
+	Execution *struct {
+		Status     string
+		ProgressAt time.Time
+	}
+	Questions []struct{ ID string }
+}
+
 func TestAgentWorksATaskThroughMCP(t *testing.T) {
 	f := setup(t)
 	init := f.rpc("initialize", map[string]any{"protocolVersion": "2025-06-18", "capabilities": map[string]any{}, "clientInfo": map[string]any{"name": "test"}})
-	if init["protocolVersion"] != "2025-06-18" || !strings.Contains(init["instructions"].(string), "submit_result") {
-		t.Fatal("initialize", init)
+	if init["protocolVersion"] != "2025-06-18" || !strings.Contains(init["instructions"].(string), "submit_result") || f.session == "" {
+		t.Fatal("initialize", init, f.session)
 	}
 	if n := len(f.rpc("tools/list", nil)["tools"].([]any)); n != 7 {
 		t.Fatal("tools", n)
@@ -142,7 +184,7 @@ func TestAgentWorksATaskThroughMCP(t *testing.T) {
 	var created struct{ Task struct{ ID string } }
 	f.ownerCall("POST", "/tasks", map[string]string{"Title": "导出报表", "Goal": "导出订单", "Criteria": "包含全部订单"}, &created)
 	id := created.Task.ID
-	var w snapshotDTO
+	var w snapshot
 	f.ownerCall("GET", "/tasks/"+id+"/workflow", nil, &w)
 	f.ownerCall("POST", "/tasks/"+id+"/execution/assign", map[string]any{"RoundID": w.Position.RoundID, "BasisVersion": 1, "ExpectedRevision": w.Position.Revision, "Subject": "agent"}, nil)
 
@@ -155,8 +197,6 @@ func TestAgentWorksATaskThroughMCP(t *testing.T) {
 	}
 	stale := task["basis"].(string)
 	started := f.ok("start_work", map[string]string{"task_id": id, "basis": stale})
-
-	// A second claim from the old view is refused with guidance, not retried silently.
 	if text, isErr := f.tool("start_work", map[string]string{"task_id": id, "basis": stale + "x"}); !isErr || !strings.Contains(text, "basis") {
 		t.Fatal("corrupt basis accepted", text)
 	}
@@ -164,19 +204,21 @@ func TestAgentWorksATaskThroughMCP(t *testing.T) {
 		t.Fatal("duplicate claim not explained", text)
 	}
 
-	// Renewal keeps the lease moving without any model action.
-	var before snapshotDTO
+	// A message is progress the owner can see; retrying it in the same session is idempotent.
+	var before snapshot
 	f.ownerCall("GET", "/tasks/"+id+"/workflow", nil, &before)
-	time.Sleep(1200 * time.Millisecond)
-	var after snapshotDTO
-	f.ownerCall("GET", "/tasks/"+id+"/workflow", nil, &after)
-	if !after.Execution.LeaseUntil.After(before.Execution.LeaseUntil) {
-		t.Fatal("lease not renewed", before.Execution.LeaseUntil, after.Execution.LeaseUntil)
-	}
-
+	time.Sleep(5 * time.Millisecond)
 	first := f.ok("post_message", map[string]string{"task_id": id, "text": "开始拉取数据"})["text"]
 	if again := f.ok("post_message", map[string]string{"task_id": id, "text": "开始拉取数据"})["text"]; again != first {
 		t.Fatal("retried message was not idempotent", first, again)
+	}
+	var after snapshot
+	f.ownerCall("GET", "/tasks/"+id+"/workflow", nil, &after)
+	if !after.Execution.ProgressAt.After(before.Execution.ProgressAt) {
+		t.Fatal("message not recorded as progress")
+	}
+	if task = f.ok("read_task", map[string]string{"task_id": id}); task["execution"].(map[string]any)["last_progress_at"] == nil {
+		t.Fatal("agent cannot see its last progress", task["execution"])
 	}
 
 	f.ok("ask_owner", map[string]string{"task_id": id, "basis": started["basis"].(string), "question": "CSV 还是 Excel？"})
@@ -186,8 +228,9 @@ func TestAgentWorksATaskThroughMCP(t *testing.T) {
 	}
 	f.ownerCall("POST", "/tasks/"+id+"/questions/"+w.Questions[0].ID+"/answer", map[string]string{"Body": "用 CSV"}, nil)
 	task = f.ok("read_task", map[string]string{"task_id": id})
-	if !strings.Contains(pretty(task["timeline"]), "用 CSV") || len(task["open_questions"].([]any)) != 0 {
-		t.Fatal("answer not visible to agent", task["timeline"])
+	timeline, _ := json.Marshal(task["timeline"])
+	if !strings.Contains(string(timeline), "用 CSV") || len(task["open_questions"].([]any)) != 0 {
+		t.Fatal("answer not visible to agent", string(timeline))
 	}
 
 	submitted := f.ok("submit_result", map[string]string{"task_id": id, "basis": task["basis"].(string), "result": "已导出 CSV"})
@@ -195,64 +238,51 @@ func TestAgentWorksATaskThroughMCP(t *testing.T) {
 		t.Fatal("result not waiting on reviewer", submitted)
 	}
 	f.ok("finish_run", map[string]string{"task_id": id, "basis": submitted["basis"].(string)})
-	f.mcp.mu.Lock()
-	running := len(f.mcp.runs)
-	f.mcp.mu.Unlock()
-	if running != 0 {
-		t.Fatal("renewal still running after finish_run")
-	}
 	task = f.ok("read_task", map[string]string{"task_id": id})
-	if task["current_result"].(map[string]any)["text"] != "已导出 CSV" {
-		t.Fatal("result", task["current_result"])
+	if task["current_result"].(map[string]any)["text"] != "已导出 CSV" || task["execution"].(map[string]any)["status"] != "ended" {
+		t.Fatal("result", task["current_result"], task["execution"])
 	}
 }
 
-// A new adapter session (agent restart) finds its own run with a lapsed lease:
-// read_task renews it once and takes over renewal instead of leaving it stuck.
-func TestReadTaskResumesOwnLapsedRun(t *testing.T) {
+func TestTransportEdges(t *testing.T) {
 	f := setup(t)
-	var created struct{ Task struct{ ID string } }
-	f.ownerCall("POST", "/tasks", map[string]string{"Title": "t", "Goal": "g", "Criteria": "c"}, &created)
-	id := created.Task.ID
-	var w snapshotDTO
-	f.ownerCall("GET", "/tasks/"+id+"/workflow", nil, &w)
-	f.ownerCall("POST", "/tasks/"+id+"/execution/assign", map[string]any{"RoundID": w.Position.RoundID, "BasisVersion": 1, "ExpectedRevision": w.Position.Revision, "Subject": "agent"}, nil)
-	first := newServer(newClient(f.srv.URL+"/v1", f.agent), 0, &bytes.Buffer{}) // no renewal
-	defer first.Close()
-	f.mcp, first = first, f.mcp
-	task := f.ok("read_task", map[string]string{"task_id": id})
-	f.ok("start_work", map[string]string{"task_id": id, "basis": task["basis"].(string)})
-	f.mcp = first // "restart": a fresh session that never started this run
-
-	// Let the server see the lease as expired by reading it as unknown later is
-	// slow; instead check the takeover itself: renewal starts and the note shows.
-	task = f.ok("read_task", map[string]string{"task_id": id})
-	exec := task["execution"].(map[string]any)
-	if exec["note"] == nil || !f.mcp.renewing(func() string { f.ownerCall("GET", "/tasks/"+id+"/workflow", nil, &w); return w.Execution.ID }()) {
-		t.Fatal("own run not resumed", exec)
+	// Notifications are accepted without a body.
+	resp := f.post("/mcp", f.agent, map[string]any{"jsonrpc": "2.0", "method": "notifications/initialized"}, nil)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatal("notification", resp.StatusCode)
 	}
-	if !task["can"].(map[string]any)["submit_result"].(bool) {
-		t.Fatal("resumed run cannot submit", task["blocked"])
+	// Unknown methods and batches are JSON-RPC errors; unknown versions get the latest.
+	for body, want := range map[string]string{
+		`{"jsonrpc":"2.0","id":1,"method":"nope"}`:   "-32601",
+		`[{"jsonrpc":"2.0","id":1,"method":"ping"}]`: "-32600",
+		`not json`: "-32700",
+		`{"jsonrpc":"2.0","id":2,"method":"initialize","params":{"protocolVersion":"1999-01-01"}}`: `"protocolVersion":"2025-11-25"`,
+	} {
+		req, _ := http.NewRequest("POST", f.srv.URL+"/v1/mcp", strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+f.agent)
+		resp, e := http.DefaultClient.Do(req)
+		if e != nil {
+			t.Fatal(e)
+		}
+		raw, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if !strings.Contains(string(raw), want) {
+			t.Fatal(body, string(raw))
+		}
 	}
-	if task2 := f.ok("read_task", map[string]string{"task_id": id}); task2["execution"].(map[string]any)["note"] != nil {
-		t.Fatal("resumed twice")
+	// A bad credential is explained inside the tool result.
+	f.agent = "bad"
+	if text, isErr := f.tool("inbox", nil); !isErr || !strings.Contains(text, "凭据") {
+		t.Fatal("bad credential", text)
 	}
-}
-
-func TestServeSpeaksLineDelimitedJSONRPC(t *testing.T) {
-	s := newServer(newClient("http://127.0.0.1:1/v1", "x"), 0, &bytes.Buffer{})
-	defer s.Close()
-	in := strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"1999-01-01"}}
-{"jsonrpc":"2.0","method":"notifications/initialized"}
-{"jsonrpc":"2.0","id":2,"method":"nope"}
-not json
-`)
-	var out bytes.Buffer
-	if e := s.Serve(context.Background(), in, &out); e != nil {
-		t.Fatal(e)
-	}
-	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
-	if len(lines) != 3 || !strings.Contains(lines[0], `"protocolVersion":"2025-11-25"`) || !strings.Contains(lines[1], "-32601") || !strings.Contains(lines[2], "-32700") {
-		t.Fatal(out.String())
+	// Browsers from another origin are rejected by the shared request envelope.
+	req, _ := http.NewRequest("POST", f.srv.URL+"/v1/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"ping"}`))
+	req.Header.Set("Origin", "https://evil.example")
+	req.Header.Set("Authorization", "Bearer x")
+	resp, _ = http.DefaultClient.Do(req)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatal("foreign origin", resp.StatusCode)
 	}
 }

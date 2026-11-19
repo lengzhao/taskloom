@@ -3,14 +3,18 @@ package execution
 import (
 	"context"
 	"time"
+
+	"github.com/lengzhao/taskloom/cap/identity"
 )
 
 type Execution struct {
 	Tenant, TaskID, ID, RoundID, Subject, InstanceID, Incarnation string
 	Generation, BasisVersion                                      int64
 	Status, StopRequestID, EndEvidenceID                          string
-	LeaseUntil                                                    time.Time
-	Writable, Safe                                                bool
+	// ProgressAt is when the executor last recorded progress (open, comment,
+	// question or result). It is informational: nothing expires on it.
+	ProgressAt     time.Time
+	Writable, Safe bool
 	// Manual means human work, without a managed Agent runtime or lease.
 	Manual bool
 }
@@ -40,4 +44,11 @@ type StopEvidence struct {
 type ResultAccess interface {
 	Reader
 	SaveExecution(ctx context.Context, value Execution) error
+}
+
+// Progress stamps the caller's own writable execution with the time it
+// recorded progress (a comment or question) on the task, inside the caller's
+// transaction. It is a no-op for anyone else and for fenced executions.
+type Progress interface {
+	RecordProgress(ctx context.Context, p identity.Principal, tenant, taskID string) error
 }

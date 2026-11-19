@@ -60,7 +60,7 @@ func (s *Service) Check(ctx context.Context, p identity.Principal, op, resource 
 			return nil
 		}
 		return az.ErrForbidden
-	case "task.project", "task.read", "task.edit", "commit.append", "participant.set", "execution.open", "execution.renew", "execution.end", "execution.assign", "execution.isolate", "result.submit", "result.review", "result.withdraw", "task.cancel", "task.return", "task.reopen":
+	case "task.project", "task.read", "task.edit", "commit.append", "participant.set", "execution.open", "execution.end", "execution.assign", "execution.isolate", "result.submit", "result.review", "result.withdraw", "task.cancel", "task.return", "task.reopen":
 		t, e := s.d.Tasks.GetTask(ctx, p.Tenant, resource)
 		if errors.Is(e, fault.ErrNotFound) {
 			return az.ErrForbidden
@@ -80,7 +80,7 @@ func (s *Service) Check(ctx context.Context, p identity.Principal, op, resource 
 			}
 			return az.ErrForbidden
 		}
-		if (op == "execution.renew" || op == "execution.end") && p.Kind != "agent" {
+		if op == "execution.end" && p.Kind != "agent" {
 			return az.ErrForbidden
 		}
 		if p.Kind == "human" && (m.Role == "admin" || t.Owner == p.ID) {

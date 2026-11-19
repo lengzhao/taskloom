@@ -53,28 +53,17 @@ func TestHumanProcessesAndSubmitsWithoutRuntimeProof(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	if !s.Execution.Manual || !s.Execution.Safe || !s.Execution.LeaseUntil.IsZero() || s.Execution.InstanceID != "" {
+	if !s.Execution.Manual || !s.Execution.Safe || s.Execution.InstanceID != "" {
 		t.Fatal("human requires no runtime", s.Execution)
 	}
 	s, e = f.query.Read(f.ctx, worker, d.Task.ID)
-	if e != nil || s.CanOpen || !s.CanSubmit || s.CanRenew {
+	if e != nil || s.CanOpen || !s.CanSubmit || s.CanEnd {
 		t.Fatal("manual actions", s, e)
 	}
 	if _, e = f.ex.Open(f.ctx, worker, "duplicate-start", api.Open{Basis: basis(d, s)}); !errors.Is(e, fault.ErrConflict) {
 		t.Fatal("duplicate human execution", e)
 	}
-	// Human work does not become unknown when wall clock advances beyond a lease.
 	v := *s.Execution
-	if e = f.tx.Do(f.ctx, func(ctx context.Context) error {
-		v.LeaseUntil = time.Now().Add(-time.Hour)
-		return f.exStore.SaveExecution(ctx, v)
-	}); e != nil {
-		t.Fatal(e)
-	}
-	s, e = f.query.Read(f.ctx, worker, d.Task.ID)
-	if e != nil || s.Execution.Status != "active" || !s.CanSubmit {
-		t.Fatal("manual lease", s, e)
-	}
 	s, e = f.results.Submit(f.ctx, worker, "human-result", api.Submit{Basis: basis(d, s), ExecutionID: v.ID, Generation: v.Generation, Body: "人工完成的结果"})
 	if e != nil {
 		t.Fatal(e)

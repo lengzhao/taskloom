@@ -218,7 +218,7 @@ details[open] > summary { margin-bottom: 4px }
 // ---------- Labels (display only; flow rules stay on the server) ----------
 const STATE_LABEL = { ready: '准备', executing: '执行中', accepting: '验收中', checkpoint: '待确认', factcheck: '检查中' };
 const ACTOR_LABEL = { owner: '负责人', assignee: '处理人', reviewer: '验收人' };
-const ACTION_LABEL = { open: '认领执行', renew: '续期执行', submit: '提交结果', review: '验收' };
+const ACTION_LABEL = { open: '认领执行', end: '报告主运行结束', submit: '提交结果', review: '验收' };
 const REASON_LABEL = {
   task_not_active: '任务已结束或已取消',
   business_credential_required: '需要 Agent 业务凭据',
@@ -231,13 +231,12 @@ const REASON_LABEL = {
   execution_fenced: '执行已失效（取消或被替换）',
   round_changed: '任务已进入新一轮',
   basis_changed: '任务依据已更新，需要重新认领',
-  lease_expired: '执行保活已过期，请先续期',
   not_reviewer: '你不是本任务验收人',
 };
-const EXEC_LABEL = { active: '运行中', unknown: '状态未知（保活过期）', ended: '已结束' };
+const EXEC_LABEL = { active: '运行中', unknown: '状态未知（停止证据不完整）', ended: '已结束', stopped: '已停止', isolated: '已隔离', 'stop-requested': '已请求停止' };
 const OUTCOME_LABEL = { pending: '待验收', approved: '已通过', rejected: '未通过' };
 const KIND_LABEL = { comment: '留言', result: '结果', question: '提问', answer: '回答', 'task.created': '创建任务', 'task.basis': '修改约定' };
-const AGENT_ACTIONS = ['open', 'renew', 'submit'];
+const AGENT_ACTIONS = ['open', 'end', 'submit'];
 
 // ---------- State ----------
 const $ = id => document.getElementById(id);
@@ -279,6 +278,10 @@ function textarea(name, required, placeholder) {
   const t = el('textarea'); t.name = name; t.required = !!required; if (placeholder) t.placeholder = placeholder; return t;
 }
 function time(v) { return v ? new Date(v).toLocaleString() : '' }
+function ago(v) {
+  const m = Math.max(0, Math.round((Date.now() - new Date(v)) / 60000));
+  return m < 1 ? '刚刚' : m < 60 ? m + ' 分钟前' : m < 1440 ? Math.round(m / 60) + ' 小时前' : Math.round(m / 1440) + ' 天前';
+}
 
 // Writes reuse the same Idempotency-Key until a definite answer arrives.
 async function api(path, method = 'GET', data, headers = {}) {
@@ -659,7 +662,7 @@ function renderExecution(ctx) {
   if (ex) {
     add('状态', (EXEC_LABEL[ex.Status] || ex.Status) + (ex.Manual ? ' · 人工处理' : ex.Safe ? ' · 已安全退出' : ''));
     add('代次', '第 ' + ex.Generation + ' 代');
-    if (!ex.Manual && ex.Status === 'active') add('保活至', time(ex.LeaseUntil));
+    if (ex.ProgressAt && !ex.ProgressAt.startsWith('0001')) add('最近进展', ago(ex.ProgressAt) + '（' + time(ex.ProgressAt) + '）');
   }
   const live = el('div', undefined, 'muted small'); live.id = 'execution-live-status';
   const panel = h('div', 'panel', el('h3', '执行'), dl, live);
@@ -714,7 +717,7 @@ function renderAgentDebug(ctx) {
   }
   const actions = h('div', 'actions');
   if (w.CanOpen) actions.append(button('认领并开始执行', () => send('/execution/open', base), 'primary'));
-  if (w.CanRenew) actions.append(button('续期执行', () => send('/execution/renew', ref)), button('报告主运行结束', () => send('/execution/end', ref)));
+  if (w.CanEnd) actions.append(button('报告主运行结束', () => send('/execution/end', ref)));
   if (actions.children.length) panel.append(actions);
   if (ctx.active) {
     const q = textarea('Body', true, '说明问题、为什么卡住、可选方案和建议');

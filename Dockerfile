@@ -14,13 +14,12 @@ COPY . .
 # otherwise modules are downloaded.
 RUN if [ ! -f vendor/modules.txt ]; then go mod download; fi \
  && CGO_ENABLED=1 go build -trimpath -ldflags="-s -w" -o /out/taskloom ./cmd/taskloom \
- && CGO_ENABLED=1 go build -trimpath -ldflags="-s -w" -o /out/taskloom-admin ./cmd/taskloom-admin \
- && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/taskloom-mcp ./cmd/taskloom-mcp
+ && CGO_ENABLED=1 go build -trimpath -ldflags="-s -w" -o /out/taskloom-admin ./cmd/taskloom-admin
 
 FROM alpine:3.23
 RUN adduser -D -u 10001 taskloom && mkdir -p /data /app && chown taskloom /data /app
 WORKDIR /app
-COPY --from=build /out/taskloom /out/taskloom-admin /out/taskloom-mcp /usr/local/bin/
+COPY --from=build /out/taskloom /out/taskloom-admin /usr/local/bin/
 COPY base.yaml ./base.yaml
 COPY deploy/docker/entrypoint.sh /usr/local/bin/taskloom-entrypoint
 USER taskloom

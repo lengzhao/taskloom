@@ -91,7 +91,7 @@ def check_graph(graph, label, quiet: false)
     if nodes.key?('workspace-api')
       expected += %w[identity/local access/default state/ready task/flow commands/runtime commands/security workspace/tasks api/workspace catalog/projects]
       if nodes.key?('execution-commands')
-        expected += %w[task/flow flow/directory state/executing state/accepting state/completed query/workflow commands/execution commands/result commands/question commands/flow api/workflow]
+        expected += %w[task/flow flow/directory state/executing state/accepting state/completed query/workflow commands/execution commands/result commands/question commands/flow api/workflow api/mcp]
       end
       if nodes.key?('flow-automatic')
         expected << 'task/flow'
@@ -104,7 +104,7 @@ def check_graph(graph, label, quiet: false)
     assert(resources == [], "#{label}: unexpected resource")
   end
   assert(nodes.values.map { |n| n['use'] }.sort == expected.sort, "#{label}: default graph contains unexpected capabilities")
-  assert(graph.fetch('http').fetch('deps').fetch('modules') == (nodes.key?('checkpoint-api') ? ['health','workspace-api','workflow-api','checkpoint-api'] : (nodes.key?('workflow-api') ? ['health','workspace-api','workflow-api'] : (nodes.key?('workspace-api') ? ['health','workspace-api'] : ['health']))), "#{label}: health module owner missing")
+  assert(graph.fetch('http').fetch('deps').fetch('modules') == (nodes.key?('checkpoint-api') ? ['health','workspace-api','workflow-api','mcp-api','checkpoint-api'] : (nodes.key?('workflow-api') ? ['health','workspace-api','workflow-api','mcp-api'] : (nodes.key?('workspace-api') ? ['health','workspace-api'] : ['health']))), "#{label}: health module owner missing")
   puts "PASS #{label}: references, acyclic/reachable graph and current owners" unless quiet
 end
 

@@ -1,13 +1,11 @@
 package workflow_test
 
 import (
-	"context"
 	"errors"
 	"github.com/lengzhao/taskloom/cap/fault"
 	api "github.com/lengzhao/taskloom/cap/workflow"
 	workspace "github.com/lengzhao/taskloom/cap/workspace"
 	"testing"
-	"time"
 )
 
 func TestSnapshotExplainsBlockedActionsAndNextActor(t *testing.T) {
@@ -42,20 +40,10 @@ func TestSnapshotExplainsBlockedActionsAndNextActor(t *testing.T) {
 	if !a.CanSubmit || a.Blocked[api.ActionOpen] != api.ReasonExecutionInProgress || a.NextActor != api.ActorAssignee {
 		t.Fatal("running execution", a.CanSubmit, a.Blocked, a.NextActor)
 	}
+	if !a.CanEnd {
+		t.Fatal("agent can end its own run", a.Blocked)
+	}
 	v := *a.Execution
-	if e = f.tx.Do(f.ctx, func(tx context.Context) error {
-		v.LeaseUntil = time.Now().Add(-time.Second)
-		return f.exStore.SaveExecution(tx, v)
-	}); e != nil {
-		t.Fatal(e)
-	}
-	if a = asAgent(); a.CanSubmit || !a.CanRenew || a.Blocked[api.ActionSubmit] != api.ReasonLeaseExpired {
-		t.Fatal("expired lease should explain submit and still allow renew", a.Blocked)
-	}
-	if _, e = f.ex.Renew(f.ctx, f.agent, "renew", api.ExecutionRef{TaskID: d.Task.ID, ExecutionID: v.ID, Generation: v.Generation}); e != nil {
-		t.Fatal(e)
-	}
-	a = asAgent()
 	if _, e = f.results.Submit(f.ctx, f.agent, "submit", api.Submit{Basis: basis(d, a), ExecutionID: v.ID, Generation: v.Generation, Body: "done"}); e != nil {
 		t.Fatal(e)
 	}

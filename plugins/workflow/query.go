@@ -16,7 +16,6 @@ import (
 	"github.com/lengzhao/taskloom/cap/task"
 	"github.com/lengzhao/taskloom/cap/unitofwork"
 	api "github.com/lengzhao/taskloom/cap/workflow"
-	"time"
 )
 
 type QueryDeps struct {
@@ -62,9 +61,6 @@ func (s *Query) ReadFacts(ctx context.Context, t task.Task) (api.Snapshot, error
 	}
 	ex, e := s.d.Executions.Current(ctx, t.Tenant, t.ID)
 	if e == nil {
-		if !ex.Manual && ex.Status == "active" && time.Now().After(ex.LeaseUntil) {
-			ex.Status = "unknown"
-		}
 		out.Execution = &ex
 	} else if !errors.Is(e, fault.ErrNotFound) {
 		return out, e
@@ -131,8 +127,7 @@ func (s *Query) Read(ctx context.Context, token, taskID string) (api.Snapshot, e
 			out.CanReview = why(api.ActionReview, reviewBlock(p, t, out), out.Review != nil)
 			out.CanOpen = why(api.ActionOpen, s.openBlock(tx, p, t, out), worker)
 			if out.Execution != nil {
-				raw, _ := s.d.Executions.Current(tx, t.Tenant, t.ID)
-				out.CanRenew = why(api.ActionRenew, renewBlock(p, out.Position, raw), p.Kind == "agent")
+				out.CanEnd = why(api.ActionEnd, endBlock(p, out.Position, *out.Execution), p.Kind == "agent")
 				out.CanSubmit = why(api.ActionSubmit, submitBlock(p, t, out.Position, *out.Execution), worker)
 			}
 			if len(blocked) > 0 {
@@ -233,9 +228,8 @@ func ownExecution(p identity.Principal, v execution.Execution) bool {
 	return p.Kind == "agent" && v.Subject == p.ID && v.InstanceID == p.InstanceID && v.Incarnation == p.Incarnation
 }
 
-// renewBlock reads the stored execution, not the lease-overlaid view: an
-// expired but still active execution may be renewed by its own instance.
-func renewBlock(p identity.Principal, pos flow.Position, raw execution.Execution) string {
+// endBlock explains whether the caller may report its own Agent run ended.
+func endBlock(p identity.Principal, pos flow.Position, raw execution.Execution) string {
 	switch {
 	case pos.Status != flow.PhaseActive:
 		return api.ReasonTaskNotActive
@@ -267,8 +261,6 @@ func submitBlock(p identity.Principal, t task.Task, pos flow.Position, v executi
 		return api.ReasonRoundChanged
 	case v.BasisVersion != t.BasisVersion:
 		return api.ReasonBasisChanged
-	case !(v.Safe || v.Status == "ended" || time.Now().Before(v.LeaseUntil)):
-		return api.ReasonLeaseExpired
 	}
 	return ""
 }

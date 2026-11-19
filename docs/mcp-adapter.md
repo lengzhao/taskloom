@@ -1,44 +1,37 @@
-# MCP 适配器
+# MCP 接入
 
-`cmd/taskloom-mcp` 是共用 HTTP 业务 API 之上的薄协议适配器（MCP stdio），让 Claude Code、Codex、Cursor 等 Agent 以工具方式接入。它不是 Agent 专用业务接口：不含业务规则、不新增服务端插件或配置节点，授权、版本、执行代次和幂等全部由服务端按该 Agent 的业务凭据校验。它属于 M06 接入的第一种形态，不替代 Harness 对保活与停止证明的职责。
+`api/mcp` 是随主服务启动的协议适配插件，在 `POST /v1/mcp` 提供 MCP（Streamable HTTP，只返回 JSON，不开 SSE 流），让 Claude Code、Codex、Cursor 等 Agent 只配 URL 和业务凭据即可接入。它与 `api/workflow` 一样只做协议转换：授权、版本、执行代次和幂等全部由同一套命令按该 Agent 的业务凭据校验，不是 Agent 专用业务接口。插件无会话状态、不启动后台工作，由 HTTP owner 挂载。
 
-## 运行
+## 接入
 
-```sh
-TASKLOOM_URL=http://localhost:8899/v1 \
-TASKLOOM_CREDENTIAL_FILE=/path/to/worker-1-business.json \
-go run ./cmd/taskloom-mcp
-```
-
-- `TASKLOOM_URL`（或 `-url`）：API 地址，含 `/v1`，默认 `http://localhost:8899/v1`。
-- `TASKLOOM_TOKEN` 或 `TASKLOOM_CREDENTIAL_FILE`（或 `-credential-file`）：Agent 的 business 用途凭据，由 `taskloom-admin -mode enroll-agent -purpose business` 签发。runtime 凭据不得交给适配器。
-- `-renew`：执行期间自动续期间隔，默认 20s，0 关闭。
-
-Docker 镜像内也带有该程序，可直接经容器接入，例如 Claude Code：
+Agent 的 business 用途凭据由 `taskloom-admin -mode enroll-agent -purpose business` 签发；runtime 凭据不得交给模型。以 Claude Code 为例：
 
 ```sh
-claude mcp add taskloom -- docker exec -i taskloom taskloom-mcp -credential-file /data/worker-1-business.json
+claude mcp add --transport http taskloom http://localhost:8899/v1/mcp \
+  --header "Authorization: Bearer <Agent 业务凭据的 Secret>"
 ```
+
+请求经共用的 RequestSecurity：带 Origin 时必须等于配置的 origin（防止网页跨站调用），POST 须带 Authorization。`initialize` 返回 `Mcp-Session-Id`，只用于派生幂等键；缺失时按凭据派生。批量 JSON-RPC 不支持。
 
 ## 工具
 
-| 工具 | 对应 API | 说明 |
+| 工具 | 对应命令 | 说明 |
 | --- | --- | --- |
-| inbox | GET /inbox | 等我处理的任务 |
-| read_task | GET /tasks/{id}、/workflow | 目标、标准、状态、等谁、can/blocked 原因、待答问题、当前结果、最近 20 条时间线及 basis |
-| start_work | POST /execution/open | 认领执行并开始自动续期 |
-| post_message | POST /commits | 留言：进度、回复人的引导；不算交付 |
-| ask_owner | POST /questions | 向负责人提问，未答前任务不能完成 |
-| submit_result | POST /results | 明确提交结果 |
-| finish_run | POST /execution/end | 报告主运行结束并停止续期 |
+| inbox | workflow.Inbox | 等我处理的任务 |
+| read_task | workspace.Get + workflow.Read | 目标、标准、状态、等谁、can/blocked 原因、待答问题、当前结果、最近进展时间、最近 20 条时间线及 basis |
+| start_work | ExecutionCommands.Open | 认领执行 |
+| post_message | workspace.Comment | 留言：进度、回复人的引导；记录最近进展，不算交付 |
+| ask_owner | QuestionCommands.Ask | 向负责人提问，未答前任务不能完成 |
+| submit_result | ResultCommands.Submit | 明确提交结果 |
+| finish_run | ExecutionCommands.End | 报告主运行结束 |
 
-分配、验收、取消、退回、重开、隔离与停止证明不对模型开放：前者属于人，后者需要 runtime 凭据和真实进程证据。
+分配、验收、回答、取消、退回、重开、隔离与停止证明不对模型开放：插件以局部窄接口注入，只拿到上表能力。前者属于人，后者需要 runtime 凭据和真实进程证据。
 
 ## 约束
 
-- **basis**：read_task 和每次写操作返回不透明 basis（任务、轮次、依据版本、流程修订、执行与代次），写操作须原样带回；适配器不会替模型取最新版本写入，过期视图得到 409 和“先 read_task”的提示。
-- **幂等**：同一会话内相同工具与参数复用同一 Idempotency-Key，模型重试不会重复写入；因此同一会话内发送完全相同的留言只记录一次。
-- **自动续期**：只说明适配器进程存活，不证明模型或子进程仍在工作，也不是停止证据。服务端拒绝（4xx）即停止续期；适配器退出时不自动报告结束，租约到期后显示 unknown，由人或 Harness 按停止规则处理。Agent 重启后新会话的 read_task 若发现当前执行仍属于自己（同实例、同代次、仍可写），会立即续期一次并接管后台续期，不新建执行；被取消、替换或换实例的执行不会被接管。
-- **推送**：首版不订阅变化流；模型通过 inbox/read_task 按需读取，人的留言与回答在下次读取时可见。实时 steer 仍归 Agent 层。
+- **basis**：read_task 和每次写操作返回不透明 basis（任务、轮次、依据版本、流程修订、执行与代次），写操作须原样带回；不会替模型取最新版本写入，过期视图得到冲突和“先 read_task”的提示。
+- **幂等**：同一会话内相同工具与参数复用同一幂等键，客户端重试不会重复写入；因此同一会话内完全相同的留言只记录一次。
+- **进展而非保活**：执行没有租约或超时。认领、本人留言、提问、提交结果都会更新执行的最近进展时间，负责人据此判断是否介入；instructions 提示模型长时间工作时每 10～15 分钟汇报一次。Agent 重启后用同一业务凭据（同实例）read_task 即可继续原执行，不新建执行。沉默或断线不改变执行，也不是停止证据。
+- **推送**：不订阅变化流；模型通过 inbox/read_task 按需读取，人的留言与回答在下次读取时可见。实时 steer 仍归 Agent 层。
 
-验证见 `cmd/taskloom-mcp/main_test.go`：以真实默认配置图和 HTTP 路由运行，覆盖认领、过期 basis、自动续期、留言幂等、提问与回答、提交与结束。
+验证见 `plugins/api/mcp/mcp_test.go`：以真实默认配置图和 HTTP 路由运行，覆盖初始化与会话、认领、损坏/过期 basis、留言幂等与进展记录、提问与回答、提交与结束，以及通知、未知方法、批量、坏凭据和外部 Origin。

@@ -38,14 +38,14 @@ FlowRef 的归属移至 flow.DefinitionRef，task.Task 不依赖 flow 或持有�
 
 ## 实际装配变化
 
-M04 提交时为 12 个实例；M05 为 22 个，加入请求输入后为 23 个，见[实际图](m05-dependencies.md)。以下保留 M04 基础模块说明，M05 的 task/flow 改为 states 列表：
+M04 提交时为 12 个实例；M05 为 22 个，当前含项目目录、请求输入与 MCP 接入共 25 个，见[实际图](m05-dependencies.md)。以下保留 M04 基础模块说明，M05 的 task/flow 改为 states 列表：
 
 - identity/local：store→identity.CredentialLookup（sql），不再提供 Directory 转发。
 - access/default：store→authorization.Relations（sql）、tasks→task.Reader（sql）。
 - task/flow：definitions→flow.DefinitionStore（sql）、positions→flow.PositionStore（sql）、state→ready。
 - commands/runtime：6 字段，transactions、requests、identity、authorization、audit、events；同事务生命周期，不分发业务。
 - commands/security：9 字段，分别为 commands、transactions、principals、credentials、passwords、bootstrap、members、audit、events。HTTP 使用 Administration，不获得离线初始化/恢复能力；members 使用 MemberStore 校验所属人和签发对象的有效性。
-- workspace/tasks：11 字段，catalog、transactions、tasks、commits、flow、identity、authorization、commands、members、participants、events。它是当前纵向切片编排边界，事实所有权未合并；成员只读与参与写入明确分开。members 使用 MemberDirectory（GetMember + ListActiveMembers + ListMembers），由现有 SQL 联查成员和主体供候选选择，不增加依赖字段或新表；workflow 等其他消费者仍只获得 MemberReader。
+- workspace/tasks：12 字段，catalog、transactions、tasks、commits、flow、identity、authorization、commands、members、participants、events、progress。progress 为 execution.Progress，仅用于执行者本人留言时同事务记录最近进展。它是当前纵向切片编排边界，事实所有权未合并；成员只读与参与写入明确分开。members 使用 MemberDirectory（GetMember + ListActiveMembers + ListMembers），由现有 SQL 联查成员和主体供候选选择，不增加依赖字段或新表；workflow 等其他消费者仍只获得 MemberReader。
 - api/workspace：6 字段，commands、queries、changes 分别指向同一个 workspace 实例，identity 与 security 提供认证和成员命令，catalog 指向空间/项目应用模块。
 
 超过五字段的三处协调实现明确保留：command-runtime 需幂等/身份/权限/审计/事件的原子生命周期，security 需管理/离线能力，workspace 需同事务协调多种事实。不通过合并不相关接口、依赖包或隐藏查找缩小计数；后续执行/验收应使用独立命名模块，不继续扩张 workspace。
@@ -65,7 +65,7 @@ workspace 不再自行构造第二个 Runner：配置将 commands 指向现有 c
 ## M05 的真实消费者增量
 
 - execution.Reader/Store：执行事实与安全门；delivery.Reader/Store：固定 commit 的候选事实；acceptance.Reader/Records/Actions：状态自有记录与验收动作。
-- workflow.ExecutionCommands/ResultCommands/ControlCommands/Queries/FactsReader 分别服务协议、命令协调和只读聚合；不扩张 workspace。query/workflow 的 tasks 依赖为只读 task.Lister（GetTask + ListTasks），用于 Inbox，不获得写接口。question.Reader 供查询与 flow 完成门只读使用，question.Store 只注入 commands/question。
+- workflow.ExecutionCommands/ResultCommands/ControlCommands/Queries/FactsReader 分别服务协议、命令协调和只读聚合；不扩张 workspace。query/workflow 的 tasks 依赖为只读 task.Lister（GetTask + ListTasks），用于 Inbox，不获得写接口。question.Reader 供查询与 flow 完成门只读使用，question.Store 只注入 commands/question。execution.Progress（RecordProgress）由 commands/execution 提供，只注入 workspace/tasks 与 commands/question，用于同事务记录执行者最近进展；没有租约或续期接口。api/mcp 以局部窄接口消费 workspace 的 Get/Comment 与 workflow 的 Open/End、Submit、Ask 及只读 Queries，不获得分配、验收、回答或停止证明能力。
 - commit.Lookup、identity.PrincipalReader、flow.PositionReader 为新增只读消费者收窄权限；State 使用 Context，目录按固定 DefinitionRef 路由。
 - checkpoint.Records/Actions 只在可选步骤示例挂载；httpapi.RequestSecurity 复用会话、Origin 与 CSRF 协议处理。
 - 具体方法以 cap 源码为准；Deps、超过五字段的保留理由和授权回调的可信边界见 [M05](m05-workflow.md)。
@@ -76,4 +76,4 @@ workspace 不再自行构造第二个 Runner：配置将 commands 指向现有 c
 
 ## 工作空间与项目
 
-cap/catalog.Store 由 SQL 实现，catalog/projects 消费；ProjectReader 供 workspace/tasks 校验任务归属，应用 Service 供 api/workspace 调用。catalog 为独立职责模块，5 个依赖。workspace/tasks 为 11 个依赖，新增只读 catalog 仅用于任务创建和移动的同事务校验；项目 CRUD 不放在该模块。api/workspace 为 6 个依赖，新增 catalog 是命名 API 的协议适配，不承载业务校验；保留这一共享浏览器入口与其现有 Cookie/CSRF 生命周期，避免复制认证处理。task.Store 新增显式 SetProject，不增加通用字段更新能力。
+cap/catalog.Store 由 SQL 实现，catalog/projects 消费；ProjectReader 供 workspace/tasks 校验任务归属，应用 Service 供 api/workspace 调用。catalog 为独立职责模块，5 个依赖。workspace/tasks 为 12 个依赖（含 progress），新增只读 catalog 仅用于任务创建和移动的同事务校验；项目 CRUD 不放在该模块。api/workspace 为 6 个依赖，新增 catalog 是命名 API 的协议适配，不承载业务校验；保留这一共享浏览器入口与其现有 Cookie/CSRF 生命周期，避免复制认证处理。task.Store 新增显式 SetProject，不增加通用字段更新能力。

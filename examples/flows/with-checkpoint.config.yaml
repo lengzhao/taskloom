@@ -33,4 +33,4 @@ checkpoint-api:
     events: sql
 http:
   deps:
-    modules: [health, workspace-api, workflow-api, checkpoint-api]
+    modules: [health, workspace-api, workflow-api, mcp-api, checkpoint-api]

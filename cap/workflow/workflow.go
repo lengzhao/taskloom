@@ -64,7 +64,7 @@ const (
 // false Can* flag to the current viewer; commands still re-check on write.
 const (
 	ActionOpen   = "open"
-	ActionRenew  = "renew"
+	ActionEnd    = "end"
 	ActionSubmit = "submit"
 	ActionReview = "review"
 
@@ -79,7 +79,6 @@ const (
 	ReasonExecutionFenced     = "execution_fenced"
 	ReasonRoundChanged        = "round_changed"
 	ReasonBasisChanged        = "basis_changed"
-	ReasonLeaseExpired        = "lease_expired"
 	ReasonNotReviewer         = "not_reviewer"
 )
 
@@ -88,14 +87,14 @@ type Snapshot struct {
 	Assignee     string
 	NextActor    Actor
 	// Blocked holds, for actions relevant to this viewer, why each is not allowed now.
-	Blocked                                                                   map[string]string `json:",omitempty"`
-	CanOpen, CanSubmit, CanReview, CanManage, CanIsolate, CanRenew, CanAssign bool
-	ViewerKind                                                                string
-	SafeToExit                                                                bool
-	Position                                                                  flow.Position
-	Execution                                                                 *execution.Execution
-	Submission                                                                *delivery.Submission
-	Review                                                                    *acceptance.Review
+	Blocked                                                                 map[string]string `json:",omitempty"`
+	CanOpen, CanSubmit, CanReview, CanManage, CanIsolate, CanEnd, CanAssign bool
+	ViewerKind                                                              string
+	SafeToExit                                                              bool
+	Position                                                                flow.Position
+	Execution                                                               *execution.Execution
+	Submission                                                              *delivery.Submission
+	Review                                                                  *acceptance.Review
 	// Questions are the open requests for input of the current active round.
 	Questions []question.Question `json:",omitempty"`
 }
@@ -115,7 +114,6 @@ type QuestionCommands interface {
 type ExecutionCommands interface {
 	Assign(ctx context.Context, token, key string, in Assignment) (Snapshot, error)
 	Open(ctx context.Context, token, key string, in Open) (Snapshot, error)
-	Renew(ctx context.Context, token, key string, in ExecutionRef) (Snapshot, error)
 	End(ctx context.Context, token, key string, in ExecutionRef) (Snapshot, error)
 	ProveStopped(ctx context.Context, token, key string, in StopEvidence) (Snapshot, error)
 }

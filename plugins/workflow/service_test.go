@@ -284,23 +284,13 @@ func TestConcurrentClaimAndUnknownLeaseRecovery(t *testing.T) {
 	if ok != 1 || conflict != 1 {
 		t.Fatal(ok, conflict)
 	}
+	// Silence never expires an execution: a blind retry still finds it running.
 	s = f.read(t, d.Task.ID)
-	v := *s.Execution
-	if e = f.tx.Do(f.ctx, func(tx context.Context) error {
-		v.LeaseUntil = time.Now().Add(-time.Second)
-		return f.exStore.SaveExecution(tx, v)
-	}); e != nil {
-		t.Fatal(e)
-	}
-	s = f.read(t, d.Task.ID)
-	if s.Execution.Status != "unknown" {
-		t.Fatal("expiry not unknown")
+	if s.Execution.Status != "active" {
+		t.Fatal("execution changed without a command", s.Execution.Status)
 	}
 	if _, e = f.ex.Open(f.ctx, f.agent, "blind-retry", api.Open{Basis: basis(d, s)}); !errors.Is(e, fault.ErrConflict) {
-		t.Fatal("unknown blind retry", e)
-	}
-	if _, e = f.ex.Renew(f.ctx, f.agent, "renew", api.ExecutionRef{TaskID: d.Task.ID, ExecutionID: v.ID, Generation: v.Generation}); e != nil {
-		t.Fatal(e)
+		t.Fatal("blind retry", e)
 	}
 }
 func TestNewCandidateInvalidatesApprovalAndWithdrawDoesNotRestoreOld(t *testing.T) {
@@ -432,42 +422,5 @@ func TestEndedExecutionCanSubmitButDoesNotProveSafety(t *testing.T) {
 	s, e = f.results.Submit(f.ctx, f.agent, "late-submit", api.Submit{Basis: basis(d, s), ExecutionID: s.Execution.ID, Generation: s.Execution.Generation, Body: "result after end"})
 	if e != nil || s.Submission == nil {
 		t.Fatal(e)
-	}
-}
-
-func TestLeaseRenewalKeepsRevisionAndPendingReviewValid(t *testing.T) {
-	f := setup(t, nil)
-	d := f.create(t)
-	s := f.open(t, d)
-	s, e := f.results.Submit(f.ctx, f.agent, "submit", api.Submit{Basis: basis(d, s), ExecutionID: s.Execution.ID, Generation: s.Execution.Generation, Body: "result"})
-	if e != nil {
-		t.Fatal(e)
-	}
-	pending := basis(d, s)
-	submitted := *s.Submission
-	ref := api.ExecutionRef{TaskID: d.Task.ID, ExecutionID: s.Execution.ID, Generation: s.Execution.Generation}
-	feed, _ := build.GetByID[workspace.ChangeFeed](f.graph, "workspace")
-	start, e := feed.Changes(f.ctx, f.owner, "")
-	if e != nil {
-		t.Fatal(e)
-	}
-	for _, key := range []string{"renew-1", "renew-2", "renew-3"} {
-		renewed, e := f.ex.Renew(f.ctx, f.agent, key, ref)
-		if e != nil {
-			t.Fatal(e)
-		}
-		if renewed.Position.Revision != pending.ExpectedRevision {
-			t.Fatalf("heartbeat changed flow revision %d -> %d", pending.ExpectedRevision, renewed.Position.Revision)
-		}
-	}
-	changes, e := feed.Changes(f.ctx, f.owner, start.Cursor)
-	if e != nil {
-		t.Fatal(e)
-	}
-	if len(changes.Changes) != 0 {
-		t.Fatalf("heartbeat emitted task changes %+v", changes.Changes)
-	}
-	if _, e = f.results.Review(f.ctx, f.owner, "approve", api.Review{Basis: pending, Verdict: acceptance.Verdict{SubmissionID: submitted.ID, CommitID: submitted.CommitID, Outcome: "approved"}}); e != nil {
-		t.Fatal("review with pre-heartbeat version rejected", e)
 	}
 }

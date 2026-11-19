@@ -56,14 +56,11 @@ func init() {
 	pluginkit.Register("commands/result", NewResults)
 	pluginkit.Register("commands/flow", NewControl)
 }
-func NewExecution(c Config, d ExecutionDeps) (*ExecutionModule, error) {
-	if c.LeaseSeconds == 0 {
-		c.LeaseSeconds = 60
-	}
-	if c.LeaseSeconds < 1 || c.LeaseSeconds > 3600 || d.Commands == nil || d.Tasks == nil || d.Flow == nil || d.Executions == nil || d.Principals == nil || d.Members == nil || d.Participants == nil || d.Snapshots == nil || d.Events == nil {
+func NewExecution(_ struct{}, d ExecutionDeps) (*ExecutionModule, error) {
+	if d.Commands == nil || d.Tasks == nil || d.Flow == nil || d.Executions == nil || d.Principals == nil || d.Members == nil || d.Participants == nil || d.Snapshots == nil || d.Events == nil {
 		return nil, fault.ErrInput
 	}
-	return &ExecutionModule{&Service{c, dependencies{Commands: d.Commands, Tasks: d.Tasks, Flow: d.Flow, Executions: d.Executions, ExecutionWrites: d.Executions, Principals: d.Principals, Members: d.Members, Participants: d.Participants, Snapshots: d.Snapshots, Events: d.Events}}}, nil
+	return &ExecutionModule{&Service{dependencies{Commands: d.Commands, Tasks: d.Tasks, Flow: d.Flow, Executions: d.Executions, ExecutionWrites: d.Executions, Principals: d.Principals, Members: d.Members, Participants: d.Participants, Snapshots: d.Snapshots, Events: d.Events}}}, nil
 }
 func NewResults(_ struct{}, d ResultDeps) (*ResultModule, error) {
 	if d.Commands == nil || d.Tasks == nil || d.Flow == nil || d.Executions == nil || d.Results == nil || d.Commits == nil || d.Snapshots == nil || d.Events == nil {
@@ -82,12 +79,12 @@ func (m *ExecutionModule) Open(ctx context.Context, token, key string, in api.Op
 	return m.s.Open(ctx, token, key, in)
 }
 
-func (m *ExecutionModule) Renew(ctx context.Context, token, key string, in api.ExecutionRef) (api.Snapshot, error) {
-	return m.s.Renew(ctx, token, key, in)
-}
-
 func (m *ExecutionModule) End(ctx context.Context, token, key string, in api.ExecutionRef) (api.Snapshot, error) {
 	return m.s.End(ctx, token, key, in)
+}
+
+func (m *ExecutionModule) RecordProgress(ctx context.Context, p identity.Principal, tenant, taskID string) error {
+	return m.s.RecordProgress(ctx, p, tenant, taskID)
 }
 
 func (m *ExecutionModule) ProveStopped(ctx context.Context, token, key string, in api.StopEvidence) (api.Snapshot, error) {

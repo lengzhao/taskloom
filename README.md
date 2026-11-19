@@ -15,7 +15,7 @@
 - 未实现：Harness 适配与真实 Agent 联调（下一步 M06）、WebSocket、文件/S3、任务树、提醒与历史恢复。本地测试不代表真实进程清理或生产数据库验收。
 - 本地工作台：`http://127.0.0.1:8080/v1/app`，初始化与启动见 [M04](docs/m04-workspace.md)，执行与验收见 [M05](docs/m05-workflow.md)。
 - Docker：`docker build -t taskloom:local .`，再 `docker run -d --name taskloom -p 8899:8899 -v taskloom-data:/data taskloom:local`，访问 `http://localhost:8899/v1/app`。端口由 `TASKLOOM_PORT`（默认 8899，宿主机与容器同端口）决定，Origin 默认 `http://localhost:端口`，可用 `TASKLOOM_ORIGIN` 覆盖；非 localhost 访问须走 HTTPS。首次启动前用同一数据卷执行 `docker run --rm -v taskloom-data:/data taskloom:local taskloom-admin -base /app/base.yaml -config /app/config.yaml -mode bootstrap ... -credential-file /data/admin.json` 初始化管理员。需要内部 Go 模块代理时用构建参数传入本机设置：`docker build --build-arg GOPROXY="$(go env GOPROXY)" --build-arg GOSUMDB="$(go env GOSUMDB)" -t taskloom:local .`（也支持 `GOPRIVATE`）；离线构建可在构建上下文先执行 `go mod vendor`。
-- Agent 接入：MCP 适配器 `cmd/taskloom-mcp`（stdio，7 个工具，只调用共用 API），见 [MCP 适配器](docs/mcp-adapter.md)。
+- Agent 接入：服务内置 MCP 端点 `POST /v1/mcp`（Streamable HTTP，7 个工具，复用共用命令），Agent 只需配置 URL 和业务凭据，见 [MCP 接入](docs/mcp-adapter.md)。
 - 检查入口：`sh scripts/check.sh all`、`sh scripts/check.sh race`，见[开发说明](docs/development.md)。
 
 ## 文档索引
@@ -24,7 +24,7 @@
 | --- | --- |
 | 设计 | [架构](docs/architecture.md)、[核心契约 C01—C18](docs/core-contracts.md)、[状态模块与流程](docs/task-flow-plugins.md)、[Commit 与结果交付](docs/reply-delivery.md) |
 | 边界与接口 | [插件契约](docs/plugin-contracts.md)、[cap 能力清单](docs/cap-interfaces.md)、[插件依赖审查](docs/plugin-inventory-review.md)（跨阶段规划） |
-| 协议与权限 | [共用 API 与变化流](docs/shared-api-and-realtime.md)、[独立接入契约](docs/integration-contract.md)、[MCP 适配器](docs/mcp-adapter.md)、[成员与任务权限](docs/permissions.md) |
+| 协议与权限 | [共用 API 与变化流](docs/shared-api-and-realtime.md)、[独立接入契约](docs/integration-contract.md)、[MCP 接入](docs/mcp-adapter.md)、[成员与任务权限](docs/permissions.md) |
 | 配置与工程 | [两层配置](docs/configuration.md)、[开发说明](docs/development.md) |
 | 阶段实现 | [M03 存储](docs/m03-storage.md)、[M04 工作台](docs/m04-workspace.md)、[M05 流程闭环](docs/m05-workflow.md)、[开发清单](todo.md) |
 | 需求与参考 | [产品需求](docs/product-requirements.md)、[阶段覆盖](docs/requirements-coverage.md)、[外部参考](docs/open-source-references.md)、[Nex V2 参考](docs/nex-v2-references.md) |

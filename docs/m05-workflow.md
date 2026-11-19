@@ -22,7 +22,7 @@ CLI 不打印秘密，不覆盖文件，保留操作者、原因、owner/实例/
 
 | 模块 | 当前职责与 Deps |
 | --- | --- |
-| commands/execution | 分配、认领、续期、主运行结束、停止证据；9 项：principals、members、participants、commands、tasks、flow、executions、snapshots、events |
+| commands/execution | 分配、认领、主运行结束、停止证据，并提供 execution.Progress（记录执行者最近进展）；9 项：principals、members、participants、commands、tasks、flow、executions、snapshots、events |
 | commands/result | 原子提交正文/交付、撤回、调用验收 State 的命名动作；9 项：commands、tasks、flow、executions、results、commits、accepting、snapshots、events |
 | commands/flow | 取消、退回、重开、管理员隔离证明；6 项：commands、tasks、flow、executions、snapshots、events |
 | query/workflow | 当前执行/交付/验收与操作提示；9 项：commits、transactions、tasks、flow、executions、results、reviews、identity、authorization |
@@ -31,21 +31,22 @@ CLI 不打印秘密，不覆盖文件，保留操作者、原因、owner/实例/
 | state/executing | 检查当前轮当前依据的有效交付；只读 results |
 | state/accepting | 自有 pending/结论记录和当前资格判断；results、reviews、members；提供 RecordVerdict，不依赖 flow/命令 |
 | state/completed | 当前交付有效性；只读 results，控制器另执行固定安全退出门 |
-| api/workflow | 独立协议模块；executions、results、controls、workflow 查询、security 五项 |
+| api/workflow | 独立协议模块；executions、results、controls、workflow 查询、questions、security 六项 |
+| api/mcp | MCP（Streamable HTTP）协议适配，见 [MCP 接入](mcp-adapter.md)；tasks、comments、workflow、executions、results、questions、security 七项，均为面向执行 Agent 的局部窄接口 |
 
 超过五字段保留理由：各命令模块必须显式协调事务内领域事实，但分配/执行、交付/验收、流程控制保持独立 provider；只读聚合单独提供内部 FactsReader，命令不额外持有查询仓储写能力。共同代码是包内辅助逻辑，不是依赖包或服务定位器。HTTP 的 Origin/CSRF/会话凭据解析作为内聚 RequestSecurity 复用，HTTP owner 只启动/关闭一次会话模块。没有新增 registry 或配置层。
 
-根默认图为 23 个实际实例（含后续新增的 question-commands），见[逐字段依赖图](m05-dependencies.md)，103 条字段目标边，无环且全部根可达。准备定义与标准定义共存；标准定义的行为摘要包含有序状态描述。改同 ID/版本的步骤/规则导致不匹配时拒绝，不能继续沿旧位置执行新规则。示例片段必须并入同一个 config.yaml；不能作为第三层加载。
+根默认图为 25 个实际实例（含后续新增的 catalog、question-commands 与 mcp-api），见[逐字段依赖图](m05-dependencies.md)，121 条字段目标边，无环且全部根可达。准备定义与标准定义共存；标准定义的行为摘要包含有序状态描述。改同 ID/版本的步骤/规则导致不匹配时拒绝，不能继续沿旧位置执行新规则。示例片段必须并入同一个 config.yaml；不能作为第三层加载。
 
-## 执行、保活与停止
+## 执行、进展与停止
 
 认领在同 SQL 写事务内检查任务/轮次/依据、流程 Revision、明确分配、主体/实例、已到达步骤以及执行角色。两个并发认领最多一个成功；Generation 按任务单调增长，换轮也不复用。正常状态推进保留 RoundID，EntryID 每次进入变化。
 
-租约默认 60 秒，可在 execution-commands.config.leaseSeconds（1—3600）调整。到期查询显示 unknown，阻止无证据重派；同一未失效实例可显式续期恢复。WS 在线不等于保活。当前未知为租约事实的派生查询状态，没有无 owner 后台扫描器。主运行 End 不证明子进程或外部工作已停止，结果与 End 可前后独立提交；安全结束且未失效/被替换的执行可以补交。
+执行没有租约、心跳或超时。执行记录 `ProgressAt`：认领、执行者本人留言（workspace 经 execution.Progress）、提问（question-commands 经 execution.Progress）和提交结果时在同一事务内更新；他人留言不算。它只供负责人和 Agent 判断进展，不推动流程 Revision、不产生状态变化，也不自动重派；长期沉默的执行需负责人留言、隔离或改派。没有后台扫描器。主运行 End 不证明子进程或外部工作已停止，结果与 End 可前后独立提交；安全结束且未失效/被替换的执行可以补交。
 
 停止证明需 runtime 用途凭据，绑定 ExecutionID、Generation、实例/incarnation，以及服务端 challenge：自然结束使用 EndEvidenceID，已请求取消则必须使用 StopRequestID。业务凭据不能证明清理。MainStopped、ChildrenStopped、ExternalSettled 全部明确成立才标记安全退出；缺失/部分证明保持 unknown，保存不可变来源与接收时间。没有任意工具副作用“恰好一次”或自动回收保证。
 
-取消立即保存 cancelled 意图、失效业务写资格、持久化 stop-requested 事件；不等待远端调用，不把请求送达当停止。旧实例的普通提交/续期/结束拒绝。仍有效的 runtime 凭据可以受限关闭自己的旧执行，即使任务参与关系已移除；回执不返回任务内容，不改当前结果或新执行。成员停用或凭据撤销始终拒绝，恢复需管理员明确处理。
+取消立即保存 cancelled 意图、失效业务写资格、持久化 stop-requested 事件；不等待远端调用，不把请求送达当停止。旧实例的普通提交/结束拒绝。仍有效的 runtime 凭据可以受限关闭自己的旧执行，即使任务参与关系已移除；回执不返回任务内容，不改当前结果或新执行。成员停用或凭据撤销始终拒绝，恢复需管理员明确处理。
 
 管理员可记录有操作者、原因、隔离范围的外部隔离证明；状态为 isolated，失效写资格，不伪称执行已停止。仅有效人类租户管理员可用，普通负责人资格不足。Taskloom 保存该运维证明，不自行验证物理隔离；真实使用必须有实际证据。该入口用于无法再取证的受控恢复，不是自动超时解锁。
 
@@ -70,7 +71,7 @@ Submit 原子追加不可变 result commit、登记 Submission，再核对已到
 | GET /workflow | 受权快照、最近执行、当前交付/正文/验收、可用操作提示 |
 | POST /execution/assign | Basis + Subject，负责人/管理员或当前人工处理人分配用户或 Agent |
 | POST /execution/open | Basis，匹配分配的用户或业务 Agent 认领 |
-| POST /execution/renew、/execution/end | ExecutionID/Generation，绑定自身实例 |
+| POST /execution/end | ExecutionID/Generation，绑定自身实例 |
 | POST /execution/proof | ExecutionID/Generation/Challenge + 三项完整性事实，仅 runtime 凭据 |
 | POST /execution/isolate | Basis + ExecutionID/Generation/Reason/Scope，仅管理员 |
 | POST /results | Basis + ExecutionID/Generation/Body |
@@ -80,9 +81,9 @@ Submit 原子追加不可变 result commit、登记 Submission，再核对已到
 | POST /questions | RoundID + Body，执行者等参与者向负责人提问 |
 | POST /questions/{qid}/answer | Body，仅被提问的负责人回答当前轮的未答问题 |
 
-界面支持角色切换、分配、认领/续期/结束、结果区、验收/撤回、取消、退回、重开及管理员恢复表单。布局为左侧任务列表（“待我处理/全部”，标出状态与等谁）与右侧详情：顶部“下一步”卡片（等谁、等待原因、待验收时的验收与分配入口），主栏为当前结果与时间线，侧栏为任务约定、执行、参与者、任务控制及仅对 Agent 会话显示的“Agent 调试”。界面不按状态名判断可用操作，只依据快照的 Can*/Blocked/NextActor；状态名仅用于显示。退回、取消、撤回、重开需二次确认；退出登录会清空当前详情。结果正文按稳定引用读取，不依赖时间线首屏。网络结果不明确时保留请求幂等键；编辑期间保留输入并提示刷新。查询操作提示不是授权凭证，服务端每次重新检查。
+界面支持角色切换、分配、认领/结束、结果区、验收/撤回、取消、退回、重开及管理员恢复表单。布局为左侧任务列表（“待我处理/全部”，标出状态与等谁）与右侧详情：顶部“下一步”卡片（等谁、等待原因、待验收时的验收与分配入口），主栏为当前结果与时间线，侧栏为任务约定、执行、参与者、任务控制及仅对 Agent 会话显示的“Agent 调试”。界面不按状态名判断可用操作，只依据快照的 Can*/Blocked/NextActor；状态名仅用于显示。退回、取消、撤回、重开需二次确认；退出登录会清空当前详情。结果正文按稳定引用读取，不依赖时间线首屏。网络结果不明确时保留请求幂等键；编辑期间保留输入并提示刷新。查询操作提示不是授权凭证，服务端每次重新检查。
 
-快照另带两项只读说明：`NextActor`（owner/assignee/reviewer，空表示没有固定角色需要行动，步骤专有原因仍看 `Position.Waiting`）与 `Blocked`（仅对当前查看者相关的 open/renew/submit/review 给出不可用原因码，例如 not_assigned、execution_in_progress、lease_expired、basis_changed、not_reviewer，完整列表见 `cap/workflow`）。每个 Can* 与其原因码出自同一判断函数，避免提示与开关漂移；原因码只解释当前状态，不是授权凭证，也不替代命令写入时的重查。
+快照另带两项只读说明：`NextActor`（owner/assignee/reviewer，空表示没有固定角色需要行动，步骤专有原因仍看 `Position.Waiting`）与 `Blocked`（仅对当前查看者相关的 open/end/submit/review 给出不可用原因码，例如 not_assigned、execution_in_progress、basis_changed、not_reviewer，完整列表见 `cap/workflow`）。每个 Can* 与其原因码出自同一判断函数，避免提示与开关漂移；原因码只解释当前状态，不是授权凭证，也不替代命令写入时的重查。
 
 `GET /v1/inbox` 返回当前调用者可读且 NextActor 指向自己的任务（TaskID/Title/NextActor）：负责人对应 owner、验收记录的 reviewer 对应 reviewer，assignee 对应当前处理人（人或 Agent）；仍未安全停止的 Agent 执行优先指向原执行主体。它与快照共用 ReadFacts 派生，不保存收件箱记录、不发通知；管理员恢复项暂不列入。当前逐任务读取，规模评估归 M11。工作台任务列表以 ● 标记并可“只看待我处理”。
 
@@ -109,7 +110,7 @@ checkpoint 的写入入口是 POST `/v1/tasks/{id}/checkpoint`，输入 RoundID/
 
 ## 验证范围
 
-真实 SQLite/HTTP 测试覆盖并发认领、租约 unknown/恢复、结束后补交、业务凭据伪造证明拒绝、错实例/错 challenge、部分证明不放行、取消与旧写入、旧代次隔离、同轮重试、新轮/新依据、验收收尾等待、结果更换/撤回、终态保护及管理员恢复。C01—C11/C13 的本阶段基础场景均有对应回归；文件/链接的 C12 留 M07。
+真实 SQLite/HTTP 测试覆盖并发认领、进展时间记录与沉默不改变执行、结束后补交、业务凭据伪造证明拒绝、错实例/错 challenge、部分证明不放行、取消与旧写入、旧代次隔离、同轮重试、新轮/新依据、验收收尾等待、结果更换/撤回、终态保护及管理员恢复。C01—C11/C13 的本阶段基础场景均有对应回归；文件/链接的 C12 留 M07。
 
 E01—E03 已通过本地真实配置/SQLite/API 扩展验证：新 State/新 API 装配、业务审核等待保留交付、前序新证据重查、旧确认拒绝、技术失败回滚及路由冲突拒绝。脚本静态图不作为这些运行验收的替代。
 
@@ -121,7 +122,7 @@ E01—E03 已通过本地真实配置/SQLite/API 扩展验证：新 State/新 AP
 
 `Assignee` 是当前处理主体，替代 Agent 专属命名；`NextActor=assignee` 覆盖人和 Agent。`ViewerKind` 用于呈现人工操作或 Agent 调试区，`CanAssign` 单独表达分配资格，不借用负责人管理权限。创建者仍是默认负责人和验收人。
 
-人工处理人复用 Open/SubmitResult：Open 建立服务端标记的 Manual 执行记录，保留轮次/依据/代次与并发隔离；没有受管 Agent 进程，因此不要求实例、心跳或运行时停止证明，Safe 只代表无该类受管运行等待。Submit 同事务结束人工记录并登记交付，人工验收仍按原流程。Agent 路径的停止、租约与实例约束保持。
+人工处理人复用 Open/SubmitResult：Open 建立服务端标记的 Manual 执行记录，保留轮次/依据/代次与并发隔离；没有受管 Agent 进程，因此不要求实例、心跳或运行时停止证明，Safe 只代表无该类受管运行等待。Submit 同事务结束人工记录并登记交付，人工验收仍按原流程。Agent 路径的停止与实例约束保持。
 
 负责人/管理员可分配给有效用户或 Agent。仍参与任务的当前人工处理人可以转交，普通参与者和 Agent 不能转交。转交失效原执行写资格，旧结果请求不能写入，原处理者保留参与关系而不保留分配权；负责人/验收人不变。运行中的 Agent 必须先提供原有停止/隔离证据才能转交。已提交的结果仍按现有验收、退回流程处理。
 

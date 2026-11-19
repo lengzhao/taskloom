@@ -219,11 +219,11 @@ func TestAgentBindingsAreCredentialScopedAndDoNotInheritOwner(t *testing.T) {
 	if err := svc.Create(ctx, token, "agent", p); err != nil {
 		t.Fatal(err)
 	}
-	first, err := svc.Issue(ctx, token, "agent-1", capsecurity.IssueInput{Tenant: "t", Subject: "agent", InstanceID: "instance", Incarnation: "boot-1", Purpose: "business", ExpiresAt: time.Now().Add(time.Hour)})
+	first, err := svc.Issue(ctx, token, "agent-1", capsecurity.IssueInput{Tenant: "t", Subject: "agent", InstanceID: "instance", Incarnation: "boot-1", ExpiresAt: time.Now().Add(time.Hour)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := svc.Issue(ctx, token, "agent-2", capsecurity.IssueInput{Tenant: "t", Subject: "agent", InstanceID: "instance", Incarnation: "boot-2", Purpose: "runtime", ExpiresAt: time.Now().Add(time.Hour)})
+	second, err := svc.Issue(ctx, token, "agent-2", capsecurity.IssueInput{Tenant: "t", Subject: "agent", InstanceID: "instance", Incarnation: "boot-2", ExpiresAt: time.Now().Add(time.Hour)})
 	if err != nil {
 		t.Fatal(err)
 	}

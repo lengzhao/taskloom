@@ -218,7 +218,7 @@ details[open] > summary { margin-bottom: 4px }
 // ---------- Labels (display only; flow rules stay on the server) ----------
 const STATE_LABEL = { ready: '准备', executing: '执行中', accepting: '验收中', checkpoint: '待确认', factcheck: '检查中' };
 const ACTOR_LABEL = { owner: '负责人', assignee: '处理人', reviewer: '验收人' };
-const ACTION_LABEL = { open: '认领执行', end: '报告主运行结束', submit: '提交结果', review: '验收' };
+const ACTION_LABEL = { open: '认领执行', submit: '提交结果', review: '验收' };
 const REASON_LABEL = {
   task_not_active: '任务已结束或已取消',
   business_credential_required: '需要 Agent 业务凭据',
@@ -233,10 +233,10 @@ const REASON_LABEL = {
   basis_changed: '任务依据已更新，需要重新认领',
   not_reviewer: '你不是本任务验收人',
 };
-const EXEC_LABEL = { active: '运行中', unknown: '状态未知（停止证据不完整）', ended: '已结束', stopped: '已停止', isolated: '已隔离', 'stop-requested': '已请求停止' };
+const execLabel = (ex, pos) => pos && pos.Status !== 'active' ? '任务已结束' : ex.Writable ? '进行中' : '已失效（不能再写入）';
 const OUTCOME_LABEL = { pending: '待验收', approved: '已通过', rejected: '未通过' };
 const KIND_LABEL = { comment: '留言', result: '结果', question: '提问', answer: '回答', 'task.created': '创建任务', 'task.basis': '修改约定' };
-const AGENT_ACTIONS = ['open', 'end', 'submit'];
+const AGENT_ACTIONS = ['open', 'submit'];
 
 // ---------- State ----------
 const $ = id => document.getElementById(id);
@@ -459,7 +459,6 @@ function makeContext(d, w, path) {
     d, w, ex, active, path,
     base: { RoundID: w.Position.RoundID, BasisVersion: d.Task.BasisVersion, ExpectedRevision: w.Position.Revision },
     ref: ex ? { ExecutionID: ex.ID, Generation: ex.Generation } : {},
-    running: !!ex && !ex.Safe,
     // Blocked only lists agent actions for agent viewers, so this marks an agent session.
     isAgent: w.ViewerKind === 'agent',
     // Refresh the list first: it decides which tasks are waiting on me.
@@ -488,7 +487,7 @@ function renderNext(ctx) {
   const panel = h('div', 'panel next' + (inboxIDs.has(d.Task.ID) ? ' mine' : ''));
   const s = stateOf(w.Position);
   let title;
-  if (w.Position.Status === 'completed') title = '已完成：结果与验收已满足，执行已安全退出';
+  if (w.Position.Status === 'completed') title = '已完成：结果与验收已满足';
   else if (w.NextActor) title = '下一步等待：' + ACTOR_LABEL[w.NextActor];
   else title = w.Position.Complete ? '当前步骤已完成' : '暂无需要处理的事项';
   panel.append(h('div', 'head', el('h3', title), pill(s)));
@@ -522,11 +521,11 @@ function renderNext(ctx) {
     actions.append(button('验收通过', () => verdict('approved'), 'primary'), button('不通过，退回修改', () => verdict('rejected'), 'danger'));
   }
   // Assigning an executor is the owner's next step when nobody is assigned yet.
-  if (w.CanAssign && active && w.SafeToExit && !w.Assignee && w.NextActor === 'owner') {
+  if (w.CanAssign && active && !w.Assignee && w.NextActor === 'owner') {
     panel.classList.add('mine');
     panel.append(assignForm(ctx, '选择处理人'));
   }
-  if (!active && w.CanManage && w.SafeToExit) actions.append(button('重开任务', () => confirmThen('重开会开始新一轮，旧结果保留在历史中。继续？', () => ctx.send('/reopen', base))));
+  if (!active && w.CanManage) actions.append(button('重开任务', () => confirmThen('重开会开始新一轮，旧结果保留在历史中。继续？', () => ctx.send('/reopen', base))));
   if (actions.children.length) panel.append(actions);
   return panel;
 }
@@ -635,7 +634,7 @@ function renderBasis({ d, w, ex, active, path }) {
     el('label', '目标'), el('p', d.Task.Goal || '待补充'),
     el('label', '验收标准'), el('p', d.Task.Criteria || '待补充'));
   // The server enforces CheckEdit; this only hides the form once work has started.
-  const editable = d.CanEdit && active && !w.Submission && (!ex || (ex.RoundID !== w.Position.RoundID && ex.Safe));
+  const editable = d.CanEdit && active && !w.Submission && (!ex || !(ex.Writable && ex.RoundID === w.Position.RoundID));
   if (editable) {
     const f = el('form');
     for (const [name, text] of [['Title', '标题'], ['Goal', '目标'], ['Criteria', '验收标准']]) {
@@ -660,14 +659,13 @@ function renderExecution(ctx) {
   const add = (k, v) => dl.append(el('dt', k), el('dd', v));
   add('处理人', w.Assignee || '待分配');
   if (ex) {
-    add('状态', (EXEC_LABEL[ex.Status] || ex.Status) + (ex.Manual ? ' · 人工处理' : ex.Safe ? ' · 已安全退出' : ''));
+    add('状态', execLabel(ex, w.Position) + (ex.Manual ? ' · 人工处理' : ''));
     add('代次', '第 ' + ex.Generation + ' 代');
     if (ex.ProgressAt && !ex.ProgressAt.startsWith('0001')) add('最近进展', ago(ex.ProgressAt) + '（' + time(ex.ProgressAt) + '）');
   }
   const live = el('div', undefined, 'muted small'); live.id = 'execution-live-status';
   const panel = h('div', 'panel', el('h3', '执行'), dl, live);
-  if (ctx.running) panel.append(el('p', '停止证据尚未完整确认；执行结束或断线都不会自动解除等待。', 'muted small'));
-  if (w.CanAssign && ctx.active && w.SafeToExit && w.Assignee && !w.Submission) panel.append(h('details', null, el('summary', '转交处理（用户或 Agent）'), assignForm(ctx, '选择新的处理人')));
+  if (w.CanAssign && ctx.active && w.Assignee && !w.Submission) panel.append(h('details', null, el('summary', '转交处理（用户或 Agent）'), assignForm(ctx, '选择新的处理人')));
   return panel;
 }
 
@@ -685,22 +683,14 @@ function renderParticipants({ d, path, candidates }) {
 
 function renderManage(ctx) {
   const { w, active, base, ref, send } = ctx;
-  if (!w.CanManage && !w.CanIsolate) return null;
+  if (!w.CanManage) return null;
   const panel = h('div', 'panel', el('h3', '任务控制'));
   const actions = h('div', 'actions');
   if (active && w.CanManage) {
-    if (w.SafeToExit) actions.append(button('退回并开始新轮', () => confirmThen('退回会开始新一轮，当前结果和验收结论只保留在历史中。继续？', () => send('/return', base))));
-    actions.append(button('取消任务', () => confirmThen('取消后旧执行将无法再写入，但外部工作仍需停止确认。继续？', () => send('/cancel', base)), 'danger'));
+    actions.append(button('退回并开始新轮', () => confirmThen('退回会开始新一轮，当前结果和验收结论只保留在历史中。继续？', () => send('/return', base))));
+    actions.append(button('取消任务', () => confirmThen('取消后当前执行立即失效，不能再写入。继续？', () => send('/cancel', base)), 'danger'));
   }
   if (actions.children.length) panel.append(actions);
-  if (ctx.running && w.CanIsolate) {
-    const reason = textarea('Reason', true), scope = textarea('Scope', true);
-    const f = h('form', null, field('隔离依据与原因', reason), field('已覆盖的执行及外部工作范围', scope),
-      el('p', '该操作只记录管理员提供的隔离依据，不代表工具已经停止。', 'muted small'),
-      h('div', 'actions', el('button', '记录隔离证明', 'danger')));
-    f.onsubmit = handle(() => send('/execution/isolate', { ...base, ...ref, Reason: reason.value, Scope: scope.value }));
-    panel.append(h('details', null, el('summary', '管理员：记录外部隔离证明'), f));
-  }
   return panel.children.length > 1 ? panel : null;
 }
 
@@ -717,7 +707,6 @@ function renderAgentDebug(ctx) {
   }
   const actions = h('div', 'actions');
   if (w.CanOpen) actions.append(button('认领并开始执行', () => send('/execution/open', base), 'primary'));
-  if (w.CanEnd) actions.append(button('报告主运行结束', () => send('/execution/end', ref)));
   if (actions.children.length) panel.append(actions);
   if (ctx.active) {
     const q = textarea('Body', true, '说明问题、为什么卡住、可选方案和建议');
@@ -780,10 +769,8 @@ async function openMembers(preselect = '') {
   days.value='7';
   const instance=el('input');instance.value='instance-'+crypto.randomUUID().slice(0,8);
   const incarnation=el('input');incarnation.value=crypto.randomUUID();
-  const purpose=el('select');
-  for (const [value,text] of [['business','任务处理（business）'],['runtime','运行时停止证明（runtime）']]) {const o=el('option',text);o.value=value;purpose.append(o)}
-  const agentFields=h('div',null,field('运行实例标识',instance),field('本次启动标识',incarnation),field('凭据用途',purpose),
-    el('p','使用同一实例和启动标识签发配套凭据；新实例或重启请使用新标识。','muted small'));
+  const agentFields=h('div',null,field('运行实例标识',instance),field('本次启动标识',incarnation),
+    el('p','同一实例和启动标识可继续之前认领的执行；换实例需由负责人先停止旧执行。','muted small'));
   function binding(){const agent=members.find(m=>m.Subject===subject.value)?.Kind==='agent';agentFields.hidden=!agent;instance.required=agent;incarnation.required=agent}
   subject.onchange=binding;binding();
   const result=h('div',null);result.id='issued-credential';
@@ -794,11 +781,11 @@ async function openMembers(preselect = '') {
     result.replaceChildren();
     const member=members.find(m=>m.Subject===subject.value);
     const fields={Subject:subject.value,Days:days.value};
-    if(member.Kind==='agent') Object.assign(fields,{InstanceID:instance.value,Incarnation:incarnation.value,Purpose:purpose.value});
+    if(member.Kind==='agent') Object.assign(fields,{InstanceID:instance.value,Incarnation:incarnation.value});
     const fingerprint=JSON.stringify(fields);
     if(!pendingIssue || pendingIssue.fingerprint!==fingerprint) pendingIssue={fingerprint,input:{Subject:subject.value,ExpiresAt:new Date(Date.now()+Number(days.value)*86400000).toISOString()}};
     const input=pendingIssue.input;
-    if(member.Kind==='agent') Object.assign(input,{InstanceID:instance.value,Incarnation:incarnation.value,Purpose:purpose.value});
+    if(member.Kind==='agent') Object.assign(input,{InstanceID:instance.value,Incarnation:incarnation.value});
     const issued=await api('/credentials','POST',input);
     pendingIssue=null;
     if(!issued.Secret){result.append(el('p','这次请求已签发过凭据，明文不能重新读取。请先撤销该凭据，再生成新的凭据。','muted'));}
@@ -892,7 +879,7 @@ setInterval(async () => {
     } else if (selected) {
       const state = await api('/tasks/' + encodeURIComponent(selected) + '/workflow');
       const live = $('execution-live-status');
-      if (live) live.textContent = '实时：' + (state.Assignee || '待分配') + (state.Execution ? ' · 第 ' + state.Execution.Generation + ' 代 · ' + (EXEC_LABEL[state.Execution.Status] || state.Execution.Status) : '');
+      if (live) live.textContent = '实时：' + (state.Assignee || '待分配') + (state.Execution ? ' · 第 ' + state.Execution.Generation + ' 代 · ' + execLabel(state.Execution, state.Position) : '');
       if (pendingRefresh && editing) notice('任务有新变化，已保留你的输入；完成编辑后刷新。');
     }
   } catch (e) {

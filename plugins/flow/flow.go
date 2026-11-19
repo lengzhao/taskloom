@@ -84,20 +84,12 @@ func (c *Controller) stateContext(t task.Task, p capflow.Position, i int) capflo
 	p.State = p.Entries[i].Key
 	return capflow.Context{Task: t, Position: p}
 }
-func (c *Controller) safe(ctx context.Context, t task.Task) (bool, error) {
-	if c.d.Executions == nil {
-		return true, nil
-	}
-	return c.d.Executions.SafeToExit(ctx, t.Tenant, t.ID)
-}
 
-// held returns the fixed, flow-independent reason a task may not complete yet:
-// unsafe executions or an unanswered request for input in the current round.
+// held returns the fixed, flow-independent reason a task may not complete
+// yet: an unanswered request for input in the current round. Completion does
+// not wait for executions to stop; an accepted result stands on its own and a
+// terminal task fences any further writes.
 func (c *Controller) held(ctx context.Context, t task.Task, p capflow.Position) (string, error) {
-	safe, e := c.safe(ctx, t)
-	if e != nil || !safe {
-		return "等待全部执行安全停止", e
-	}
 	if c.d.Questions == nil {
 		return "", nil
 	}
@@ -169,14 +161,7 @@ func (c *Controller) Refresh(ctx context.Context, t task.Task) (capflow.Position
 	before := p
 	before.Entries = append([]capflow.Entry(nil), p.Entries...)
 	if p.Status == capflow.PhaseCancelled {
-		safe, e := c.safe(ctx, t)
-		if e != nil {
-			return p, e
-		}
 		p.Waiting = "任务已取消"
-		if !safe {
-			p.Waiting = "已取消；外部工作停止待确认"
-		}
 		return c.save(ctx, before, p)
 	}
 	for iteration := 0; iteration < len(c.d.States)+1; iteration++ {
@@ -310,6 +295,10 @@ func (c *Controller) CheckOpen(ctx context.Context, t task.Task) (capflow.Positi
 	}
 	return p, nil
 }
+
+// CheckEdit allows changing the task basis before work on the current round
+// has been claimed: in the first step, or while executing with no live claim
+// in this round. A running claim must not see its criteria change silently.
 func (c *Controller) CheckEdit(ctx context.Context, t task.Task) error {
 	p, e := c.Read(ctx, t.Tenant, t.ID)
 	if e != nil {
@@ -319,29 +308,23 @@ func (c *Controller) CheckEdit(ctx context.Context, t task.Task) error {
 		return fault.ErrConflict
 	}
 	role := c.d.States[p.Index].Describe().Role
-	if role == capflow.RoleReady {
-		safe, e := c.safe(ctx, t)
-		if e != nil {
-			return e
-		}
-		if safe {
-			return nil
-		}
+	if role != capflow.RoleReady && role != capflow.RoleExecuting {
+		return fault.ErrConflict
 	}
-	if role == capflow.RoleExecuting && c.d.Executions != nil {
-		previous, readErr := c.d.Executions.Current(ctx, t.Tenant, t.ID)
-		e = readErr
-		if e == nil && previous.RoundID != p.RoundID && previous.Safe {
-			return nil
-		}
-		if errors.Is(e, fault.ErrNotFound) {
-			return nil
-		}
-		if e != nil {
-			return e
-		}
+	if c.d.Executions == nil {
+		return nil
 	}
-	return fault.ErrConflict
+	current, e := c.d.Executions.Current(ctx, t.Tenant, t.ID)
+	if errors.Is(e, fault.ErrNotFound) {
+		return nil
+	}
+	if e != nil {
+		return e
+	}
+	if current.Writable && current.RoundID == p.RoundID {
+		return fault.ErrConflict
+	}
+	return nil
 }
 func (c *Controller) Cancel(ctx context.Context, t task.Task) (capflow.Position, error) {
 	p, e := c.Read(ctx, t.Tenant, t.ID)
@@ -354,7 +337,7 @@ func (c *Controller) Cancel(ctx context.Context, t task.Task) (capflow.Position,
 	before := p
 	p.Status = capflow.PhaseCancelled
 	p.Complete = false
-	p.Waiting = "已取消；外部工作停止待确认"
+	p.Waiting = "任务已取消"
 	return c.save(ctx, before, p)
 }
 func (c *Controller) restart(ctx context.Context, t task.Task, reopen bool) (capflow.Position, error) {
@@ -363,13 +346,6 @@ func (c *Controller) restart(ctx context.Context, t task.Task, reopen bool) (cap
 		return p, e
 	}
 	if reopen == (p.Status == capflow.PhaseActive) {
-		return p, fault.ErrConflict
-	}
-	safe, e := c.safe(ctx, t)
-	if e != nil {
-		return p, e
-	}
-	if !safe {
 		return p, fault.ErrConflict
 	}
 	before := p

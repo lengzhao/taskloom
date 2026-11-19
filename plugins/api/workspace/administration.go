@@ -73,8 +73,8 @@ func (m *Module) administration(w http.ResponseWriter, r *http.Request, token st
 		return map[string]bool{"ok": e == nil}, e
 	default:
 		var in struct {
-			Subject, InstanceID, Incarnation, Purpose string
-			ExpiresAt                                 time.Time
+			Subject, InstanceID, Incarnation string
+			ExpiresAt                        time.Time
 		}
 		if !httpx.Decode(w, r, &in) {
 			return nil, errDecoded
@@ -93,6 +93,6 @@ func (m *Module) administration(w http.ResponseWriter, r *http.Request, token st
 		if !agent {
 			return nil, fault.ErrInput
 		}
-		return m.d.Security.Issue(ctx, token, key, security.IssueInput{Tenant: p.Tenant, Subject: in.Subject, InstanceID: in.InstanceID, Incarnation: in.Incarnation, Purpose: in.Purpose, ExpiresAt: in.ExpiresAt})
+		return m.d.Security.Issue(ctx, token, key, security.IssueInput{Tenant: p.Tenant, Subject: in.Subject, InstanceID: in.InstanceID, Incarnation: in.Incarnation, ExpiresAt: in.ExpiresAt})
 	}
 }

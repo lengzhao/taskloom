@@ -12,7 +12,7 @@
 | 停用/不存在的成员 | 无任务访问或管理能力，即使仍保留负责人/参与历史 |
 | Agent | 不继承 owner 任何权限；可显式参与任务读取/评论；执行提交须由 M05 的分配及有效代次再限制 |
 
-验收资格独立来自绑定流程的验收状态及任务策略，参与关系不授予验收资格。runtime 证明用途凭据不进入业务写入口，停止证明见 [M05](m05-workflow.md)。未知操作默认拒绝；操作名称仅用于命名用例、幂等和审计，不是部署者配置的权限项。
+验收资格独立来自绑定流程的验收状态及任务策略，参与关系不授予验收资格。只签发 business 用途凭据；旧的 runtime 用途凭据一律拒绝。执行与写入隔离见 [M05](m05-workflow.md)。未知操作默认拒绝；操作名称仅用于命名用例、幂等和审计，不是部署者配置的权限项。
 
 ## 接口与存储
 
@@ -50,7 +50,7 @@ workspace.SetParticipant 只允许有效管理员/负责人，加入对象必须
 - GET /v1/me：当前有效成员的 Tenant、Subject、Kind、CanAdmin。
 - GET /v1/members：仅管理员可读，返回本租户用户与 Agent（含停用成员）的标识、类型、所属人、角色、启用状态，无凭据信息。
 - POST /v1/identities：Subject、Kind（human/agent）、OwnerID、Password（仅用户）；创建有效普通成员，Agent 的所属人须为同租户有效用户。
-- POST /v1/credentials：Subject、ExpiresAt、InstanceID、Incarnation、Purpose（business/runtime）。仅为有效 Agent 签发，最长 90 天。
+- POST /v1/credentials：Subject、ExpiresAt、InstanceID、Incarnation。仅为有效 Agent 签发，最长 90 天。
 - POST /v1/credentials/revoke：CredentialID；管理员撤销本租户凭据。
 
 新增身份和凭据 API 的租户由可信认证主体确定，浏览器不能提交 Tenant 或创建管理员角色。凭据明文只在首次签发响应中返回，可复制或下载；数据库/幂等回执只保存摘要或编号，重试只返回编号。明文关闭窗口即清空，不写浏览器持久化存储。网络结果不明确时页面沿用同一请求及幂等键；重放拿不到明文时可按返回编号撤销，再重新签发。停用不删除历史数据，重新启用恢复仍保留的任务关系。

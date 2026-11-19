@@ -10,37 +10,29 @@ import (
 type Execution struct {
 	Tenant, TaskID, ID, RoundID, Subject, InstanceID, Incarnation string
 	Generation, BasisVersion                                      int64
-	Status, StopRequestID, EndEvidenceID                          string
 	// ProgressAt is when the executor last recorded progress (open, comment,
 	// question or result). It is informational: nothing expires on it.
-	ProgressAt     time.Time
-	Writable, Safe bool
-	// Manual means human work, without a managed Agent runtime or lease.
+	ProgressAt time.Time
+	// Writable is the only lifecycle fact Taskloom keeps: reassignment, a new
+	// claim, return, reopen or cancel fence it at once. Whether an external
+	// process still runs is unobservable here and is the Agent layer's concern.
+	Writable bool
+	// Manual means human work, without an Agent instance binding.
 	Manual bool
 }
 type Reader interface {
 	Assignee(ctx context.Context, tenant, taskID string) (string, error)
 	Current(ctx context.Context, tenant, taskID string) (Execution, error)
 	GetExecution(ctx context.Context, tenant, id string) (Execution, error)
-	SafeToExit(ctx context.Context, tenant, taskID string) (bool, error)
 }
 type Store interface {
-	RecordStopEvidence(ctx context.Context, value StopEvidence) error
 	AssignSubject(ctx context.Context, tenant, taskID, subject string) error
 	Reader
 	OpenExecution(ctx context.Context, value Execution) (Execution, error)
 	SaveExecution(ctx context.Context, value Execution) error
 }
 
-type StopEvidence struct {
-	Source, Reason, Scope                                                        string
-	Tenant, TaskID, ID, ExecutionID, Challenge, Subject, InstanceID, Incarnation string
-	Generation                                                                   int64
-	MainStopped, ChildrenStopped, ExternalSettled                                bool
-	ReceivedAt                                                                   time.Time
-}
-
-// ResultAccess lets submission mark a human's work ended in the same transaction.
+// ResultAccess lets submission record progress on its execution in the same transaction.
 type ResultAccess interface {
 	Reader
 	SaveExecution(ctx context.Context, value Execution) error

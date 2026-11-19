@@ -60,11 +60,9 @@ func TestOfflineAgentEnrollmentRequiresExplicitBinding(t *testing.T) {
 	if code := run(context.Background(), bootstrap, &out, &errs); code != 0 {
 		t.Fatal(code, errs.String())
 	}
-	for _, purpose := range []string{"business", "runtime"} {
-		args := append(append([]string{}, common...), "-mode", "enroll-agent", "-subject", "agent", "-owner", "owner", "-instance", "machine", "-incarnation", "boot", "-purpose", purpose, "-credential-file", filepath.Join(dir, purpose+".json"))
-		if code := run(context.Background(), args, &out, &errs); code != 0 {
-			t.Fatal(code, errs.String())
-		}
+	enroll := append(append([]string{}, common...), "-mode", "enroll-agent", "-subject", "agent", "-owner", "owner", "-instance", "machine", "-incarnation", "boot", "-credential-file", filepath.Join(dir, "agent.json"))
+	if code := run(context.Background(), enroll, &out, &errs); code != 0 {
+		t.Fatal(code, errs.String())
 	}
 	args := append(append([]string{}, common...), "-mode", "enroll-agent", "-subject", "bad-agent", "-owner", "owner", "-credential-file", filepath.Join(dir, "bad.json"))
 	if code := run(context.Background(), args, &out, &errs); code == 0 {

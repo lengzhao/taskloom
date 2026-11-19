@@ -27,21 +27,21 @@ import (
 )
 
 type fixture struct {
-	graph                 *build.Result
-	ctx                   context.Context
-	tasks                 workspace.Commands
-	taskQueries           workspace.Queries
-	ex                    api.ExecutionCommands
-	results               api.ResultCommands
-	controls              api.ControlCommands
-	query                 api.Queries
-	security              *security.Service
-	owner, agent, runtime string
-	tx                    unitofwork.Manager
-	exStore               execution.Store
-	commits               commit.Log
-	deliveries            delivery.Reader
-	reviews               acceptance.Reader
+	graph        *build.Result
+	ctx          context.Context
+	tasks        workspace.Commands
+	taskQueries  workspace.Queries
+	ex           api.ExecutionCommands
+	results      api.ResultCommands
+	controls     api.ControlCommands
+	query        api.Queries
+	security     *security.Service
+	owner, agent string
+	tx           unitofwork.Manager
+	exStore      execution.Store
+	commits      commit.Log
+	deliveries   delivery.Reader
+	reviews      acceptance.Reader
 }
 
 func setup(t *testing.T, override map[string]any) *fixture {
@@ -87,16 +87,12 @@ func setup(t *testing.T, override map[string]any) *fixture {
 	if e = f.security.Create(ctx, f.owner, "agent", identity.Principal{Tenant: "t", ID: "agent", Kind: "agent", OwnerID: "owner"}); e != nil {
 		t.Fatal(e)
 	}
-	for _, purpose := range []string{"business", "runtime"} {
-		issued, e = f.security.Issue(ctx, f.owner, purpose, capsecurity.IssueInput{Tenant: "t", Subject: "agent", InstanceID: "machine", Incarnation: "boot", Purpose: purpose, ExpiresAt: time.Now().Add(time.Hour)})
+	for _, purpose := range []string{"business"} {
+		issued, e = f.security.Issue(ctx, f.owner, purpose, capsecurity.IssueInput{Tenant: "t", Subject: "agent", InstanceID: "machine", Incarnation: "boot", ExpiresAt: time.Now().Add(time.Hour)})
 		if e != nil {
 			t.Fatal(e)
 		}
-		if purpose == "business" {
-			f.agent = issued.Secret
-		} else {
-			f.runtime = issued.Secret
-		}
+		f.agent = issued.Secret
 	}
 	return f
 }
@@ -132,15 +128,8 @@ func (f *fixture) open(t *testing.T, d workspace.Detail) api.Snapshot {
 	}
 	return s
 }
-func proof(s api.Snapshot) api.StopEvidence {
-	v := s.Execution
-	challenge := v.EndEvidenceID
-	if v.StopRequestID != "" {
-		challenge = v.StopRequestID
-	}
-	return api.StopEvidence{ExecutionRef: api.ExecutionRef{TaskID: v.TaskID, ExecutionID: v.ID, Generation: v.Generation}, Challenge: challenge, MainStopped: true, ChildrenStopped: true, ExternalSettled: true}
-}
-func TestResultApprovalWaitsForTrustedFullStopProof(t *testing.T) {
+
+func TestApprovalCompletesTheTask(t *testing.T) {
 	f := setup(t, nil)
 	d := f.create(t)
 	s := f.open(t, d)
@@ -161,27 +150,8 @@ func TestResultApprovalWaitsForTrustedFullStopProof(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	if s.Position.Status != "active" || s.Position.Waiting == "" {
-		t.Fatal("approved before stop", s.Position)
-	}
-	if _, e = f.ex.ProveStopped(f.ctx, f.agent, "forged-proof", proof(s)); e == nil {
-		t.Fatal("business credential proved stop")
-	}
-	partial := proof(s)
-	partial.ChildrenStopped = false
-	if _, e = f.ex.ProveStopped(f.ctx, f.runtime, "partial", partial); e != nil {
-		t.Fatal(e)
-	}
-	s = f.read(t, d.Task.ID)
-	if s.Execution.Safe || s.Position.Status == "completed" {
-		t.Fatal("partial proof released safety")
-	}
-	if _, e = f.ex.ProveStopped(f.ctx, f.runtime, "proof", proof(s)); e != nil {
-		t.Fatal(e)
-	}
-	s = f.read(t, d.Task.ID)
-	if s.Position.Status != "completed" || s.Position.RoundID != round {
-		t.Fatalf("not completed %+v", s)
+	if s.Position.Status != "completed" || s.Position.RoundID != round || s.NextActor != "" {
+		t.Fatalf("approval did not complete %+v", s.Position)
 	}
 	c, e := f.commits.Get(f.ctx, "t", d.Task.ID, submitted.CommitID)
 	if e != nil || c.Body != "immutable result" {
@@ -194,15 +164,15 @@ func TestResultApprovalWaitsForTrustedFullStopProof(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	if reopened.Position.RoundID == round || reopened.Submission != nil || reopened.Review != nil {
-		t.Fatal("old result inherited")
+	if reopened.Position.RoundID == round || reopened.Submission != nil || reopened.Review != nil || reopened.Execution.Writable {
+		t.Fatal("old result or execution inherited")
 	}
 	old, e := f.deliveries.GetSubmission(f.ctx, "t", submitted.ID)
 	if e != nil || old.CommitID != submitted.CommitID {
 		t.Fatal("history lost", e)
 	}
 }
-func TestCancelFencesWritesAndOldProofNeverReopens(t *testing.T) {
+func TestCancelFencesWritesImmediately(t *testing.T) {
 	f := setup(t, nil)
 	d := f.create(t)
 	s := f.open(t, d)
@@ -212,28 +182,16 @@ func TestCancelFencesWritesAndOldProofNeverReopens(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	if s.Position.Status != "cancelled" || s.Execution.Writable || s.Execution.StopRequestID == "" {
-		t.Fatal("cancel did not fence")
+	if s.Position.Status != "cancelled" || s.Execution.Writable || s.NextActor != "" {
+		t.Fatal("cancel did not fence", s.Execution, s.NextActor)
 	}
 	if _, e = f.results.Submit(f.ctx, f.agent, "late", api.Submit{Basis: basis(d, s), ExecutionID: old.ID, Generation: old.Generation, Body: "late"}); !errors.Is(e, fault.ErrConflict) {
 		t.Fatal("late write", e)
 	}
-	if _, e = f.controls.Reopen(f.ctx, f.owner, "unsafe-reopen", basis(d, s)); !errors.Is(e, fault.ErrConflict) {
-		t.Fatal("unsafe reopen", e)
+	if items, _ := f.query.Inbox(f.ctx, f.agent); len(items) != 0 {
+		t.Fatal("cancelled task still waits on the agent", items)
 	}
-	wrong := proof(s)
-	wrong.Challenge = old.EndEvidenceID
-	if _, e = f.ex.ProveStopped(f.ctx, f.runtime, "wrong-challenge", wrong); !errors.Is(e, fault.ErrConflict) {
-		t.Fatal("wrong proof accepted", e)
-	}
-	if _, e = f.ex.ProveStopped(f.ctx, f.runtime, "stop-proof", proof(s)); e != nil {
-		t.Fatal(e)
-	}
-	s = f.read(t, d.Task.ID)
-	if s.Position.Status != "cancelled" {
-		t.Fatal("proof reopened task")
-	}
-	s, e = f.controls.Reopen(f.ctx, f.owner, "safe-reopen", basis(d, s))
+	s, e = f.controls.Reopen(f.ctx, f.owner, "reopen", basis(d, s))
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -244,13 +202,8 @@ func TestCancelFencesWritesAndOldProofNeverReopens(t *testing.T) {
 	if s.Execution.Generation <= old.Generation || s.Execution.ID == old.ID {
 		t.Fatal("generation not advanced")
 	}
-	before := s.Position.Revision
-	if _, e = f.ex.ProveStopped(f.ctx, f.runtime, "old-again", wrong); e == nil {
-		t.Fatal("mismatched old challenge")
-	}
-	after := f.read(t, d.Task.ID)
-	if after.Position.Revision != before {
-		t.Fatal("old proof changed new position")
+	if _, e = f.results.Submit(f.ctx, f.agent, "old-again", api.Submit{Basis: basis(d, s), ExecutionID: old.ID, Generation: old.Generation, Body: "old"}); !errors.Is(e, fault.ErrConflict) {
+		t.Fatal("old generation wrote into the new round", e)
 	}
 }
 func TestConcurrentClaimAndUnknownLeaseRecovery(t *testing.T) {
@@ -286,14 +239,17 @@ func TestConcurrentClaimAndUnknownLeaseRecovery(t *testing.T) {
 	}
 	// Silence never expires an execution: a blind retry still finds it running.
 	s = f.read(t, d.Task.ID)
-	if s.Execution.Status != "active" {
-		t.Fatal("execution changed without a command", s.Execution.Status)
+	if !s.Execution.Writable {
+		t.Fatal("execution changed without a command")
 	}
 	if _, e = f.ex.Open(f.ctx, f.agent, "blind-retry", api.Open{Basis: basis(d, s)}); !errors.Is(e, fault.ErrConflict) {
 		t.Fatal("blind retry", e)
 	}
 }
-func TestNewCandidateInvalidatesApprovalAndWithdrawDoesNotRestoreOld(t *testing.T) {
+
+// Approval completes a task, so a replacement candidate can only arrive while a
+// review is pending; it replaces that review and withdrawing never restores it.
+func TestNewCandidateReplacesPendingReviewAndWithdrawDoesNotRestoreOld(t *testing.T) {
 	f := setup(t, nil)
 	d := f.create(t)
 	s := f.open(t, d)
@@ -303,16 +259,12 @@ func TestNewCandidateInvalidatesApprovalAndWithdrawDoesNotRestoreOld(t *testing.
 		t.Fatal(e)
 	}
 	old := *s.Submission
-	s, e = f.results.Review(f.ctx, f.owner, "approve-old", api.Review{Basis: basis(d, s), Verdict: acceptance.Verdict{SubmissionID: old.ID, CommitID: old.CommitID, Outcome: "approved"}})
-	if e != nil {
-		t.Fatal(e)
-	}
 	s, e = f.results.Submit(f.ctx, f.agent, "second", api.Submit{Basis: basis(d, s), ExecutionID: s.Execution.ID, Generation: s.Execution.Generation, Body: "second"})
 	if e != nil {
 		t.Fatal(e)
 	}
 	if s.Review == nil || s.Review.Outcome != "pending" || s.Review.SubmissionID == old.ID {
-		t.Fatal("old approval inherited")
+		t.Fatal("old review inherited")
 	}
 	if _, e = f.results.Review(f.ctx, f.owner, "stale-review", api.Review{Basis: basis(d, s), Verdict: acceptance.Verdict{SubmissionID: old.ID, CommitID: old.CommitID, Outcome: "approved"}}); !errors.Is(e, fault.ErrConflict) {
 		t.Fatal("old review click", e)
@@ -325,7 +277,7 @@ func TestNewCandidateInvalidatesApprovalAndWithdrawDoesNotRestoreOld(t *testing.
 		t.Fatal("old candidate restored")
 	}
 }
-func TestFlowWithoutAcceptanceCompletesOnlyAfterSafety(t *testing.T) {
+func TestFlowWithoutAcceptanceCompletesOnSubmission(t *testing.T) {
 	f := setup(t, map[string]any{"flow-standard": map[string]any{"deps": map[string]any{"states": []string{"ready", "executing", "completed"}}}})
 	d := f.create(t)
 	s := f.open(t, d)
@@ -334,15 +286,8 @@ func TestFlowWithoutAcceptanceCompletesOnlyAfterSafety(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	if s.Review != nil || s.Position.Status == "completed" {
-		t.Fatal("auto flow skipped safety")
-	}
-	if _, e = f.ex.ProveStopped(f.ctx, f.runtime, "proof", proof(s)); e != nil {
-		t.Fatal(e)
-	}
-	s = f.read(t, d.Task.ID)
-	if s.Position.Status != "completed" || s.Review != nil {
-		t.Fatal("auto flow failed")
+	if s.Review != nil || s.Position.Status != "completed" {
+		t.Fatal("auto flow did not complete on submission", s.Position)
 	}
 }
 
@@ -352,12 +297,13 @@ func TestSameRoundRetryFencesOldGenerationAndReturnAdoptsBasis(t *testing.T) {
 	s := f.open(t, d)
 	old := *s.Execution
 	oldRound := s.Position.RoundID
-	if _, e := f.ex.ProveStopped(f.ctx, f.runtime, "proof-old", proof(s)); e != nil {
+	// A restarted agent on a new instance claims again; the old generation is fenced.
+	other, e := f.security.Issue(f.ctx, f.owner, "other-instance", capsecurity.IssueInput{Tenant: "t", Subject: "agent", InstanceID: "machine-2", Incarnation: "boot-2", ExpiresAt: time.Now().Add(time.Hour)})
+	if e != nil {
 		t.Fatal(e)
 	}
 	s = f.read(t, d.Task.ID)
-	var e error
-	s, e = f.ex.Open(f.ctx, f.agent, "retry", api.Open{Basis: basis(d, s)})
+	s, e = f.ex.Open(f.ctx, other.Secret, "retry", api.Open{Basis: basis(d, s)})
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -366,9 +312,6 @@ func TestSameRoundRetryFencesOldGenerationAndReturnAdoptsBasis(t *testing.T) {
 	}
 	if _, e = f.results.Submit(f.ctx, f.agent, "old-result", api.Submit{Basis: basis(d, s), ExecutionID: old.ID, Generation: old.Generation, Body: "late old"}); !errors.Is(e, fault.ErrConflict) {
 		t.Fatal("old execution wrote", e)
-	}
-	if _, e = f.ex.ProveStopped(f.ctx, f.runtime, "proof-retry", proof(s)); e != nil {
-		t.Fatal(e)
 	}
 	s = f.read(t, d.Task.ID)
 	s, e = f.controls.Return(f.ctx, f.owner, "return", basis(d, s))
@@ -384,43 +327,5 @@ func TestSameRoundRetryFencesOldGenerationAndReturnAdoptsBasis(t *testing.T) {
 	}
 	if edited.Task.Owner != d.Task.Owner || edited.Task.BasisVersion != 2 {
 		t.Fatal("owner changed or basis not versioned")
-	}
-}
-func TestAdministrativeIsolationIsExplicitAndAllowsRecovery(t *testing.T) {
-	f := setup(t, nil)
-	d := f.create(t)
-	s := f.open(t, d)
-	var e error
-	s, e = f.controls.Cancel(f.ctx, f.owner, "cancel", basis(d, s))
-	if e != nil {
-		t.Fatal(e)
-	}
-	s, e = f.controls.Isolate(f.ctx, f.owner, "isolate", api.Isolation{Basis: basis(d, s), ExecutionID: s.Execution.ID, Generation: s.Execution.Generation, Reason: "isolated disposable test runtime", Scope: "test execution and every owned external operation"})
-	if e != nil {
-		t.Fatal(e)
-	}
-	if !s.Execution.Safe || s.Execution.Status != "isolated" || s.Execution.Writable {
-		t.Fatal("isolation masqueraded as live execution")
-	}
-	s, e = f.controls.Reopen(f.ctx, f.owner, "reopen", basis(d, s))
-	if e != nil || s.Position.Status != "active" {
-		t.Fatal(e)
-	}
-}
-func TestEndedExecutionCanSubmitButDoesNotProveSafety(t *testing.T) {
-	f := setup(t, nil)
-	d := f.create(t)
-	s := f.open(t, d)
-	var e error
-	s, e = f.ex.End(f.ctx, f.agent, "end", api.ExecutionRef{TaskID: d.Task.ID, ExecutionID: s.Execution.ID, Generation: s.Execution.Generation})
-	if e != nil {
-		t.Fatal(e)
-	}
-	if s.Execution.Safe {
-		t.Fatal("end implicitly proved stop")
-	}
-	s, e = f.results.Submit(f.ctx, f.agent, "late-submit", api.Submit{Basis: basis(d, s), ExecutionID: s.Execution.ID, Generation: s.Execution.Generation, Body: "result after end"})
-	if e != nil || s.Submission == nil {
-		t.Fatal(e)
 	}
 }

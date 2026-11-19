@@ -109,16 +109,11 @@ func (s *Service) Open(ctx context.Context, token, key string, in api.Open) (api
 		if _, e = s.d.Flow.CheckOpen(tx, t); e != nil {
 			return nil, e
 		}
-		safe, e := s.d.Executions.SafeToExit(tx, t.Tenant, t.ID)
-		if e != nil {
-			return nil, e
-		}
-		if !safe {
-			return nil, fault.ErrConflict
-		}
+		// A new claim replaces any earlier one and fences it at once; only the
+		// caller's own live claim in this round has nothing to replace.
 		old, e := s.d.Executions.Current(tx, t.Tenant, t.ID)
 		if e == nil {
-			if old.Manual && old.Writable && old.RoundID == pos.RoundID {
+			if old.Writable && old.RoundID == pos.RoundID && ownExecution(p, old) {
 				return nil, fault.ErrConflict
 			}
 			old.Writable = false
@@ -128,10 +123,10 @@ func (s *Service) Open(ctx context.Context, token, key string, in api.Open) (api
 		} else if !errors.Is(e, fault.ErrNotFound) {
 			return nil, e
 		}
-		v := execution.Execution{Tenant: t.Tenant, TaskID: t.ID, ID: id(), RoundID: pos.RoundID, Subject: p.ID, InstanceID: p.InstanceID, Incarnation: p.Incarnation, BasisVersion: t.BasisVersion, Status: "active", Writable: true, EndEvidenceID: id(), ProgressAt: time.Now()}
+		v := execution.Execution{Tenant: t.Tenant, TaskID: t.ID, ID: id(), RoundID: pos.RoundID, Subject: p.ID, InstanceID: p.InstanceID, Incarnation: p.Incarnation, BasisVersion: t.BasisVersion, Writable: true, ProgressAt: time.Now()}
 		if p.Kind == "human" {
-			v.Manual, v.Safe = true, true
-			v.InstanceID, v.Incarnation, v.EndEvidenceID = "", "", ""
+			v.Manual = true
+			v.InstanceID, v.Incarnation = "", ""
 		}
 		_, e = s.d.ExecutionWrites.OpenExecution(tx, v)
 		if e != nil {
@@ -140,16 +135,16 @@ func (s *Service) Open(ctx context.Context, token, key string, in api.Open) (api
 		return s.finish(tx, t)
 	})
 }
-func (s *Service) owned(ctx context.Context, p identity.Principal, in api.ExecutionRef) (task.Task, execution.Execution, error) {
-	t, e := s.d.Tasks.GetTask(ctx, p.Tenant, in.TaskID)
+func (s *Service) owned(ctx context.Context, p identity.Principal, taskID, executionID string, generation int64) (task.Task, execution.Execution, error) {
+	t, e := s.d.Tasks.GetTask(ctx, p.Tenant, taskID)
 	if e != nil {
 		return t, execution.Execution{}, e
 	}
-	v, e := s.d.Executions.GetExecution(ctx, p.Tenant, in.ExecutionID)
+	v, e := s.d.Executions.GetExecution(ctx, p.Tenant, executionID)
 	if e != nil {
 		return t, v, e
 	}
-	if v.TaskID != in.TaskID || v.Generation != in.Generation || !ownExecution(p, v) {
+	if v.TaskID != taskID || v.Generation != generation || !ownExecution(p, v) {
 		return t, v, az.ErrForbidden
 	}
 	return t, v, nil
@@ -179,35 +174,20 @@ func (s *Service) RecordProgress(ctx context.Context, p identity.Principal, tena
 	if e != nil {
 		return e
 	}
-	if !v.Writable || v.Status != "active" || !ownExecution(p, v) {
+	if !v.Writable || !ownExecution(p, v) {
 		return nil
 	}
 	v.ProgressAt = time.Now()
 	return s.d.ExecutionWrites.SaveExecution(ctx, v)
 }
-func (s *Service) End(ctx context.Context, token, key string, in api.ExecutionRef) (api.Snapshot, error) {
-	return run(ctx, s, token, key, "execution.end", in.TaskID, in, func(tx context.Context, p identity.Principal) ([]byte, error) {
-		t, v, e := s.owned(tx, p, in)
-		if e != nil {
-			return nil, e
-		}
-		if e = s.active(tx, t, v); e != nil {
-			return nil, e
-		}
-		v.Status = "ended"
-		if e = s.d.ExecutionWrites.SaveExecution(tx, v); e != nil {
-			return nil, e
-		}
-		return s.finish(tx, t)
-	})
-}
+
 func (s *Service) Submit(ctx context.Context, token, key string, in api.Submit) (api.Snapshot, error) {
 	return run(ctx, s, token, key, "result.submit", in.TaskID, in, func(tx context.Context, p identity.Principal) ([]byte, error) {
 		t, _, e := s.load(tx, p, in.Basis)
 		if e != nil {
 			return nil, e
 		}
-		_, v, e := s.owned(tx, p, api.ExecutionRef{TaskID: in.TaskID, ExecutionID: in.ExecutionID, Generation: in.Generation})
+		_, v, e := s.owned(tx, p, in.TaskID, in.ExecutionID, in.Generation)
 		if e != nil {
 			return nil, e
 		}
@@ -217,11 +197,7 @@ func (s *Service) Submit(ctx context.Context, token, key string, in api.Submit) 
 		if strings.TrimSpace(in.Body) == "" || len(in.Body) > 20000 {
 			return nil, fault.ErrConflict
 		}
-		// A result is progress; human work also ends with its submission.
-		v.ProgressAt = time.Now()
-		if v.Manual {
-			v.Status = "ended"
-		}
+		v.ProgressAt = time.Now() // a result is progress
 		if e = s.d.ResultExecutions.SaveExecution(tx, v); e != nil {
 			return nil, e
 		}
@@ -295,31 +271,18 @@ func (s *Service) Withdraw(ctx context.Context, token, key string, in api.Withdr
 		return s.finish(tx, t)
 	})
 }
-func (s *Service) invalidate(ctx context.Context, t task.Task, requestStop bool) error {
+
+// fence revokes the current execution's write access; nothing else about it
+// changes, and nothing waits for the executor to acknowledge.
+func (s *Service) fence(ctx context.Context, t task.Task) error {
 	v, e := s.d.Executions.Current(ctx, t.Tenant, t.ID)
 	if errors.Is(e, fault.ErrNotFound) {
 		return nil
 	}
-	if e != nil {
+	if e != nil || !v.Writable {
 		return e
 	}
 	v.Writable = false
-	if v.Manual {
-		v.Status = "ended"
-	}
-	if requestStop && !v.Safe {
-		v.Status = "stop-requested"
-		if v.StopRequestID == "" {
-			v.StopRequestID = id()
-		}
-		payload, _ := json.Marshal(struct {
-			ExecutionID, Challenge string
-			Generation             int64
-		}{v.ID, v.StopRequestID, v.Generation})
-		if e = s.d.Events.AppendEvent(ctx, record.Event{Tenant: t.Tenant, Resource: t.ID, Kind: "execution.stop-requested", Payload: payload}); e != nil {
-			return e
-		}
-	}
 	return s.d.ExecutionWrites.SaveExecution(ctx, v)
 }
 func (s *Service) Cancel(ctx context.Context, token, key string, in api.Basis) (api.Snapshot, error) {
@@ -328,7 +291,7 @@ func (s *Service) Cancel(ctx context.Context, token, key string, in api.Basis) (
 		if e != nil {
 			return nil, e
 		}
-		if e = s.invalidate(tx, t, true); e != nil {
+		if e = s.fence(tx, t); e != nil {
 			return nil, e
 		}
 		if _, e = s.d.Flow.Cancel(tx, t); e != nil {
@@ -353,14 +316,7 @@ func (s *Service) restart(ctx context.Context, token, key string, in api.Basis, 
 		if e != nil {
 			return nil, e
 		}
-		safe, e := s.d.Executions.SafeToExit(tx, t.Tenant, t.ID)
-		if e != nil {
-			return nil, e
-		}
-		if !safe {
-			return nil, fault.ErrConflict
-		}
-		if e = s.invalidate(tx, t, false); e != nil {
+		if e = s.fence(tx, t); e != nil {
 			return nil, e
 		}
 		if reopen {
@@ -374,57 +330,6 @@ func (s *Service) restart(ctx context.Context, token, key string, in api.Basis, 
 		return s.finish(tx, t)
 	})
 }
-func (s *Service) ProveStopped(ctx context.Context, token, key string, in api.StopEvidence) (api.Snapshot, error) {
-	// No task.read requirement: a still-valid runtime credential may close its old
-	// execution after participation is revoked, without receiving task contents.
-	var out api.Snapshot
-	b, e := command.Run(ctx, s.d.Commands, capcommand.Request{Token: token, Key: key, Operation: "execution.prove", Resource: in.TaskID}, in, func(tx context.Context, p identity.Principal) ([]byte, error) {
-		t, v, e := s.owned(tx, p, in.ExecutionRef)
-		if e != nil {
-			return nil, e
-		}
-		if p.CredentialPurpose != "runtime" {
-			return nil, az.ErrForbidden
-		}
-		challenge := v.EndEvidenceID
-		if v.StopRequestID != "" {
-			challenge = v.StopRequestID
-		}
-		if in.Challenge != challenge {
-			return nil, fault.ErrConflict
-		}
-		if v.Safe {
-			return json.Marshal(api.Snapshot{})
-		}
-		if e = s.d.ExecutionWrites.RecordStopEvidence(tx, execution.StopEvidence{Tenant: t.Tenant, TaskID: t.ID, ID: id(), ExecutionID: v.ID, Generation: v.Generation, Challenge: in.Challenge, Source: "runtime", Subject: p.ID, InstanceID: p.InstanceID, Incarnation: p.Incarnation, MainStopped: in.MainStopped, ChildrenStopped: in.ChildrenStopped, ExternalSettled: in.ExternalSettled, ReceivedAt: time.Now().UTC()}); e != nil {
-			return nil, e
-		}
-		v.Safe = in.MainStopped && in.ChildrenStopped && in.ExternalSettled
-		if v.Safe {
-			v.Status = "stopped"
-		} else {
-			v.Status = "unknown"
-		}
-		if e = s.d.ExecutionWrites.SaveExecution(tx, v); e != nil {
-			return nil, e
-		}
-		pos, e := s.d.Flow.Read(tx, t.Tenant, t.ID)
-		if e != nil {
-			return nil, e
-		}
-		if pos.RoundID == v.RoundID {
-			if _, e = s.finish(tx, t); e != nil {
-				return nil, e
-			}
-		}
-		return json.Marshal(api.Snapshot{})
-	})
-	if e == nil {
-		e = json.Unmarshal(b, &out)
-	}
-	return out, e
-}
-
 func (s *Service) Assign(ctx context.Context, token, key string, in api.Assignment) (api.Snapshot, error) {
 	return run(ctx, s, token, key, "execution.assign", in.TaskID, in, func(tx context.Context, p identity.Principal) ([]byte, error) {
 		t, pos, e := s.load(tx, p, in.Basis)
@@ -448,46 +353,13 @@ func (s *Service) Assign(ctx context.Context, token, key string, in api.Assignme
 		if e != nil || !member.Active {
 			return nil, az.ErrForbidden
 		}
-		safe, e := s.d.Executions.SafeToExit(tx, t.Tenant, t.ID)
-		if e != nil {
-			return nil, e
-		}
-		if !safe {
-			return nil, fault.ErrConflict
-		}
-		if e = s.invalidate(tx, t, false); e != nil {
+		if e = s.fence(tx, t); e != nil {
 			return nil, e
 		}
 		if e = s.d.Participants.SetParticipant(tx, az.Participant{Tenant: t.Tenant, TaskID: t.ID, Subject: in.Subject}, true); e != nil {
 			return nil, e
 		}
 		if e = s.d.ExecutionWrites.AssignSubject(tx, t.Tenant, t.ID, in.Subject); e != nil {
-			return nil, e
-		}
-		return s.finish(tx, t)
-	})
-}
-
-func (s *Service) Isolate(ctx context.Context, token, key string, in api.Isolation) (api.Snapshot, error) {
-	return run(ctx, s, token, key, "execution.isolate", in.TaskID, in, func(tx context.Context, p identity.Principal) ([]byte, error) {
-		t, _, e := s.load(tx, p, in.Basis)
-		if e != nil {
-			return nil, e
-		}
-		v, e := s.d.Executions.GetExecution(tx, p.Tenant, in.ExecutionID)
-		if e != nil {
-			return nil, e
-		}
-		if v.TaskID != t.ID || v.Generation != in.Generation || strings.TrimSpace(in.Reason) == "" || strings.TrimSpace(in.Scope) == "" || len(in.Scope) > 20000 || len(in.Reason) > 20000 {
-			return nil, fault.ErrInput
-		}
-		if e = s.d.ExecutionWrites.RecordStopEvidence(tx, execution.StopEvidence{Tenant: t.Tenant, TaskID: t.ID, ID: id(), ExecutionID: v.ID, Generation: v.Generation, Subject: p.ID, Source: "operator-isolation", Reason: in.Reason, Scope: in.Scope, ReceivedAt: time.Now().UTC()}); e != nil {
-			return nil, e
-		}
-		v.Safe = true
-		v.Writable = false
-		v.Status = "isolated"
-		if e = s.d.ExecutionWrites.SaveExecution(tx, v); e != nil {
 			return nil, e
 		}
 		return s.finish(tx, t)

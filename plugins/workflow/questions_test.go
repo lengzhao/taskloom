@@ -42,7 +42,7 @@ func TestOpenQuestionWaitsOnOwnerAndHoldsCompletion(t *testing.T) {
 		t.Fatal("owner inbox misses question", items, e)
 	}
 
-	// The agent keeps working: submit, approve and prove stop. Completion still waits.
+	// The agent keeps working: submit and approve. Completion still waits for the answer.
 	s = f.read(t, d.Task.ID)
 	s, e = f.results.Submit(f.ctx, f.agent, "submit", api.Submit{Basis: basis(d, s), ExecutionID: s.Execution.ID, Generation: s.Execution.Generation, Body: "result"})
 	if e != nil {
@@ -50,9 +50,6 @@ func TestOpenQuestionWaitsOnOwnerAndHoldsCompletion(t *testing.T) {
 	}
 	sub := *s.Submission
 	if s, e = f.results.Review(f.ctx, f.owner, "approve", api.Review{Basis: basis(d, s), Verdict: acceptance.Verdict{SubmissionID: sub.ID, CommitID: sub.CommitID, Outcome: "approved"}}); e != nil {
-		t.Fatal(e)
-	}
-	if _, e = f.ex.ProveStopped(f.ctx, f.runtime, "proof", proof(s)); e != nil {
 		t.Fatal(e)
 	}
 	s = f.read(t, d.Task.ID)
@@ -97,9 +94,6 @@ func TestQuestionFromOldRoundIsObsolete(t *testing.T) {
 	}
 	if _, e = qs.Answer(f.ctx, f.owner, "late", api.Answer{TaskID: d.Task.ID, QuestionID: q.ID, Body: "late"}); !errors.Is(e, fault.ErrConflict) {
 		t.Fatal("answered question of inactive task", e)
-	}
-	if _, e = f.ex.ProveStopped(f.ctx, f.runtime, "proof", proof(f.read(t, d.Task.ID))); e != nil {
-		t.Fatal(e)
 	}
 	s = f.read(t, d.Task.ID)
 	if s, e = f.controls.Reopen(f.ctx, f.owner, "reopen", basis(d, s)); e != nil {

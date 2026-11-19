@@ -40,14 +40,10 @@ func (s *Service) Check(ctx context.Context, p identity.Principal, op, resource 
 	if !m.Active || (m.Role != "admin" && m.Role != "member") {
 		return az.ErrForbidden
 	}
-	if p.CredentialPurpose == "runtime" {
-		if op != "execution.prove" || p.Kind != "agent" {
-			return az.ErrForbidden
-		}
-		if _, e := s.d.Tasks.GetTask(ctx, p.Tenant, resource); e != nil {
-			return az.ErrForbidden
-		}
-		return nil
+	// Only business credentials act; stale runtime-purpose credentials from
+	// before stop proofs were removed are refused everywhere.
+	if p.CredentialPurpose != "" && p.CredentialPurpose != "business" {
+		return az.ErrForbidden
 	}
 	switch op {
 	case "space.edit", "identity.create", "identity.issue", "identity.revoke", "identity.password", "member.set":
@@ -60,7 +56,7 @@ func (s *Service) Check(ctx context.Context, p identity.Principal, op, resource 
 			return nil
 		}
 		return az.ErrForbidden
-	case "task.project", "task.read", "task.edit", "commit.append", "participant.set", "execution.open", "execution.end", "execution.assign", "execution.isolate", "result.submit", "result.review", "result.withdraw", "task.cancel", "task.return", "task.reopen":
+	case "task.project", "task.read", "task.edit", "commit.append", "participant.set", "execution.open", "execution.assign", "result.submit", "result.review", "result.withdraw", "task.cancel", "task.return", "task.reopen":
 		t, e := s.d.Tasks.GetTask(ctx, p.Tenant, resource)
 		if errors.Is(e, fault.ErrNotFound) {
 			return az.ErrForbidden
@@ -68,19 +64,10 @@ func (s *Service) Check(ctx context.Context, p identity.Principal, op, resource 
 		if e != nil {
 			return e
 		}
-		if op == "execution.isolate" {
-			if p.Kind == "human" && m.Role == "admin" {
-				return nil
-			}
-			return az.ErrForbidden
-		}
 		if op == "result.review" {
 			if p.Kind == "human" && p.ID == t.Owner {
 				return nil
 			}
-			return az.ErrForbidden
-		}
-		if op == "execution.end" && p.Kind != "agent" {
 			return az.ErrForbidden
 		}
 		if p.Kind == "human" && (m.Role == "admin" || t.Owner == p.ID) {

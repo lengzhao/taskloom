@@ -34,9 +34,6 @@ func (m *Module) Routes() []httpapi.Route {
 		{Method: "GET", Path: "/tasks/{id}/workflow", Operation: "workflow.read", Handler: http.HandlerFunc(m.serve)},
 		{Method: "POST", Path: "/tasks/{id}/execution/assign", Operation: "execution.assign", Handler: http.HandlerFunc(m.serve)},
 		{Method: "POST", Path: "/tasks/{id}/execution/open", Operation: "execution.open", Handler: http.HandlerFunc(m.serve)},
-		{Method: "POST", Path: "/tasks/{id}/execution/end", Operation: "execution.end", Handler: http.HandlerFunc(m.serve)},
-		{Method: "POST", Path: "/tasks/{id}/execution/proof", Operation: "execution.prove", Handler: http.HandlerFunc(m.serve)},
-		{Method: "POST", Path: "/tasks/{id}/execution/isolate", Operation: "execution.isolate", Handler: http.HandlerFunc(m.serve)},
 		{Method: "POST", Path: "/tasks/{id}/results", Operation: "result.submit", Handler: http.HandlerFunc(m.serve)},
 		{Method: "POST", Path: "/tasks/{id}/review", Operation: "result.review", Handler: http.HandlerFunc(m.serve)},
 		{Method: "POST", Path: "/tasks/{id}/withdraw", Operation: "result.withdraw", Handler: http.HandlerFunc(m.serve)},
@@ -91,27 +88,6 @@ func (m *Module) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		in.TaskID = taskID
 		result, err = m.d.Executions.Open(ctx, token, key, in)
-	case strings.HasSuffix(path, "/execution/end"):
-		var in work.ExecutionRef
-		if !httpx.Decode(w, r, &in) {
-			return
-		}
-		in.TaskID = taskID
-		result, err = m.d.Executions.End(ctx, token, key, in)
-	case strings.HasSuffix(path, "/execution/isolate"):
-		var in work.Isolation
-		if !httpx.Decode(w, r, &in) {
-			return
-		}
-		in.TaskID = taskID
-		result, err = m.d.Controls.Isolate(ctx, token, key, in)
-	case strings.HasSuffix(path, "/execution/proof"):
-		var in work.StopEvidence
-		if !httpx.Decode(w, r, &in) {
-			return
-		}
-		in.TaskID = taskID
-		result, err = m.d.Executions.ProveStopped(ctx, token, key, in)
 	case strings.HasSuffix(path, "/results"):
 		var in work.Submit
 		if !httpx.Decode(w, r, &in) {

@@ -233,7 +233,7 @@ func TestHTTPMemberAdministration(t *testing.T) {
 		t.Fatal("member admin flag")
 	}
 	must(request(admin.Secret, "POST", "/credentials", "bad-agent-credential", map[string]any{"Subject": "agent", "ExpiresAt": expires}), 400)
-	agentInput := map[string]any{"Subject": "agent", "InstanceID": "machine", "Incarnation": "boot", "Purpose": "business", "ExpiresAt": expires}
+	agentInput := map[string]any{"Subject": "agent", "InstanceID": "machine", "Incarnation": "boot", "ExpiresAt": expires}
 	agentResp := request(admin.Secret, "POST", "/credentials", "issue-agent", agentInput)
 	must(agentResp, 200)
 	var agent capsecurity.Issued

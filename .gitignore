@@ -38,3 +38,6 @@ go.work.sum
 *.db-shm
 *.db-wal
 *.db-journal
+
+# Taskloom credential generated for the local AgentKit container
+deploy/agent/taskloom.env

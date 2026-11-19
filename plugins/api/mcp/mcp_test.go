@@ -72,7 +72,7 @@ func setup(t *testing.T) *fixture {
 	if e = sec.Create(ctx, f.owner, "agent", identity.Principal{Tenant: "t", ID: "agent", Kind: "agent", OwnerID: "owner"}); e != nil {
 		t.Fatal(e)
 	}
-	agent, e := sec.Issue(ctx, f.owner, "business", capsecurity.IssueInput{Tenant: "t", Subject: "agent", InstanceID: "machine", Incarnation: "boot", Purpose: "business", ExpiresAt: time.Now().Add(time.Hour)})
+	agent, e := sec.Issue(ctx, f.owner, "business", capsecurity.IssueInput{Tenant: "t", Subject: "agent", InstanceID: "machine", Incarnation: "boot", ExpiresAt: time.Now().Add(time.Hour)})
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -177,7 +177,7 @@ func TestAgentWorksATaskThroughMCP(t *testing.T) {
 	if init["protocolVersion"] != "2025-06-18" || !strings.Contains(init["instructions"].(string), "submit_result") || f.session == "" {
 		t.Fatal("initialize", init, f.session)
 	}
-	if n := len(f.rpc("tools/list", nil)["tools"].([]any)); n != 7 {
+	if n := len(f.rpc("tools/list", nil)["tools"].([]any)); n != 6 {
 		t.Fatal("tools", n)
 	}
 
@@ -237,9 +237,8 @@ func TestAgentWorksATaskThroughMCP(t *testing.T) {
 	if submitted["next_actor"] != "reviewer" {
 		t.Fatal("result not waiting on reviewer", submitted)
 	}
-	f.ok("finish_run", map[string]string{"task_id": id, "basis": submitted["basis"].(string)})
 	task = f.ok("read_task", map[string]string{"task_id": id})
-	if task["current_result"].(map[string]any)["text"] != "已导出 CSV" || task["execution"].(map[string]any)["status"] != "ended" {
+	if task["current_result"].(map[string]any)["text"] != "已导出 CSV" || task["execution"].(map[string]any)["writable"] != true {
 		t.Fatal("result", task["current_result"], task["execution"])
 	}
 }

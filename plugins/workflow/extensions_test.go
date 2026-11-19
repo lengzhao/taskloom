@@ -85,10 +85,7 @@ func TestNewStatesAndAPIComposeWithoutChangingOriginalConsumers(t *testing.T) {
 	if s.Position.State != "accepting" || s.Review == nil {
 		t.Fatal("review not prepared")
 	}
-	s, e = f.results.Review(f.ctx, f.owner, "approve-first", api.Review{Basis: basis(d, s), Verdict: acceptance.Verdict{SubmissionID: first.ID, CommitID: first.CommitID, Outcome: "approved"}})
-	if e != nil {
-		t.Fatal(e)
-	}
+	// A new candidate while the first waits for review re-runs the prefix checks.
 	s, e = f.results.Submit(f.ctx, f.agent, "bad-candidate", api.Submit{Basis: basis(d, s), ExecutionID: s.Execution.ID, Generation: s.Execution.Generation, Body: "bad"})
 	if e != nil {
 		t.Fatal(e)
@@ -112,9 +109,6 @@ func TestNewStatesAndAPIComposeWithoutChangingOriginalConsumers(t *testing.T) {
 	s = f.read(t, d.Task.ID)
 	s, e = f.results.Review(f.ctx, f.owner, "approve-third", api.Review{Basis: basis(d, s), Verdict: acceptance.Verdict{SubmissionID: s.Submission.ID, CommitID: s.Submission.CommitID, Outcome: "approved"}})
 	if e != nil {
-		t.Fatal(e)
-	}
-	if _, e = f.ex.ProveStopped(f.ctx, f.runtime, "proof", proof(s)); e != nil {
 		t.Fatal(e)
 	}
 	s = f.read(t, d.Task.ID)
@@ -201,12 +195,12 @@ func TestNoAcceptanceVerdictAndWrongInstanceRejected(t *testing.T) {
 	f := setup(t, map[string]any{"flow-standard": map[string]any{"deps": map[string]any{"states": []string{"ready", "executing", "completed"}}}})
 	d := f.create(t)
 	s := f.open(t, d)
-	issued, e := f.security.Issue(f.ctx, f.owner, "other-instance", capsecurity.IssueInput{Tenant: "t", Subject: "agent", InstanceID: "other-machine", Incarnation: "boot", Purpose: "business", ExpiresAt: time.Now().Add(time.Hour)})
+	issued, e := f.security.Issue(f.ctx, f.owner, "other-instance", capsecurity.IssueInput{Tenant: "t", Subject: "agent", InstanceID: "other-machine", Incarnation: "boot", ExpiresAt: time.Now().Add(time.Hour)})
 	if e != nil {
 		t.Fatal(e)
 	}
-	if _, e = f.ex.End(f.ctx, issued.Secret, "wrong-instance", api.ExecutionRef{TaskID: d.Task.ID, ExecutionID: s.Execution.ID, Generation: s.Execution.Generation}); e == nil {
-		t.Fatal("wrong instance ended execution")
+	if _, e = f.results.Submit(f.ctx, issued.Secret, "wrong-instance", api.Submit{Basis: basis(d, s), ExecutionID: s.Execution.ID, Generation: s.Execution.Generation, Body: "x"}); e == nil {
+		t.Fatal("wrong instance submitted into another instance's execution")
 	}
 	if _, e = f.results.Review(f.ctx, f.owner, "no-state", api.Review{Basis: basis(d, s)}); !errors.Is(e, fault.ErrConflict) {
 		t.Fatal("no acceptance state allowed verdict", e)

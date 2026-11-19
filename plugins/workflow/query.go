@@ -45,11 +45,6 @@ func init() {
 func (s *Query) ReadFacts(ctx context.Context, t task.Task) (api.Snapshot, error) {
 	pos, e := s.d.Flow.Read(ctx, t.Tenant, t.ID)
 	out := api.Snapshot{Position: pos}
-	safe, safeErr := s.d.Executions.SafeToExit(ctx, t.Tenant, t.ID)
-	if safeErr != nil {
-		return out, safeErr
-	}
-	out.SafeToExit = safe
 	assigned, assignedErr := s.d.Executions.Assignee(ctx, t.Tenant, t.ID)
 	if assignedErr == nil {
 		out.Assignee = assigned
@@ -112,7 +107,6 @@ func (s *Query) Read(ctx context.Context, token, taskID string) (api.Snapshot, e
 		}
 		out, e = s.ReadFacts(tx, t)
 		if e == nil {
-			out.CanIsolate = s.d.Authorization.Check(tx, p, "execution.isolate", taskID) == nil
 			out.ViewerKind = p.Kind
 			out.CanAssign = s.d.Authorization.Check(tx, p, "execution.assign", taskID) == nil
 			out.CanManage = s.d.Authorization.Check(tx, p, "task.cancel", taskID) == nil
@@ -127,7 +121,6 @@ func (s *Query) Read(ctx context.Context, token, taskID string) (api.Snapshot, e
 			out.CanReview = why(api.ActionReview, reviewBlock(p, t, out), out.Review != nil)
 			out.CanOpen = why(api.ActionOpen, s.openBlock(tx, p, t, out), worker)
 			if out.Execution != nil {
-				out.CanEnd = why(api.ActionEnd, endBlock(p, out.Position, *out.Execution), p.Kind == "agent")
 				out.CanSubmit = why(api.ActionSubmit, submitBlock(p, t, out.Position, *out.Execution), worker)
 			}
 			if len(blocked) > 0 {
@@ -176,9 +169,6 @@ func waitsOn(p identity.Principal, t task.Task, v api.Snapshot) bool {
 	case api.ActorReviewer:
 		return p.Kind == "human" && v.Review != nil && p.ID == v.Review.Reviewer
 	case api.ActorAssignee:
-		if v.Execution != nil && !v.Execution.Safe {
-			return v.Execution.Subject == p.ID
-		}
 		return v.Assignee == p.ID
 	}
 	return false
@@ -208,12 +198,9 @@ func (s *Query) openBlock(ctx context.Context, p identity.Principal, t task.Task
 		return api.ReasonCredential
 	case out.Assignee != p.ID:
 		return api.ReasonNotAssigned
-	case out.Execution != nil && out.Execution.Manual && out.Execution.Writable && out.Execution.RoundID == out.Position.RoundID:
+	case out.Execution != nil && out.Execution.Writable && out.Execution.RoundID == out.Position.RoundID && ownExecution(p, *out.Execution):
+		// Already claimed by this caller: continue it rather than claim again.
 		return api.ReasonExecutionInProgress
-	case !out.SafeToExit && out.Execution != nil && !out.Execution.Safe && out.Execution.RoundID == out.Position.RoundID:
-		return api.ReasonExecutionInProgress
-	case !out.SafeToExit:
-		return api.ReasonPreviousNotStopped
 	}
 	if _, e := s.d.Flow.CheckOpen(ctx, t); e != nil {
 		return api.ReasonStepNotOpen
@@ -226,25 +213,6 @@ func ownExecution(p identity.Principal, v execution.Execution) bool {
 		return p.Kind == "human" && v.Subject == p.ID
 	}
 	return p.Kind == "agent" && v.Subject == p.ID && v.InstanceID == p.InstanceID && v.Incarnation == p.Incarnation
-}
-
-// endBlock explains whether the caller may report its own Agent run ended.
-func endBlock(p identity.Principal, pos flow.Position, raw execution.Execution) string {
-	switch {
-	case pos.Status != flow.PhaseActive:
-		return api.ReasonTaskNotActive
-	case p.Kind != "agent" || p.CredentialPurpose != "business":
-		return api.ReasonCredential
-	case !ownExecution(p, raw):
-		return api.ReasonNotYourExecution
-	case raw.Status != "active":
-		return api.ReasonExecutionNotActive
-	case !raw.Writable:
-		return api.ReasonExecutionFenced
-	case raw.RoundID != pos.RoundID:
-		return api.ReasonRoundChanged
-	}
-	return ""
 }
 
 func submitBlock(p identity.Principal, t task.Task, pos flow.Position, v execution.Execution) string {
@@ -270,17 +238,12 @@ func (s *Query) nextActor(ctx context.Context, t task.Task, out api.Snapshot) ap
 	pos := out.Position
 	switch {
 	case pos.Status != flow.PhaseActive:
-		if !out.SafeToExit {
-			return api.ActorAssignee
-		}
 		return ""
 	case len(out.Questions) > 0:
 		// Questions are addressed to the owner; answering unblocks the agent.
 		return api.ActorOwner
 	case out.Review != nil && out.Review.Outcome == "pending":
 		return api.ActorReviewer
-	case out.Execution != nil && !out.Execution.Safe:
-		return api.ActorAssignee
 	case out.Review != nil && out.Review.Outcome == "rejected":
 		return api.ActorAssignee
 	case out.Submission != nil:

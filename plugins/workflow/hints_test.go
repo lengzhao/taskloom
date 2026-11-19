@@ -2,6 +2,7 @@ package workflow_test
 
 import (
 	"errors"
+	"github.com/lengzhao/taskloom/cap/acceptance"
 	"github.com/lengzhao/taskloom/cap/fault"
 	api "github.com/lengzhao/taskloom/cap/workflow"
 	workspace "github.com/lengzhao/taskloom/cap/workspace"
@@ -40,9 +41,6 @@ func TestSnapshotExplainsBlockedActionsAndNextActor(t *testing.T) {
 	if !a.CanSubmit || a.Blocked[api.ActionOpen] != api.ReasonExecutionInProgress || a.NextActor != api.ActorAssignee {
 		t.Fatal("running execution", a.CanSubmit, a.Blocked, a.NextActor)
 	}
-	if !a.CanEnd {
-		t.Fatal("agent can end its own run", a.Blocked)
-	}
 	v := *a.Execution
 	if _, e = f.results.Submit(f.ctx, f.agent, "submit", api.Submit{Basis: basis(d, a), ExecutionID: v.ID, Generation: v.Generation, Body: "done"}); e != nil {
 		t.Fatal(e)
@@ -56,8 +54,9 @@ func TestSnapshotExplainsBlockedActionsAndNextActor(t *testing.T) {
 	if s, e = f.controls.Cancel(f.ctx, f.owner, "cancel", basis(d, s)); e != nil {
 		t.Fatal(e)
 	}
-	if a = asAgent(); a.NextActor != api.ActorAssignee || a.CanSubmit || a.Blocked[api.ActionSubmit] != api.ReasonTaskNotActive {
-		t.Fatal("cancelled task waits for stop proof", a.NextActor, a.Blocked)
+	// The run is fenced and nothing waits on anyone.
+	if a = asAgent(); a.NextActor != "" || a.CanSubmit || a.Blocked[api.ActionSubmit] != api.ReasonTaskNotActive {
+		t.Fatal("cancelled task", a.NextActor, a.Blocked)
 	}
 }
 
@@ -107,8 +106,8 @@ func TestInboxListsOnlyTasksWaitingOnCaller(t *testing.T) {
 	if _, e = f.controls.Cancel(f.ctx, f.owner, "cancel", basis(d, s)); e != nil {
 		t.Fatal(e)
 	}
-	if got := inbox(f.agent); got[d.Task.ID] != api.ActorAssignee {
-		t.Fatal("cancelled running execution waits on agent stop proof", got)
+	if got := inbox(f.agent); len(got) != 0 {
+		t.Fatal("cancelled task should leave the agent inbox", got)
 	}
 	if got := inbox(f.owner); got[d.Task.ID] != "" {
 		t.Fatal("cancelled task is not the owner's to handle", got)
@@ -141,5 +140,26 @@ func TestRejectionRequiresReason(t *testing.T) {
 	}
 	if e = verdict("reject", "补充错误处理"); e != nil {
 		t.Fatal(e)
+	}
+}
+
+// After approval nothing waits on the agent: the task is complete.
+func TestApprovedTaskLeavesTheAgentInbox(t *testing.T) {
+	f := setup(t, nil)
+	d := f.create(t)
+	s := f.open(t, d)
+	v := s.Execution
+	s, e := f.results.Submit(f.ctx, f.agent, "submit", api.Submit{Basis: basis(d, s), ExecutionID: v.ID, Generation: v.Generation, Body: "done"})
+	if e != nil {
+		t.Fatal(e)
+	}
+	if _, e = f.results.Review(f.ctx, f.owner, "approve", api.Review{Basis: basis(d, s), Verdict: acceptance.Verdict{SubmissionID: s.Submission.ID, CommitID: s.Submission.CommitID, Outcome: "approved"}}); e != nil {
+		t.Fatal(e)
+	}
+	if s = f.read(t, d.Task.ID); s.Position.Status != "completed" || s.NextActor != "" {
+		t.Fatal("approved task", s.Position.Status, s.NextActor)
+	}
+	if items, e := f.query.Inbox(f.ctx, f.agent); e != nil || len(items) != 0 {
+		t.Fatal("agent inbox should be empty", items, e)
 	}
 }

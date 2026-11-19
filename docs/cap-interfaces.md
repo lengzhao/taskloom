@@ -54,7 +54,7 @@ M04 提交时为 12 个实例；M05 为 22 个，当前含项目目录、请求�
 
 ## 核心约束与验证
 
-保留租户隔离、成员即时撤销、重放前鉴权、原子业务/commit/审计/outbox/回执、执行代次隔离及停止证据边界。不可变 commit、任务依据版本、轮次和步骤进入标识仍各自独立；准备完成不代表交付或验收。
+保留租户隔离、成员即时撤销、重放前鉴权、原子业务/commit/审计/outbox/回执、执行代次写入隔离。不可变 commit、任务依据版本、轮次和步骤进入标识仍各自独立；准备完成不代表交付或验收。
 
 SQLite/HTTP 集成回归覆盖现有闭环；新增只读 provider 测试证明认证无需管理接口、授权无需任务或关系写接口；typed State 测试覆盖等待/完成、无效检查结果和固定定义冲突。导入边界继续禁止领域/运行机制依赖 GORM 或具体插件实现。schema 与接口均无兼容桥接，旧开发数据库可能因迁移校验和变化需要重建，程序不自动删除。
 
@@ -64,8 +64,8 @@ workspace 不再自行构造第二个 Runner：配置将 commands 指向现有 c
 
 ## M05 的真实消费者增量
 
-- execution.Reader/Store：执行事实与安全门；delivery.Reader/Store：固定 commit 的候选事实；acceptance.Reader/Records/Actions：状态自有记录与验收动作。
-- workflow.ExecutionCommands/ResultCommands/ControlCommands/Queries/FactsReader 分别服务协议、命令协调和只读聚合；不扩张 workspace。query/workflow 的 tasks 依赖为只读 task.Lister（GetTask + ListTasks），用于 Inbox，不获得写接口。question.Reader 供查询与 flow 完成门只读使用，question.Store 只注入 commands/question。execution.Progress（RecordProgress）由 commands/execution 提供，只注入 workspace/tasks 与 commands/question，用于同事务记录执行者最近进展；没有租约或续期接口。api/mcp 以局部窄接口消费 workspace 的 Get/Comment 与 workflow 的 Open/End、Submit、Ask 及只读 Queries，不获得分配、验收、回答或停止证明能力。
+- execution.Reader/Store：执行事实与写入资格；delivery.Reader/Store：固定 commit 的候选事实；acceptance.Reader/Records/Actions：状态自有记录与验收动作。
+- workflow.ExecutionCommands/ResultCommands/ControlCommands/Queries/FactsReader 分别服务协议、命令协调和只读聚合；不扩张 workspace。query/workflow 的 tasks 依赖为只读 task.Lister（GetTask + ListTasks），用于 Inbox，不获得写接口。question.Reader 供查询与 flow 完成门只读使用，question.Store 只注入 commands/question。execution.Progress（RecordProgress）由 commands/execution 提供，只注入 workspace/tasks 与 commands/question，用于同事务记录执行者最近进展；没有租约或续期接口。api/mcp 以局部窄接口消费 workspace 的 Get/Comment 与 workflow 的 Open、Submit、Ask 及只读 Queries，不获得分配、验收或回答能力。
 - commit.Lookup、identity.PrincipalReader、flow.PositionReader 为新增只读消费者收窄权限；State 使用 Context，目录按固定 DefinitionRef 路由。
 - checkpoint.Records/Actions 只在可选步骤示例挂载；httpapi.RequestSecurity 复用会话、Origin 与 CSRF 协议处理。
 - 具体方法以 cap 源码为准；Deps、超过五字段的保留理由和授权回调的可信边界见 [M05](m05-workflow.md)。

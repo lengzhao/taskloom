@@ -65,9 +65,6 @@ func parseBasis(taskID, token string) (basis, error) {
 func (b basis) flow() work.Basis {
 	return work.Basis{TaskID: b.TaskID, RoundID: b.RoundID, BasisVersion: b.BasisVersion, ExpectedRevision: b.ExpectedRevision}
 }
-func (b basis) execution() work.ExecutionRef {
-	return work.ExecutionRef{TaskID: b.TaskID, ExecutionID: b.ExecutionID, Generation: b.Generation}
-}
 
 // next derives the follow-up basis from a command's snapshot. Writes never
 // change the task basis version, so it is carried over.
@@ -109,10 +106,8 @@ var reasonText = map[string]string{
 	work.ReasonCredential:          "需要 Agent 业务凭据",
 	work.ReasonNotAssigned:         "任务未分配给你",
 	work.ReasonExecutionInProgress: "本轮已有执行在进行",
-	work.ReasonPreviousNotStopped:  "上一次执行尚未确认安全停止",
 	work.ReasonStepNotOpen:         "当前步骤还不能执行",
 	work.ReasonNotYourExecution:    "当前执行不属于你的实例",
-	work.ReasonExecutionNotActive:  "执行已结束",
 	work.ReasonExecutionFenced:     "执行已失效（取消或被替换）",
 	work.ReasonRoundChanged:        "任务已进入新一轮，需要重新 read_task",
 	work.ReasonBasisChanged:        "任务约定已更新，需要重新认领",
@@ -149,7 +144,6 @@ func toolList() []tool {
 		{"post_message", "在任务时间线留言：汇报进度、回复人的引导。留言会更新你的最近进展时间，但不算交付结果。", schema([]string{"task_id", "text"}, map[string]string{"task_id": descTask, "text": "留言内容"})},
 		{"ask_owner", "向任务负责人提问（说明问题、为何卡住、可选方案和建议）。问题未回答前任务不能完成；回答会出现在 read_task 的时间线中。", schema([]string{"task_id", "basis", "question"}, map[string]string{"task_id": descTask, "basis": descBasis, "question": "问题内容"})},
 		{"submit_result", "明确提交本轮的正式结果（交付物）。需要已认领执行；再次提交会替换当前结果。", schema([]string{"task_id", "basis", "result"}, map[string]string{"task_id": descTask, "basis": descBasis, "result": "结果正文"})},
-		{"finish_run", "报告本次主运行已结束。不代表任务完成，也不证明外部工作已停止。", schema([]string{"task_id", "basis"}, map[string]string{"task_id": descTask, "basis": descBasis})},
 	}
 }
 
@@ -198,7 +192,7 @@ func (m *Module) call(ctx context.Context, c call, name string, rawArgs json.Raw
 			return "", err
 		}
 		return "已留言（" + cm.ID + "）。", nil
-	case "start_work", "ask_owner", "submit_result", "finish_run":
+	case "start_work", "ask_owner", "submit_result":
 	default:
 		return "", invalid("未知工具 " + name)
 	}
@@ -227,7 +221,7 @@ func (m *Module) call(ctx context.Context, c call, name string, rawArgs json.Raw
 			return "", err
 		}
 		return pretty(map[string]any{"message": "已向负责人提问；回答前任务不能完成。可继续执行，稍后用 read_task 查看回答。", "basis": b.next(s).token()}), nil
-	case "submit_result":
+	default: // submit_result
 		if err = required(args, "result"); err != nil {
 			return "", err
 		}
@@ -238,16 +232,7 @@ func (m *Module) call(ctx context.Context, c call, name string, rawArgs json.Raw
 		if err != nil {
 			return "", err
 		}
-		return pretty(map[string]any{"message": "结果已提交。完成后请 finish_run。", "next_actor": s.NextActor, "basis": b.next(s).token()}), nil
-	default: // finish_run
-		if b.ExecutionID == "" {
-			return "", invalid("basis 中没有执行：请先 read_task")
-		}
-		s, err := m.d.Executions.End(ctx, c.token, key, b.execution())
-		if err != nil {
-			return "", err
-		}
-		return pretty(map[string]any{"message": "已报告主运行结束。", "basis": b.next(s).token()}), nil
+		return pretty(map[string]any{"message": "结果已提交，等待负责人处理。", "next_actor": s.NextActor, "basis": b.next(s).token()}), nil
 	}
 }
 
@@ -309,14 +294,14 @@ func (m *Module) readTask(ctx context.Context, c call, taskID string) (string, e
 		"waiting":        w.Position.Waiting,
 		"next_actor":     w.NextActor,
 		"assignee":       w.Assignee,
-		"can":            map[string]bool{"start_work": w.CanOpen, "submit_result": w.CanSubmit, "finish_run": w.CanEnd},
+		"can":            map[string]bool{"start_work": w.CanOpen, "submit_result": w.CanSubmit},
 		"blocked":        blocked,
 		"open_questions": questions,
 		"timeline":       timeline,
 		"basis":          b.token(),
 	}
 	if e := w.Execution; e != nil {
-		x := map[string]any{"status": e.Status, "generation": e.Generation, "agent": e.Subject}
+		x := map[string]any{"writable": e.Writable, "generation": e.Generation, "agent": e.Subject}
 		if !e.ProgressAt.IsZero() {
 			x["last_progress_at"] = e.ProgressAt.Format(time.RFC3339)
 		}

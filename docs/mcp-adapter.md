@@ -4,7 +4,7 @@
 
 ## 接入
 
-Agent 的 business 用途凭据由 `taskloom-admin -mode enroll-agent -purpose business` 签发；runtime 凭据不得交给模型。以 Claude Code 为例：
+Agent 的业务凭据由 `taskloom-admin -mode enroll-agent` 签发。以 Claude Code 为例：
 
 ```sh
 claude mcp add --transport http taskloom http://localhost:8899/v1/mcp \
@@ -23,15 +23,37 @@ claude mcp add --transport http taskloom http://localhost:8899/v1/mcp \
 | post_message | workspace.Comment | 留言：进度、回复人的引导；记录最近进展，不算交付 |
 | ask_owner | QuestionCommands.Ask | 向负责人提问，未答前任务不能完成 |
 | submit_result | ResultCommands.Submit | 明确提交结果 |
-| finish_run | ExecutionCommands.End | 报告主运行结束 |
 
-分配、验收、回答、取消、退回、重开、隔离与停止证明不对模型开放：插件以局部窄接口注入，只拿到上表能力。前者属于人，后者需要 runtime 凭据和真实进程证据。
+分配、验收、回答、取消、退回与重开不对模型开放：插件以局部窄接口注入，只拿到上表能力，这些都属于人。
 
 ## 约束
 
 - **basis**：read_task 和每次写操作返回不透明 basis（任务、轮次、依据版本、流程修订、执行与代次），写操作须原样带回；不会替模型取最新版本写入，过期视图得到冲突和“先 read_task”的提示。
 - **幂等**：同一会话内相同工具与参数复用同一幂等键，客户端重试不会重复写入；因此同一会话内完全相同的留言只记录一次。
-- **进展而非保活**：执行没有租约或超时。认领、本人留言、提问、提交结果都会更新执行的最近进展时间，负责人据此判断是否介入；instructions 提示模型长时间工作时每 10～15 分钟汇报一次。Agent 重启后用同一业务凭据（同实例）read_task 即可继续原执行，不新建执行。沉默或断线不改变执行，也不是停止证据。
+- **进展而非保活**：执行没有租约或超时。认领、本人留言、提问、提交结果都会更新执行的最近进展时间，负责人据此判断是否介入；instructions 提示模型长时间工作时每 10～15 分钟汇报一次。Agent 重启后用同一业务凭据（同实例）read_task 即可继续原执行，不新建执行。沉默或断线不改变执行。
 - **推送**：不订阅变化流；模型通过 inbox/read_task 按需读取，人的留言与回答在下次读取时可见。实时 steer 仍归 Agent 层。
 
-验证见 `plugins/api/mcp/mcp_test.go`：以真实默认配置图和 HTTP 路由运行，覆盖初始化与会话、认领、损坏/过期 basis、留言幂等与进展记录、提问与回答、提交与结束，以及通知、未知方法、批量、坏凭据和外部 Origin。
+验证见 `plugins/api/mcp/mcp_test.go`：以真实默认配置图和 HTTP 路由运行，覆盖初始化与会话、认领、损坏/过期 basis、留言幂等与进展记录、提问与回答、提交，以及通知、未知方法、批量、坏凭据和外部 Origin。
+
+## 示例：AgentKit 常驻执行 Agent
+
+`deploy/agent/` 用已有的 AgentKit 运行时（v0.4.45）搭一个常驻执行 Agent：`platform/timer` 每 60 秒唤醒一次，先调 inbox 再处理分配给它的任务；只开放 Taskloom MCP 工具与 todo/finish，没有 shell、文件或网络工具，所有写入仍由 Taskloom 鉴权。模型走 OpenAI 兼容网关（默认 deepseek-v4.1-flash）。
+
+```sh
+# 1. 让两个容器在同一网络（taskloom 重建时用 --network taskloom-net 启动即可）
+docker network create taskloom-net
+docker network connect taskloom-net taskloom
+# 2. 为 Agent 签发业务凭据（实例 agentkit-docker，30 天），写入 git 忽略的 deploy/agent/taskloom.env，不打印
+sh deploy/agent/issue-credential.sh
+# 3. 复制 deploy/agent/.env.example 为 deploy/agent/.env，自行填入模型 Key
+# 4. 构建并启动
+docker build --build-arg GOPROXY="$(go env GOPROXY)" --build-arg GOSUMDB="$(go env GOSUMDB)" \
+  -f deploy/agent/Dockerfile -t taskloom-agent:local deploy/agent
+docker run -d --name taskloom-agent --restart unless-stopped --network taskloom-net \
+  --env-file deploy/agent/.env --env-file deploy/agent/taskloom.env taskloom-agent:local
+docker logs -f taskloom-agent
+```
+
+入口脚本在容器内按环境变量生成 `~/.agentkit/mcp.json`（AgentKit 的 `${env:X}` 在变量存在时保留为运行期引用 `env:X`，scopedEnv 与 baseUrl 等普通字段不会再解析它；需要直接取值的字段用 `${var:X}`）。验收通过任务立即完成；任务被转交、退回或取消时，Agent 的执行立即失效，下次读写时得知并停止处理。
+
+已知限制：AgentKit v0.4.45 的 timer 在 fresh 模式下各次唤醒的投递 ID 为 `taskloom:<启动时间>:run-N`，路由只识别 `:t:`/`:u:` 段，同一进程的所有唤醒会并入同一会话，历史随唤醒增长；示例配置以约 40k token 触发摘要压缩来限界，根治需在 AgentKit 中修正 timer 的会话 ID。空闲时 inbox 为空，每次唤醒只需 inbox→finish 两步。

@@ -167,14 +167,13 @@ func TestWorkspaceProjectsLifecycle(t *testing.T) {
 	}
 	call(alice.Secret, "POST", "/projects", "p1", in, 403)
 	call(alice.Secret, "GET", "/projects", "", nil, 403)
-	// Runtime-only Agent credentials cannot read catalog metadata or mutate projects.
+	// Agents can read catalog metadata but never mutate projects.
 	if e = sec.Create(ctx, admin.Secret, "agent", identity.Principal{Tenant: "t", ID: "agent", Kind: "agent", OwnerID: "admin"}); e != nil {
 		t.Fatal(e)
 	}
-	runtime, e := sec.Issue(ctx, admin.Secret, "runtime", cs.IssueInput{Tenant: "t", Subject: "agent", InstanceID: "test", Incarnation: "1", Purpose: "runtime", ExpiresAt: time.Now().Add(time.Hour)})
+	agent, e := sec.Issue(ctx, admin.Secret, "agent", cs.IssueInput{Tenant: "t", Subject: "agent", InstanceID: "test", Incarnation: "1", ExpiresAt: time.Now().Add(time.Hour)})
 	if e != nil {
 		t.Fatal(e)
 	}
-	call(runtime.Secret, "GET", "/projects", "", nil, 403)
-	call(runtime.Secret, "POST", "/projects", "agent-create", in, 403)
+	call(agent.Secret, "POST", "/projects", "agent-create", in, 403)
 }

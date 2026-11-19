@@ -147,15 +147,15 @@ func (s *Service) Issue(ctx context.Context, token, key string, in capsecurity.I
 			return nil, authorization.ErrForbidden
 		}
 		if subject.Kind == "agent" {
-			if !valid(in.InstanceID) || !valid(in.Incarnation) || (in.Purpose != "business" && in.Purpose != "runtime") {
+			if !valid(in.InstanceID) || !valid(in.Incarnation) {
 				return nil, fault.ErrInput
 			}
-		} else if in.InstanceID != "" || in.Incarnation != "" || (in.Purpose != "" && in.Purpose != "business") {
+		} else if in.InstanceID != "" || in.Incarnation != "" {
 			return nil, fault.ErrInput
 		}
 		subject.InstanceID = in.InstanceID
 		subject.Incarnation = in.Incarnation
-		subject.CredentialPurpose = in.Purpose
+		subject.CredentialPurpose = "business"
 		c, out, err := credential(subject, in.ExpiresAt)
 		if err != nil {
 			return nil, err
@@ -263,11 +263,11 @@ func (s *Service) Recover(ctx context.Context, in BootstrapInput) (capsecurity.I
 // credential as runtime stop-proof authority.
 type AgentEnrollment struct {
 	BootstrapInput
-	Owner, InstanceID, Incarnation, Purpose string
+	Owner, InstanceID, Incarnation string
 }
 
 func (s *Service) EnrollAgent(ctx context.Context, in AgentEnrollment) (capsecurity.Issued, error) {
-	if !valid(in.Tenant) || !valid(in.Subject) || !valid(in.Owner) || !valid(in.Operator) || !valid(in.Reason) || !valid(in.InstanceID) || !valid(in.Incarnation) || (in.Purpose != "business" && in.Purpose != "runtime") {
+	if !valid(in.Tenant) || !valid(in.Subject) || !valid(in.Owner) || !valid(in.Operator) || !valid(in.Reason) || !valid(in.InstanceID) || !valid(in.Incarnation) {
 		return capsecurity.Issued{}, fault.ErrInput
 	}
 	var issued capsecurity.Issued
@@ -296,7 +296,7 @@ func (s *Service) EnrollAgent(ctx context.Context, in AgentEnrollment) (capsecur
 		}
 		p.InstanceID = in.InstanceID
 		p.Incarnation = in.Incarnation
-		p.CredentialPurpose = in.Purpose
+		p.CredentialPurpose = "business"
 		c, out, e := credential(p, in.ExpiresAt)
 		if e != nil {
 			return e

@@ -86,26 +86,6 @@ func (s *Store) SaveExecution(ctx context.Context, v execution.Execution) error 
 		return nil
 	})
 }
-func (s *Store) SafeToExit(ctx context.Context, tenant, taskID string) (bool, error) {
-	safe := true
-	e := s.use(ctx, false, func(db *gorm.DB) error {
-		var rs []executionRow
-		if e := db.Where("task_key = ?", key(tenant, taskID)).Find(&rs).Error; e != nil {
-			return e
-		}
-		for _, r := range rs {
-			var v execution.Execution
-			if e := json.Unmarshal(r.Data, &v); e != nil {
-				return e
-			}
-			if !v.Safe {
-				safe = false
-			}
-		}
-		return nil
-	})
-	return safe, e
-}
 func (s *Store) CurrentSubmission(ctx context.Context, tenant, taskID, round string) (delivery.Submission, error) {
 	var out delivery.Submission
 	e := s.use(ctx, false, func(db *gorm.DB) error {
@@ -222,19 +202,11 @@ func (s *Store) AssignSubject(ctx context.Context, tenant, taskID, subject strin
 	})
 }
 
+// stopEvidenceRow is a legacy table kept only so existing databases keep
+// their recorded stop evidence and migration history; nothing writes it now.
 type stopEvidenceRow struct {
 	ID   string `gorm:"primaryKey;size:128"`
 	Data []byte
-}
-
-func (s *Store) RecordStopEvidence(ctx context.Context, v execution.StopEvidence) error {
-	return s.use(ctx, true, func(db *gorm.DB) error {
-		b, e := json.Marshal(v)
-		if e != nil {
-			return e
-		}
-		return db.Create(&stopEvidenceRow{ID: v.ID, Data: b}).Error
-	})
 }
 
 func (s *Store) IsAssigned(ctx context.Context, tenant, taskID, subject string) (bool, error) {

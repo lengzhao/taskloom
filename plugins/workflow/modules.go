@@ -79,16 +79,8 @@ func (m *ExecutionModule) Open(ctx context.Context, token, key string, in api.Op
 	return m.s.Open(ctx, token, key, in)
 }
 
-func (m *ExecutionModule) End(ctx context.Context, token, key string, in api.ExecutionRef) (api.Snapshot, error) {
-	return m.s.End(ctx, token, key, in)
-}
-
 func (m *ExecutionModule) RecordProgress(ctx context.Context, p identity.Principal, tenant, taskID string) error {
 	return m.s.RecordProgress(ctx, p, tenant, taskID)
-}
-
-func (m *ExecutionModule) ProveStopped(ctx context.Context, token, key string, in api.StopEvidence) (api.Snapshot, error) {
-	return m.s.ProveStopped(ctx, token, key, in)
 }
 
 func (m *ResultModule) Submit(ctx context.Context, token, key string, in api.Submit) (api.Snapshot, error) {
@@ -117,8 +109,4 @@ func (m *ControlModule) Reopen(ctx context.Context, token, key string, in api.Ba
 
 func (m *ExecutionModule) Assign(ctx context.Context, token, key string, in api.Assignment) (api.Snapshot, error) {
 	return m.s.Assign(ctx, token, key, in)
-}
-
-func (m *ControlModule) Isolate(ctx context.Context, token, key string, in api.Isolation) (api.Snapshot, error) {
-	return m.s.Isolate(ctx, token, key, in)
 }

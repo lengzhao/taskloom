@@ -22,10 +22,6 @@ type Assignment struct {
 	Subject string
 }
 type Open struct{ Basis }
-type ExecutionRef struct {
-	TaskID, ExecutionID string
-	Generation          int64
-}
 type Submit struct {
 	Basis
 	ExecutionID, Body string
@@ -35,16 +31,7 @@ type Review struct {
 	Basis
 	acceptance.Verdict
 }
-type StopEvidence struct {
-	ExecutionRef
-	Challenge                                     string
-	MainStopped, ChildrenStopped, ExternalSettled bool
-}
-type Isolation struct {
-	Basis
-	ExecutionID, Reason, Scope string
-	Generation                 int64
-}
+
 type Withdraw struct {
 	Basis
 	SubmissionID string
@@ -64,7 +51,6 @@ const (
 // false Can* flag to the current viewer; commands still re-check on write.
 const (
 	ActionOpen   = "open"
-	ActionEnd    = "end"
 	ActionSubmit = "submit"
 	ActionReview = "review"
 
@@ -72,10 +58,8 @@ const (
 	ReasonCredential          = "business_credential_required"
 	ReasonNotAssigned         = "not_assigned"
 	ReasonExecutionInProgress = "execution_in_progress"
-	ReasonPreviousNotStopped  = "previous_execution_not_stopped"
 	ReasonStepNotOpen         = "step_not_open"
 	ReasonNotYourExecution    = "not_your_execution"
-	ReasonExecutionNotActive  = "execution_not_active"
 	ReasonExecutionFenced     = "execution_fenced"
 	ReasonRoundChanged        = "round_changed"
 	ReasonBasisChanged        = "basis_changed"
@@ -87,14 +71,13 @@ type Snapshot struct {
 	Assignee     string
 	NextActor    Actor
 	// Blocked holds, for actions relevant to this viewer, why each is not allowed now.
-	Blocked                                                                 map[string]string `json:",omitempty"`
-	CanOpen, CanSubmit, CanReview, CanManage, CanIsolate, CanEnd, CanAssign bool
-	ViewerKind                                                              string
-	SafeToExit                                                              bool
-	Position                                                                flow.Position
-	Execution                                                               *execution.Execution
-	Submission                                                              *delivery.Submission
-	Review                                                                  *acceptance.Review
+	Blocked                                             map[string]string `json:",omitempty"`
+	CanOpen, CanSubmit, CanReview, CanManage, CanAssign bool
+	ViewerKind                                          string
+	Position                                            flow.Position
+	Execution                                           *execution.Execution
+	Submission                                          *delivery.Submission
+	Review                                              *acceptance.Review
 	// Questions are the open requests for input of the current active round.
 	Questions []question.Question `json:",omitempty"`
 }
@@ -114,8 +97,6 @@ type QuestionCommands interface {
 type ExecutionCommands interface {
 	Assign(ctx context.Context, token, key string, in Assignment) (Snapshot, error)
 	Open(ctx context.Context, token, key string, in Open) (Snapshot, error)
-	End(ctx context.Context, token, key string, in ExecutionRef) (Snapshot, error)
-	ProveStopped(ctx context.Context, token, key string, in StopEvidence) (Snapshot, error)
 }
 type ResultCommands interface {
 	Submit(ctx context.Context, token, key string, in Submit) (Snapshot, error)
@@ -123,7 +104,6 @@ type ResultCommands interface {
 	Withdraw(ctx context.Context, token, key string, in Withdraw) (Snapshot, error)
 }
 type ControlCommands interface {
-	Isolate(ctx context.Context, token, key string, in Isolation) (Snapshot, error)
 	Cancel(ctx context.Context, token, key string, in Basis) (Snapshot, error)
 	Return(ctx context.Context, token, key string, in Basis) (Snapshot, error)
 	Reopen(ctx context.Context, token, key string, in Basis) (Snapshot, error)

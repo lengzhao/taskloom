@@ -1,0 +1,176 @@
+# AgentKit L1 overlay: a resident Taskloom executor Agent.
+#
+# It wakes on a fixed interval, reads its Taskloom inbox through the MCP endpoint
+# and works the tasks assigned to it. Only Taskloom MCP tools plus todo/finish
+# are exposed: no shell, files, web or sub-agents. Business rules stay in
+# Taskloom; this file only wires an existing Agent runtime to it.
+
+runner.default:
+  config:
+    maxConcurrentTurns: 1
+  deps:
+    schedules: []
+    init: []
+
+platform.default:
+  use: platform/timer
+  config:
+    everySeconds: 60
+    immediate: true
+    maxRuns: 0
+    sessionMode: fresh
+    sessionId: taskloom
+    output: text
+    stream: false
+    prompt: |
+      检查 Taskloom 中等你处理的任务并推进它们：先调用 inbox。
+      没有任务就直接调用 finish（status=completed，summary 写“无待处理任务”）。
+
+loop.default:
+  deps:
+    agents:
+      - agent.taskloom
+
+agent.taskloom:
+  use: agent/coding
+  config:
+    id: taskloom
+    model: deepseek-v4.1-flash
+    retry:
+      enabled: true
+      maxRetries: 3
+      baseDelayMs: 2000
+  deps:
+    sessionStore: sessionStore.default
+    llm: llm.default
+    hooks: hooks.taskloom
+    prompt: prompt.taskloom
+    tools: tools.taskloom
+    workspace: workspace.default
+    compaction:
+      - compaction.pipeline.taskloom
+
+# AgentKit v0.4.45 timer ticks in "fresh" mode share one session per process
+# (delivery ids taskloom:<start>:run-N collapse to taskloom:<start>), so the
+# history grows with every wake. Bound it by summarising past ~40k tokens.
+hooks.taskloom:
+  use: hooks/runtime
+  deps:
+    providers:
+      - hook.before-step.taskloom
+      - hook.turn-continue.default
+
+hook.before-step.taskloom:
+  use: hook/before-step
+  deps:
+    compaction: compaction.pipeline.taskloom
+    sessionStore: sessionStore.default
+
+compaction.pipeline.taskloom:
+  use: compaction/pipeline
+  deps:
+    chain: compaction.chain.default
+    services:
+      - compaction.prune.default
+      - compaction.token-limit.taskloom
+
+compaction.token-limit.taskloom:
+  use: compaction/token-limit
+  config:
+    maxTokens: 40000
+    charsPerToken: 3
+  deps:
+    chain: compaction.chain.default
+    services:
+      - compaction.summary.default
+
+compaction.summary.default:
+  config:
+    summaryModel: deepseek-v4.1-flash
+    keepRecentTokens: 8000
+    reserveTokens: 8000
+  deps:
+    llm: llm.default
+
+hook.turn-continue.default:
+  use: hook/turn-continue
+  config:
+    maxContinuations: 20
+    stallLimit: 3
+    requireFinish: true
+    requireTodosDone: false
+  deps:
+    sessionStore: sessionStore.default
+
+prompt.taskloom:
+  use: prompt/assembler/default
+  deps:
+    sections:
+      - prompt.persona.taskloom
+
+prompt.persona.taskloom:
+  use: prompt/section/static
+  config:
+    name: persona
+    content: |
+      你是 Taskloom 任务系统里的执行 Agent。人是任务负责人，你负责把分配给你的任务做完并正式交付。
+      Taskloom 工具名带 taskloom__ 前缀。
+
+      每次被唤醒：
+      1. 调用 inbox。对列出的每个任务调用 read_task，仔细读 goal、criteria、timeline（包括人的留言和对问题的回答）、
+         current_result 及其 review_reason。
+      2. can.start_work 为 true 时调用 start_work 认领；已有自己的执行（can.submit_result 为 true）就直接继续。
+      3. 开始前用 post_message 简短说明你的理解和计划；工作较长时中途用 post_message 汇报进度。
+      4. 要求不清楚、需要人决定时，用 ask_owner 提问（写明问题、可选方案和你的建议），然后不要提交，
+         这个任务本轮到此为止；下次唤醒 read_task 看到回答后再继续。
+      5. 自己完成交付物（写作、整理、分析等都由你直接写出），确认满足 criteria 后调用 submit_result 提交完整结果。
+      6. 结果被验收退回时，按 review_reason 和留言修改后重新提交。
+      7. 写操作都要带 read_task 或上一次写操作返回的 basis；遇到冲突先重新 read_task。
+      8. 写入被拒绝且 read_task 显示你已不是处理人、任务已取消或已完成时，停止处理该任务，不要留言。
+      全部处理完后调用 finish，summary 列出处理了哪些任务和结果。
+
+      原则：普通留言不算交付；不要编造无法获得的事实（例如真实的工作记录），缺信息就提问或在结果中明确说明假设；
+      默认使用中文。
+
+tools.taskloom:
+  use: tools/runtime
+  config:
+    defaultTimeoutSeconds: 120
+  deps:
+    hooks: hooks.taskloom
+    tools:
+      - tool.todo.default
+      - tool.finish.default
+    dynamicTools:
+      - mcp.default
+    approval: approval.taskloom
+
+# Only Taskloom MCP tools and todo/finish exist in this agent, so nothing needs
+# a human approval; Taskloom itself authorizes every write.
+approval.taskloom:
+  use: approval/auto-allow
+  config:
+    reason: "auto-allowed: taskloom executor"
+
+# The Taskloom MCP server entry (URL + Authorization) is written to
+# ~/.agentkit/mcp.json by entrypoint.sh from TASKLOOM_MCP_URL/TASKLOOM_AUTHORIZATION.
+
+# Company OpenAI-compatible gateway; OPENAI_API_KEY comes from deploy/agent/.env.
+llm.chatai:
+  use: llm/openai-chat
+  config:
+    baseUrl: ${var:OPENAI_BASE_URL:-https://chatai-api.amberainsider.com/v1}
+    apiKeyRef: env:OPENAI_API_KEY
+    models:
+      - id: deepseek-v4.1-flash
+        modalities: [text]
+    timeoutSeconds: 180
+    responseHeaderTimeoutSeconds: 60
+  deps:
+    credentials: credentials.default
+
+llm.router:
+  deps:
+    protocols:
+      - llm.chatai
+    default: llm.chatai

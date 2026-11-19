@@ -102,7 +102,7 @@ func (s *Service) Create(ctx context.Context, token, key string, in api.Create) 
 		if e := s.projectOpen(tx, p.Tenant, in.ProjectID); e != nil {
 			return nil, e
 		}
-		t := task.Task{ProjectID: in.ProjectID, Tenant: p.Tenant, ID: id(), Title: in.Title, Goal: in.Goal, Criteria: in.Criteria, Owner: p.ID, Version: 1, BasisVersion: 1, PolicyVersion: 1}
+		t := task.Task{ProjectID: in.ProjectID, Tenant: p.Tenant, ID: id(), Title: in.Title, Goal: in.Goal, Criteria: in.Criteria, Owner: p.ID, Version: 1, BasisVersion: 1}
 		if e := s.d.Tasks.CreateTask(tx, t); e != nil {
 			return nil, e
 		}

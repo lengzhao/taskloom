@@ -10,7 +10,7 @@ Taskloom 是面向企业中人与 Buddy 协作的任务系统。本项目只建�
 
 长期目标是 Buddy 在授权范围内自行判断可行性并执行，人主要设置目标、作关键决策和验证结果。不同 Buddy 可以专门承担规划、执行、审查或目标维护职责。自主程度由各 Buddy 的接口权限决定，不依赖另建一套自动化流程。
 
-模块边界及 SQL/S3 适配见[插件契约](plugin-contracts.md)，共用 API 与 WebSocket 见[通信契约](shared-api-and-realtime.md)。
+模块边界见[架构](architecture.md)，共用 API 与 WebSocket 见[通信契约](shared-api-and-realtime.md)。
 
 ## 已确认的产品约束
 

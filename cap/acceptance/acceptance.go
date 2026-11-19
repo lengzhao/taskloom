@@ -8,7 +8,7 @@ import (
 
 type Review struct {
 	Tenant, TaskID, ID, RoundID, SubmissionID, CommitID, Reviewer, Outcome, Reason string
-	BasisVersion, PolicyVersion                                                    int64
+	BasisVersion                                                                   int64
 }
 type Reader interface {
 	// A flow reaches the accepting step at most once per round, so a review is

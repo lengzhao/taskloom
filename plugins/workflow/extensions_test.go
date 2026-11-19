@@ -2,10 +2,8 @@ package workflow_test
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"github.com/lengzhao/pluginkit"
 	"github.com/lengzhao/pluginkit/build"
 	"github.com/lengzhao/taskloom/cap/fault"
@@ -173,38 +171,5 @@ func TestPostReviewFailureRollsBackEverySubmissionFact(t *testing.T) {
 	s = f.read(t, d.Task.ID)
 	if s.Position.Revision != revision || s.Position.State != "executing" {
 		t.Fatal("position survived rollback")
-	}
-}
-func TestPreparationDefinitionRetainsOldTaskBehavior(t *testing.T) {
-	f := setup(t, nil)
-	tasks, _ := build.GetByID[task.Store](f.graph, "sql")
-	positions, _ := build.GetByID[flow.PositionStore](f.graph, "sql")
-	defs, _ := build.GetByID[flow.DefinitionStore](f.graph, "sql")
-	ref := flow.DefinitionRef{ID: "preparation", Version: "1", Digest: fmt.Sprintf("%x", sha256.Sum256([]byte(`{"Key":"ready","Version":"1"}`)))}
-	e := f.tx.Do(f.ctx, func(ctx context.Context) error {
-		if e := tasks.CreateTask(ctx, task.Task{Tenant: "t", ID: "old-task", Owner: "owner", Title: "old", Goal: "goal", Criteria: "criteria", Version: 1, BasisVersion: 1}); e != nil {
-			return e
-		}
-		if e := defs.EnsureDefinition(ctx, ref); e != nil {
-			return e
-		}
-		return positions.CreatePosition(ctx, flow.Position{Tenant: "t", TaskID: "old-task", RoundID: "old-round", State: "ready", Flow: ref, Complete: true})
-	})
-	if e != nil {
-		t.Fatal(e)
-	}
-	old, e := f.query.Read(f.ctx, f.owner, "old-task")
-	if e != nil {
-		t.Fatal(e)
-	}
-	if old.Position.Flow != ref || old.Position.State != "ready" || old.Position.RoundID != "old-round" || old.Position.Status != "active" {
-		t.Fatal("old task silently upgraded")
-	}
-	if _, e = f.ex.Open(f.ctx, f.agent, "old-claim", api.Open{Basis: api.Basis{TaskID: "old-task", RoundID: "old-round", BasisVersion: 1}}); e == nil {
-		t.Fatal("preparation-only task became executable")
-	}
-	current := f.create(t)
-	if current.Position.Flow.ID != "standard" || current.Position.State != "executing" {
-		t.Fatal("new task did not use new default")
 	}
 }

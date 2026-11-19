@@ -23,7 +23,6 @@
 | 主题 | 文档 |
 | --- | --- |
 | 设计 | [架构](docs/architecture.md)、[核心契约 C01—C18](docs/core-contracts.md)、[状态模块与流程](docs/task-flow-plugins.md)、[Commit 与结果交付](docs/reply-delivery.md) |
-| 边界与接口 | [插件契约](docs/plugin-contracts.md)、[cap 能力清单](docs/cap-interfaces.md) |
 | 协议与权限 | [共用 API 与变化流](docs/shared-api-and-realtime.md)、[MCP 接入](docs/mcp-adapter.md)、[成员与任务权限](docs/permissions.md) |
 | 配置与工程 | [两层配置](docs/configuration.md)、[开发说明](docs/development.md) |
 | 阶段实现 | [M03 存储](docs/m03-storage.md)、[M04 工作台](docs/m04-workspace.md)、[M05 流程闭环](docs/m05-workflow.md)、[开发清单](todo.md) |

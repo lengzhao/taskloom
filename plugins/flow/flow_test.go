@@ -32,7 +32,7 @@ func TestTypedCompletionAndDefinitionFence(t *testing.T) {
 	}
 	defer db.Close(ctx)
 	state := &ready.State{}
-	controller, e := flow.New(flow.Config{ID: "preparation", Version: "1"}, flow.Deps{Definitions: db, Positions: db, States: []capflow.State{state}})
+	controller, e := flow.New(flow.Config{ID: "ready-only", Version: "1"}, flow.Deps{Definitions: db, Positions: db, States: []capflow.State{state}})
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -69,7 +69,7 @@ func TestTypedCompletionAndDefinitionFence(t *testing.T) {
 		t.Fatal(e)
 	}
 	if e = db.Do(ctx, func(tx context.Context) error {
-		return db.EnsureDefinition(tx, capflow.DefinitionRef{ID: "preparation", Version: "1", Digest: "changed"})
+		return db.EnsureDefinition(tx, capflow.DefinitionRef{ID: "ready-only", Version: "1", Digest: "changed"})
 	}); !errors.Is(e, fault.ErrConflict) {
 		t.Fatal("definition fence", e)
 	}
@@ -95,7 +95,7 @@ func TestNoopRefreshKeepsRevisionAndStepNeedsReachedEntry(t *testing.T) {
 		t.Fatal(e)
 	}
 	defer db.Close(ctx)
-	controller, e := flow.New(flow.Config{ID: "preparation", Version: "1"}, flow.Deps{Definitions: db, Positions: db, States: []capflow.State{&ready.State{}}})
+	controller, e := flow.New(flow.Config{ID: "ready-only", Version: "1"}, flow.Deps{Definitions: db, Positions: db, States: []capflow.State{&ready.State{}}})
 	if e != nil {
 		t.Fatal(e)
 	}

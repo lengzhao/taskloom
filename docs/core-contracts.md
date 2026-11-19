@@ -10,11 +10,10 @@
 | Basis | 目标、标准、正式输入及相关计划修订；普通聊天不是依据变更 |
 | RoundID | 一轮工作及其绑定依据；正常推进不变，退回/重开采用新轮 |
 | FlowRef | 定义 ID、版本及行为摘要，绑定配置组合及规则兼容边界 |
-| PolicyVersion | 验收策略版本；首版验收人固定为负责人、创建时为 1，尚无修改入口。验收要求唯一由 FlowRef 绑定的步骤组合决定 |
 | ExecutionID / Writable | 执行记录及其写资格；失效后旧实例不能覆盖当前事实 |
 | CommitID | 不可变正文与协作记录的稳定标识 |
 | SubmissionID | 绑定任务、轮次、Basis、执行和精确结果 commit的交付 |
-| ReviewID | 绑定 SubmissionID、结果 commit、BasisVersion、PolicyVersion 的结论 |
+| ReviewID | 绑定 SubmissionID、结果 commit、BasisVersion 与验收人的结论 |
 
 取消/更换 Buddy/实例不更换人的负责人。旧轮交付和验收保留历史，不自动继承到新轮。步骤在一轮内只前进、最多进入一次，步骤记录以 RoundID + 步骤键（加候选 SubmissionID）标识，Enter 据此幂等；正常推进不使同 RoundID 交付失效。
 
@@ -86,4 +85,4 @@ Agent 接入方（MCP 或未来 Harness 插件）负责认证、认领后启动�
 | C17 | 身份服务慢 | 不持有业务锁等待远端，无有效依据明确失败 |
 | C18 | 管理员初始化与离职恢复 | 仅受控运维入口，完整审计，无匿名提权 |
 
-实现约定：版本冲突来自领域 CAS，共享错误在 cap/fault，事务包只管理加入/回滚；State 检查结果不将准备完成等同任务完成，见 [cap 清单](cap-interfaces.md)。
+实现约定：版本冲突来自领域 CAS，共享错误在 cap/fault，事务包只管理加入/回滚；State 检查结果不将准备完成等同任务完成。

@@ -40,16 +40,7 @@ flow:
     defaultVersion: '1'
   deps:
     positions: sql
-    flows: [flow-preparation, flow-standard]
-flow-preparation:
-  use: task/flow
-  config:
-    id: preparation
-    version: '1'
-  deps:
-    definitions: sql
-    positions: sql
-    states: [ready]
+    flows: [flow-standard]
 flow-standard:
   use: task/flow
   config:

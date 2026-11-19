@@ -4,7 +4,7 @@ M04/权限/cap 简化已提交为 `f71bde2`。M05 在其上提供本地任务执
 
 ## 运行与身份
 
-沿用 M04 的私有管理员凭据、两层配置和本地工作台 `/v1/app`。默认新任务绑定 standard/1：ready → executing → accepting → completed；原 preparation/1 保留，只提供准备行为，不偷偷升级旧任务的 FlowRef。
+沿用 M04 的私有管理员凭据、两层配置和本地工作台 `/v1/app`。默认新任务绑定 standard/1：ready → executing → accepting → completed。不兼容旧定义：旧任务的 FlowRef 不存在于当前目录时明确冲突，不偷偷升级。
 
 管理员可通过本地受控 CLI 登记 Agent 并分别签发业务/运行时证明凭据：
 
@@ -35,7 +35,7 @@ CLI 不打印秘密，不覆盖文件，保留操作者、原因、owner/实例�
 
 超过五字段保留理由：各命令模块必须显式协调事务内领域事实，但分配/执行、交付/验收、流程控制保持独立 provider；只读聚合单独提供内部 FactsReader，命令不额外持有查询仓储写能力。共同代码是包内辅助逻辑，不是依赖包或服务定位器。HTTP 的 Origin/CSRF/会话凭据解析作为内聚 RequestSecurity 复用，HTTP owner 只启动/关闭一次会话模块。没有新增 registry 或配置层。
 
-根默认图以 [base.yaml](../base.yaml) 为准（含后续新增的 catalog、question-commands 与 mcp-api），由 PluginKit 真实构建校验引用与无环。准备定义与标准定义共存；标准定义的行为摘要包含有序状态描述。改同 ID/版本的步骤/规则导致不匹配时拒绝，不能继续沿旧位置执行新规则：新建任务时 EnsureDefinition 比对已登记摘要，已绑定任务读取时摘要不符明确冲突；尚无启动前的全量摘要校验。示例片段必须并入同一个 config.yaml；不能作为第三层加载。
+根默认图以 [base.yaml](../base.yaml) 为准（含后续新增的 catalog、question-commands 与 mcp-api），由 PluginKit 真实构建校验引用与无环。标准定义的行为摘要包含有序状态描述。改同 ID/版本的步骤/规则导致不匹配时拒绝，不能继续沿旧位置执行新规则：新建任务时 EnsureDefinition 比对已登记摘要，已绑定任务读取时摘要不符明确冲突；尚无启动前的全量摘要校验。示例片段必须并入同一个 config.yaml；不能作为第三层加载。
 
 ## 执行、进展与写入隔离
 
@@ -54,7 +54,7 @@ CLI 不打印秘密，不覆盖文件，保留操作者、原因、owner/实例�
 
 Submit 原子追加不可变 result commit、登记 Submission，再核对已到达步骤；正文只存一份，交付/评审引用 CommitID。当前首版提交新文本；普通评论不能伪造 result 类型。同执行、轮次、依据下重复相同正文的新请求键会返回当前候选，不重复登记；不同正文生成新 commit 和候选。并发/旧依据请求冲突，技术失败回滚正文/交付/步骤/事件/回执。
 
-人工验收 State 默认绑定创建时负责人（当前负责人无转移 API），PolicyVersion=1；记录绑定轮次、SubmissionID、CommitID、BasisVersion、PolicyVersion 和 reviewer。首版不提供策略编辑/职责分离开关；未知配置或请求字段拒绝，不假称复杂策略已实现。角色授权不代替验收资格，管理员不是自动 reviewer。
+人工验收 State 默认绑定创建时负责人（当前负责人无转移 API）；记录绑定轮次、SubmissionID、CommitID、BasisVersion 和 reviewer。首版不提供策略编辑/职责分离开关；未知配置或请求字段拒绝，不假称复杂策略已实现。角色授权不代替验收资格，管理员不是自动 reviewer。
 
 新候选使旧结论不再当前：同步所有已到达状态的 Enter，创建对应候选的新 pending 记录，再重查整个前序。审核 wait/reject 保留合法交付，技术错误整体回滚；旧验收点击或外部确认不能覆盖新候选。撤回当前候选不恢复旧候选，历史正文/交付/结论保留。
 

@@ -63,12 +63,7 @@ func New(c Config, d Deps) (*Controller, error) {
 	if len(d.States) > 1 && (descs[0].Role != capflow.RoleReady || !terminal || d.Executions == nil || d.Questions == nil) {
 		return nil, errors.New("workflow requires ready, terminal, execution edit guard and open-question gate")
 	}
-	var b []byte
-	if len(descs) == 1 {
-		b, _ = json.Marshal(struct{ Key, Version string }{descs[0].Key, descs[0].Version})
-	} else {
-		b, _ = json.Marshal(descs)
-	}
+	b, _ := json.Marshal(descs)
 	return &Controller{c: c, d: d, ref: capflow.DefinitionRef{ID: c.ID, Version: c.Version, Digest: fmt.Sprintf("%x", sha256.Sum256(b))}}, nil
 }
 func id() string {

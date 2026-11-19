@@ -1,6 +1,6 @@
 # Commit 与结果交付
 
-任务保存当前约定，commit 保存不可变协作事实，时间线只是读取视图。没有 Conversation、Message 或 Revision 层；正文只存于 commit。Submission 保存 TaskID、RoundID、Basis、ExecutionID、CommitID、提交者和撤回事实。人工验收 State 保存 Review，绑定精确 Submission/Commit、标准与策略版本。普通评论、进度和主运行结束均不产生交付。
+任务保存当前约定，commit 保存不可变协作事实，时间线只是读取视图。没有 Conversation、Message 或 Revision 层；正文只存于 commit。Submission 保存 TaskID、RoundID、Basis、ExecutionID、CommitID、提交者和撤回事实。人工验收 State 保存 Review，绑定精确 Submission/Commit、依据版本与验收人。普通评论、进度和主运行结束均不产生交付。
 
 ## Commit
 

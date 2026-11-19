@@ -58,8 +58,7 @@ type PositionStore interface {
 }
 type Description struct {
 	Key, Version string
-	Role         Role   `json:",omitempty"`
-	Rules        string `json:",omitempty"`
+	Role         Role `json:",omitempty"`
 }
 type Context struct {
 	Task     task.Task

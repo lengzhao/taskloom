@@ -49,17 +49,4 @@ Cancel 立即取消并失效执行写资格。Return 只能到定义声明的较
 
 目录唯一接收 flows 列表并发布定义，API/命令/worker 只依赖目录接口；状态不反向依赖目录。定义保留状态顺序及行为版本，验收要求由人工验收步骤的描述派生，非额外 acceptanceMode 开关。部署配置改变不能修改旧 FlowRef；当前在新建任务和读取已绑定任务时校验定义摘要，尚无启动前全量校验。
 
-```yaml
-# 设计片段，尚不可运行；其余必要 Deps 在清单中。
-flow.standard:
-  use: task/flow
-  deps:
-    states:
-      - use: state/ready
-      - use: state/executing
-      - use: state/fact-review
-      - use: state/accepting
-      - use: state/completed
-```
-
-可省略事实审核，或省略人工验收；授权/依据/写入隔离保护不随之消失。此片段不替代真实配置，实际构建必须补齐各步骤的 Deps 并检验角色/顺序/owner。
+可省略人工验收步骤（见 `examples/flows/automatic.config.yaml`），也可插入新的审核状态；授权/依据/写入隔离保护不随之消失。

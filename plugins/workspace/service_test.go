@@ -54,7 +54,7 @@ func fixtureWithStore(t *testing.T) (*workspace.Service, *security.Service, stri
 	if e != nil {
 		t.Fatal(e)
 	}
-	f, e := flow.New(flow.Config{ID: "preparation", Version: "1"}, flow.Deps{Definitions: s, Positions: s, States: []capflow.State{&ready.State{}}})
+	f, e := flow.New(flow.Config{ID: "ready-only", Version: "1"}, flow.Deps{Definitions: s, Positions: s, States: []capflow.State{&ready.State{}}})
 	if e != nil {
 		t.Fatal(e)
 	}

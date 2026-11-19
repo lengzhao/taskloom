@@ -44,7 +44,7 @@ func (s *State) Enter(ctx context.Context, c flow.Context) error {
 		return e
 	}
 	key := fmt.Sprintf("%s/%s/%s", c.Position.RoundID, v.ID, c.Task.Owner)
-	return s.d.Reviews.EnsureReview(ctx, acceptance.Review{Tenant: c.Task.Tenant, TaskID: c.Task.ID, ID: fmt.Sprintf("%x", sha256.Sum256([]byte(key))), RoundID: c.Position.RoundID, SubmissionID: v.ID, CommitID: v.CommitID, Reviewer: c.Task.Owner, Outcome: "pending", BasisVersion: c.Task.BasisVersion, PolicyVersion: c.Task.PolicyVersion})
+	return s.d.Reviews.EnsureReview(ctx, acceptance.Review{Tenant: c.Task.Tenant, TaskID: c.Task.ID, ID: fmt.Sprintf("%x", sha256.Sum256([]byte(key))), RoundID: c.Position.RoundID, SubmissionID: v.ID, CommitID: v.CommitID, Reviewer: c.Task.Owner, Outcome: "pending", BasisVersion: c.Task.BasisVersion})
 }
 func (s *State) CheckComplete(ctx context.Context, c flow.Context) (flow.Check, error) {
 	v, e := s.d.Results.CurrentSubmission(ctx, c.Task.Tenant, c.Task.ID, c.Position.RoundID)
@@ -65,7 +65,7 @@ func (s *State) CheckComplete(ctx context.Context, c flow.Context) (flow.Check, 
 	if e != nil || !member.Active {
 		return flow.Check{Status: flow.Wait, Reason: "验收人资格已失效"}, nil
 	}
-	if r.Outcome != "approved" || r.CommitID != v.CommitID || r.BasisVersion != c.Task.BasisVersion || r.Reviewer != c.Task.Owner || r.PolicyVersion != c.Task.PolicyVersion {
+	if r.Outcome != "approved" || r.CommitID != v.CommitID || r.BasisVersion != c.Task.BasisVersion || r.Reviewer != c.Task.Owner {
 		return flow.Check{Status: flow.Wait, Reason: "等待当前结果人工验收"}, nil
 	}
 	return flow.Check{Status: flow.Allow}, nil

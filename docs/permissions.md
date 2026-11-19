@@ -60,3 +60,7 @@ workspace.SetParticipant 只允许有效管理员/负责人，加入对象必须
 管理员在“用户与 Agent”中创建用户时同时填写初始密码；人类用户不再签发页面访问凭据。Agent 保留凭据签发流程。POST /v1/session 接收 Username/Password；POST /v1/account/password 接收 CurrentPassword/Password，用于本人修改密码（首次设置不需要旧密码）；POST /v1/users/{id}/password 仅供管理员重置同租户人类用户密码。两类改密均撤销目标的所有会话和凭据。GET /v1/me 的 PasswordSet 仅报告当前用户是否已设置密码。
 
 POST /v1/identities 创建人类时需要 Password，创建 Agent 时拒绝 Password。POST /v1/credentials 仅接受 Agent。已有管理员可通过旧凭据首次登录设置密码；普通用户由管理员设置初始密码，之后直接用户名/密码登录。
+
+## 空间与项目
+
+有效成员可读本租户空间资料和项目目录。只有人类管理员可改空间资料；人类成员可创建项目，管理员或项目人类负责人可编辑、归档、恢复。负责人必须是同租户有效人类成员。项目目录可见不授予任务访问权；任务列表、计数与详情仍按原任务权限过滤。task.project 仅允许人类任务负责人/管理员。归档项目不允许新增或移入任务，允许原有任务继续处理及移出。所有写入同事务检查版本并重新鉴权，幂等重放也检查当前资格。运行时用途凭据不能读取项目目录。

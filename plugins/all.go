@@ -8,6 +8,7 @@ import (
 	_ "github.com/lengzhao/taskloom/plugins/api/health"
 	_ "github.com/lengzhao/taskloom/plugins/api/workflow"
 	_ "github.com/lengzhao/taskloom/plugins/api/workspace"
+	_ "github.com/lengzhao/taskloom/plugins/catalog"
 	_ "github.com/lengzhao/taskloom/plugins/flow"
 	_ "github.com/lengzhao/taskloom/plugins/identity/local"
 	_ "github.com/lengzhao/taskloom/plugins/security"

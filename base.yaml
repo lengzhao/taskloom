@@ -96,9 +96,18 @@ security:
     members: sql
     audit: sql
     events: sql
+catalog:
+  use: catalog/projects
+  deps:
+    transactions: sql
+    identity: identity
+    members: sql
+    store: sql
+    commands: command-runtime
 workspace:
   use: workspace/tasks
   deps:
+    catalog: sql
     members: sql
     participants: sql
     transactions: sql
@@ -120,6 +129,7 @@ workspace-api:
     changes: workspace
     identity: identity
     security: security
+    catalog: catalog
 
 workflow-query:
   use: query/workflow

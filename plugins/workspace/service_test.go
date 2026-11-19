@@ -51,7 +51,7 @@ func fixtureWithStore(t *testing.T) (*workspace.Service, *security.Service, stri
 	if e != nil {
 		t.Fatal(e)
 	}
-	svc, e := workspace.New(workspace.Deps{Transactions: s, Tasks: s, Commits: s, Flow: f, Identity: id, Authorization: az, Commands: r, Events: s, Members: s, Participants: s})
+	svc, e := workspace.New(workspace.Deps{Catalog: s, Transactions: s, Tasks: s, Commits: s, Flow: f, Identity: id, Authorization: az, Commands: r, Events: s, Members: s, Participants: s})
 	if e != nil {
 		t.Fatal(e)
 	}

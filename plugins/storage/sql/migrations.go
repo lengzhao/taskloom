@@ -29,6 +29,7 @@ var migrations = []migration{
 	{"checkpoint/001", "state-owned-checkpoint-records-v1", []any{&checkpointRow{}}},
 	{"question/001", "round-scoped-input-requests-v1", []any{&questionRow{}}},
 	{"password/001", "salted-human-password-hash-v1", []any{&passwordRow{}}},
+	{"catalog/001", "workspace-and-project-metadata-v1", []any{&spaceRow{}, &projectRow{}}},
 }
 
 func migrate(ctx context.Context, db *gorm.DB, driver string) error {

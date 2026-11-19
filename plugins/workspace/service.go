@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/lengzhao/taskloom/cap/catalog"
 	capcommand "github.com/lengzhao/taskloom/cap/command"
 	"strings"
 	"time"
@@ -28,6 +29,7 @@ import (
 )
 
 type Deps struct {
+	Catalog       catalog.ProjectReader  `json:"catalog"`
 	Transactions  unitofwork.Manager     `json:"transactions"`
 	Tasks         task.Store             `json:"tasks"`
 	Commits       commit.Log             `json:"commits"`
@@ -48,7 +50,7 @@ func init() {
 	pluginkit.Register("workspace/tasks", func(_ struct{}, d Deps) (*Service, error) { return New(d) })
 }
 func New(d Deps) (*Service, error) {
-	if d.Transactions == nil || d.Tasks == nil || d.Commits == nil || d.Flow == nil || d.Members == nil || d.Participants == nil || d.Identity == nil || d.Authorization == nil || d.Events == nil {
+	if d.Catalog == nil || d.Transactions == nil || d.Tasks == nil || d.Commits == nil || d.Flow == nil || d.Members == nil || d.Participants == nil || d.Identity == nil || d.Authorization == nil || d.Events == nil {
 		return nil, errors.New("task capabilities required")
 	}
 	if d.Commands == nil {
@@ -94,7 +96,10 @@ func (s *Service) Create(ctx context.Context, token, key string, in api.Create) 
 		if p.Kind != "human" || !valid(in.Title, in.Goal, in.Criteria) {
 			return nil, fault.ErrInput
 		}
-		t := task.Task{Tenant: p.Tenant, ID: id(), Title: in.Title, Goal: in.Goal, Criteria: in.Criteria, Owner: p.ID, Version: 1, BasisVersion: 1, PolicyVersion: 1}
+		if e := s.projectOpen(tx, p.Tenant, in.ProjectID); e != nil {
+			return nil, e
+		}
+		t := task.Task{ProjectID: in.ProjectID, Tenant: p.Tenant, ID: id(), Title: in.Title, Goal: in.Goal, Criteria: in.Criteria, Owner: p.ID, Version: 1, BasisVersion: 1, PolicyVersion: 1}
 		if e := s.d.Tasks.CreateTask(tx, t); e != nil {
 			return nil, e
 		}
@@ -315,7 +320,7 @@ func (s *Service) Changes(ctx context.Context, token, raw string) (api.Page, err
 				if !start && event.Kind == "task.changed" && s.allowed(tx, p, "task.read", event.Resource) {
 					out.Changes = append(out.Changes, api.Change{TaskID: event.Resource, Kind: event.Kind})
 				}
-				if !start && (event.Kind == "member.set" || event.Kind == "participant.set") {
+				if !start && (event.Kind == "member.set" || event.Kind == "participant.set" || event.Kind == "space.edit" || event.Kind == "project.create" || event.Kind == "project.edit") {
 					out.Changes = append(out.Changes, api.Change{Kind: "access.changed"})
 				}
 			}
@@ -407,4 +412,34 @@ func (s *Service) Members(ctx context.Context, token string) ([]az.DirectoryMemb
 		return e
 	})
 	return out, e
+}
+
+func (s *Service) projectOpen(ctx context.Context, tenant, id string) error {
+	if id == "" {
+		return nil
+	}
+	p, e := s.d.Catalog.GetProject(ctx, tenant, id)
+	if e != nil {
+		return e
+	}
+	if p.Archived {
+		return fault.ErrConflict
+	}
+	return nil
+}
+func (s *Service) SetProject(ctx context.Context, token, key string, in api.ProjectMove) error {
+	_, e := command.Run(ctx, s.d.Commands, capcommand.Request{Token: token, Key: key, Operation: "task.project", ReadOperation: "task.read", Resource: in.TaskID}, in, func(tx context.Context, p identity.Principal) ([]byte, error) {
+		if e := s.projectOpen(tx, p.Tenant, in.ProjectID); e != nil {
+			return nil, e
+		}
+		t, e := s.d.Tasks.SetProject(tx, p.Tenant, in.TaskID, in.ProjectID, in.ExpectedVersion)
+		if e != nil {
+			return nil, e
+		}
+		if _, e = s.append(tx, p, t, "task.project", in.ProjectID, ""); e != nil {
+			return nil, e
+		}
+		return nil, s.event(tx, t)
+	})
+	return e
 }

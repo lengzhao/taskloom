@@ -91,3 +91,34 @@ func (s *Store) UpdateBasis(ctx context.Context, change task.BasisChange) (task.
 	}
 	return updated, nil
 }
+
+func (s *Store) SetProject(ctx context.Context, tenant, taskID, projectID string, expected int64) (task.Task, error) {
+	var out task.Task
+	e := s.use(ctx, true, func(db *gorm.DB) error {
+		var row taskRow
+		if e := db.First(&row, "row_key = ?", key(tenant, taskID)).Error; e != nil {
+			return e
+		}
+		if row.Version != expected {
+			return fault.ErrConflict
+		}
+		if e := json.Unmarshal(row.Data, &out); e != nil {
+			return e
+		}
+		out.ProjectID = projectID
+		out.Version++
+		b, e := json.Marshal(out)
+		if e != nil {
+			return e
+		}
+		r := db.Model(&taskRow{}).Where("row_key = ? AND version = ?", row.Key, expected).Updates(map[string]any{"version": out.Version, "data": b})
+		if r.Error != nil {
+			return r.Error
+		}
+		if r.RowsAffected != 1 {
+			return fault.ErrConflict
+		}
+		return nil
+	})
+	return out, e
+}

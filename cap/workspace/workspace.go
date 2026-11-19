@@ -9,7 +9,11 @@ import (
 	"github.com/lengzhao/taskloom/cap/task"
 )
 
-type Create struct{ Title, Goal, Criteria string }
+type Create struct{ Title, Goal, Criteria, ProjectID string }
+type ProjectMove struct {
+	TaskID, ProjectID string
+	ExpectedVersion   int64
+}
 type Edit struct {
 	TaskID, Title, Goal, Criteria string
 	ExpectedVersion               int64
@@ -31,6 +35,7 @@ type Participation struct {
 	Present         bool
 }
 type Commands interface {
+	SetProject(ctx context.Context, credential, idempotencyKey string, value ProjectMove) error
 	SetParticipant(ctx context.Context, credential, idempotencyKey string, value Participation) error
 	Create(ctx context.Context, credential, idempotencyKey string, value Create) (Detail, error)
 	Edit(ctx context.Context, credential, idempotencyKey string, value Edit) (Detail, error)

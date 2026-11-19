@@ -19,6 +19,7 @@ import (
 
 	"github.com/lengzhao/pluginkit"
 	"github.com/lengzhao/taskloom/cap/authorization"
+	"github.com/lengzhao/taskloom/cap/catalog"
 	"github.com/lengzhao/taskloom/cap/httpapi"
 	"github.com/lengzhao/taskloom/cap/identity"
 	"github.com/lengzhao/taskloom/cap/security"
@@ -34,6 +35,7 @@ type Config struct {
 	LocalHTTP   bool   `json:"localHTTP"`
 }
 type Deps struct {
+	Catalog  catalog.Service         `json:"catalog"`
 	Commands api.Commands            `json:"commands"`
 	Queries  api.Queries             `json:"queries"`
 	Changes  api.ChangeFeed          `json:"changes"`
@@ -51,7 +53,7 @@ type Module struct {
 
 func init() { pluginkit.Register("api/workspace", New) }
 func New(c Config, d Deps) (*Module, error) {
-	if c.Origin == "" || d.Commands == nil || d.Queries == nil || d.Changes == nil || d.Identity == nil || d.Security == nil {
+	if d.Catalog == nil || c.Origin == "" || d.Commands == nil || d.Queries == nil || d.Changes == nil || d.Identity == nil || d.Security == nil {
 		return nil, errors.New("workspace origin and capabilities required")
 	}
 	if c.LocalHTTP && c.Origin != "http://127.0.0.1:8080" && c.Origin != "http://localhost:8080" {
@@ -73,7 +75,7 @@ func New(c Config, d Deps) (*Module, error) {
 }
 func (m *Module) Routes() []httpapi.Route {
 	routes := []httpapi.Route{}
-	for _, r := range []struct{ method, path, op string }{{"POST", "/account/password", "identity.password.change"}, {"POST", "/users/{id}/password", "identity.password"}, {"GET", "/me", "session.viewer"}, {"GET", "/members", "members.list"}, {"POST", "/identities", "identity.create"}, {"POST", "/credentials", "identity.issue"}, {"POST", "/credentials/revoke", "identity.revoke"}, {"GET", "/app", "ui.app"}, {"POST", "/session", "session.login"}, {"DELETE", "/session", "session.logout"}, {"GET", "/tasks", "tasks.list"}, {"POST", "/tasks", "tasks.create"}, {"GET", "/tasks/{id}", "tasks.get"}, {"PATCH", "/tasks/{id}", "tasks.edit"}, {"POST", "/tasks/{id}/commits", "commits.append"},
+	for _, r := range []struct{ method, path, op string }{{"GET", "/space", "space.read"}, {"PATCH", "/space", "space.edit"}, {"GET", "/projects", "projects.list"}, {"POST", "/projects", "project.create"}, {"PATCH", "/projects/{id}", "project.edit"}, {"GET", "/project-members", "project.members"}, {"POST", "/tasks/{id}/project", "task.project"}, {"POST", "/account/password", "identity.password.change"}, {"POST", "/users/{id}/password", "identity.password"}, {"GET", "/me", "session.viewer"}, {"GET", "/members", "members.list"}, {"POST", "/identities", "identity.create"}, {"POST", "/credentials", "identity.issue"}, {"POST", "/credentials/revoke", "identity.revoke"}, {"GET", "/app", "ui.app"}, {"POST", "/session", "session.login"}, {"DELETE", "/session", "session.logout"}, {"GET", "/tasks", "tasks.list"}, {"POST", "/tasks", "tasks.create"}, {"GET", "/tasks/{id}", "tasks.get"}, {"PATCH", "/tasks/{id}", "tasks.edit"}, {"POST", "/tasks/{id}/commits", "commits.append"},
 		{"GET", "/tasks/{id}/candidates", "tasks.candidates"}, {"POST", "/tasks/{id}/participants", "participants.set"}, {"GET", "/changes", "changes.read"}, {"POST", "/members", "members.set"}, {"DELETE", "/members", "members.remove"}} {
 		routes = append(routes, httpapi.Route{Method: r.method, Path: r.path, Operation: r.op, Handler: http.HandlerFunc(m.serve)})
 	}
@@ -175,6 +177,37 @@ func (m *Module) serve(w http.ResponseWriter, r *http.Request) {
 	var result any
 	var err error
 	switch {
+	case strings.HasSuffix(path, "/space"):
+		if r.Method == "GET" {
+			result, err = m.d.Catalog.Space(ctx, token)
+		} else {
+			var in catalog.SpaceEdit
+			if !httpx.Decode(w, r, &in) {
+				return
+			}
+			result, err = m.d.Catalog.EditSpace(ctx, token, key, in)
+		}
+	case strings.HasSuffix(path, "/project-members"):
+		result, err = m.d.Catalog.People(ctx, token)
+	case strings.HasSuffix(path, "/project"):
+		var in api.ProjectMove
+		if !httpx.Decode(w, r, &in) {
+			return
+		}
+		in.TaskID = taskID
+		err = m.d.Commands.SetProject(ctx, token, key, in)
+		result = map[string]bool{"ok": err == nil}
+	case strings.Contains(path, "/projects"):
+		if r.Method == "GET" {
+			result, err = m.d.Catalog.Projects(ctx, token)
+		} else {
+			var in catalog.ProjectEdit
+			if !httpx.Decode(w, r, &in) {
+				return
+			}
+			in.ID = taskID
+			result, err = m.d.Catalog.SaveProject(ctx, token, key, in)
+		}
 	case strings.HasSuffix(path, "/me"):
 		var view api.Viewer
 		view, err = m.d.Queries.Viewer(ctx, token)

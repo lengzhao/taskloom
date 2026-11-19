@@ -1,9 +1,17 @@
 # M05 实际默认依赖图
 
-由当前 base.yaml 的已实现实例整理；23 个实例，含 M05 之后新增的 question-commands（见[请求输入与人工引导](m05-workflow.md#请求输入与人工引导)）。跨阶段的 52 节点规划不等于此运行图。字段与接口职责见 [M05](m05-workflow.md)。
+由当前 base.yaml 的已实现实例整理；24 个实例，含 M05 之后新增的 question-commands（见[请求输入与人工引导](m05-workflow.md#请求输入与人工引导)）。跨阶段的 52 节点规划不等于此运行图。字段与接口职责见 [M05](m05-workflow.md)。
 
 ```mermaid
 flowchart TD
+  n23["catalog<br/>catalog/projects"]
+  n23 -->|transactions| n3
+  n23 -->|identity| n4
+  n23 -->|members| n3
+  n23 -->|store| n3
+  n23 -->|commands| n13
+  n15 -->|catalog| n3
+  n16 -->|catalog| n23
   n0["server<br/>server"]
   n1["http<br/>transport/http"]
   n2["health<br/>api/health"]
@@ -152,8 +160,9 @@ flowchart TD
 | completed | state/completed | results |
 | command-runtime | commands/runtime | transactions、requests、identity、authorization、audit、events |
 | security | commands/security | commands、transactions、principals、credentials、passwords、bootstrap、members、audit、events |
-| workspace | workspace/tasks | members、participants、transactions、tasks、commits、flow、identity、authorization、commands、events |
-| workspace-api | api/workspace | commands、queries、changes、identity、security |
+| catalog | catalog/projects | transactions、identity、members、store、commands |
+| workspace | workspace/tasks | catalog、members、participants、transactions、tasks、commits、flow、identity、authorization、commands、events |
+| workspace-api | api/workspace | commands、queries、changes、identity、security、catalog |
 | workflow-query | query/workflow | questions、commits、transactions、tasks、flow、executions、results、reviews、identity、authorization |
 | execution-commands | commands/execution | participants、principals、members、commands、tasks、flow、executions、snapshots、events |
 | result-commands | commands/result | commands、tasks、flow、executions、results、commits、accepting、snapshots、events |

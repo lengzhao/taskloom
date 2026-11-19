@@ -108,12 +108,29 @@ details[open] > summary { margin-bottom: 4px }
 .empty { padding: 40px 10px; text-align: center; color: var(--muted) }
 @media (max-width: 1100px) { .cols { grid-template-columns: 1fr } }
 @media (max-width: 760px) { #work { grid-template-columns: 1fr; padding: 12px } header { padding: 12px } }
+
+#work {grid-template-columns:210px minmax(0,1fr);max-width:1600px}
+#sidebar {position:sticky;top:16px;align-self:start}
+#sidebar nav {display:grid;gap:5px;margin:18px 0}
+#sidebar button {text-align:left;border:0;background:transparent}
+#sidebar button.on {background:var(--accent-soft);color:var(--accent);font-weight:600}
+#space-name {font-size:16px;overflow-wrap:anywhere}
+#content {min-width:0}
+.page-head {display:flex;justify-content:space-between;gap:12px;align-items:center;margin-bottom:16px}
+.toolbar {display:flex;gap:8px;flex-wrap:wrap;margin:14px 0}
+.toolbar input {flex:1;min-width:150px}.toolbar select{width:auto;max-width:220px}
+#tasks.board {display:grid;grid-template-columns:repeat(auto-fit,minmax(205px,1fr));align-items:start;gap:12px}
+.lane {background:var(--bg);border-radius:10px;padding:12px;display:grid;gap:8px}.lane h3{margin:0 0 6px}
+.project-grid {display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px}
+.project-card {text-align:left;min-height:120px}.project-card strong{display:block;margin-bottom:8px}
+#detail-back {margin-bottom:14px}
+@media(max-width:760px){#work{grid-template-columns:1fr}#sidebar{position:static}#sidebar nav{display:flex;flex-wrap:wrap;margin:8px 0}header{flex-wrap:wrap;gap:8px}#tasks.board{grid-template-columns:1fr}.toolbar select{max-width:100%}}
 </style>
 </head>
 <body>
 <header>
   <h1>Taskloom <span>/</span> 工作台</h1>
-  <div class="actions" style="margin:0"><button id="account-password" hidden>修改密码</button><button id="members-admin" hidden>用户与 Agent</button><button id="logout" hidden>退出</button></div>
+  <div class="actions" style="margin:0"><button id="account-password" hidden>修改密码</button><button id="logout" hidden>退出</button></div>
 </header>
 <div id="notice" role="status" aria-live="polite"></div>
 
@@ -135,33 +152,52 @@ details[open] > summary { margin-bottom: 4px }
 </section>
 
 <main id="work" hidden>
-  <aside>
-    <div class="panel">
-      <div class="head" style="align-items:center;margin-bottom:10px">
-        <h3 style="margin:0">任务</h3>
-        <button id="refresh" class="link">刷新</button>
-      </div>
-      <div class="tabs" role="tablist">
-        <button id="tab-mine" role="tab">待我处理<span id="mine-count" class="count" hidden></span></button>
-        <button id="tab-all" role="tab">全部</button>
-      </div>
-      <nav id="tasks" aria-label="任务列表"></nav>
+ <aside id="sidebar" class="panel">
+  <p class="muted small">工作空间</p><h2 id="space-name">当前空间</h2>
+  <nav aria-label="工作台导航">
+   <button id="tab-mine">等我处理<span id="mine-count" class="count" hidden></span></button>
+   <button id="tab-all">全部任务</button>
+   <button id="tab-projects">项目</button>
+   <button id="tab-space">空间设置</button>
+  </nav>
+  <p id="viewer-name" class="muted small"></p>
+ </aside>
+ <section id="content">
+  <section id="browse" class="panel">
+   <div class="page-head"><h2 id="page-title">全部任务</h2><button id="refresh">刷新</button></div>
+   <div id="catalog-content"></div>
+   <div id="task-area">
+    <div class="toolbar">
+     <input id="task-search" aria-label="搜索任务" placeholder="搜索标题、目标或任务编号">
+     <select id="project-filter" aria-label="筛选项目"></select>
+     <select id="status-filter" aria-label="筛选阶段"><option value="">全部阶段</option><option value="ready">待处理</option><option value="executing">处理中</option><option value="accepting">待验收</option><option value="completed">已完成</option><option value="cancelled">已取消</option></select>
+     <select id="task-layout" aria-label="任务视图"><option value="list">列表</option><option value="board">看板</option></select>
     </div>
-    <div class="panel">
-      <details id="create-box">
-        <summary style="margin:0">+ 新建任务</summary>
-        <form id="create">
-          <label>标题<input name="Title" required maxlength="200"></label>
-          <label>目标<textarea name="Goal" placeholder="要达成什么"></textarea></label>
-          <label>验收标准<textarea name="Criteria" placeholder="怎样算完成"></textarea></label>
-          <div class="actions"><button class="primary">创建</button></div>
-        </form>
-      </details>
-    </div>
-  </aside>
-  <section id="detail"><div class="panel empty">选择左侧任务，或新建一个任务。</div></section>
+    <details id="create-box"><summary>+ 新建任务</summary>
+     <form id="create">
+      <label>标题<input name="Title" required maxlength="200"></label>
+      <label>所属项目<select name="ProjectID" id="create-project"></select></label>
+      <label>目标<textarea name="Goal" placeholder="要达成什么"></textarea></label>
+      <label>验收标准<textarea name="Criteria" placeholder="怎样算完成"></textarea></label>
+      <div class="actions"><button class="primary">创建</button></div>
+     </form>
+    </details>
+    <nav id="tasks" aria-label="任务列表" style="margin-top:18px"></nav>
+   </div>
+  </section>
+  <section id="detail-shell" hidden><button id="detail-back">← 返回列表</button><section id="detail"></section></section>
+ </section>
 </main>
-
+<dialog id="project-dialog" aria-labelledby="project-title">
+ <div class="page-head"><h2 id="project-title">新建项目</h2><button id="project-close" type="button">关闭</button></div>
+ <p id="project-notice" role="status"></p>
+ <form id="project-form">
+  <label>项目名称<input id="project-name" required maxlength="200"></label>
+  <label>项目目标与说明<textarea id="project-description" maxlength="20000"></textarea></label>
+  <label>项目负责人<select id="project-owner" required></select></label>
+  <div class="actions"><button class="primary">保存项目</button></div>
+ </form>
+</dialog>
 <dialog id="password-dialog" aria-labelledby="password-title">
  <div class="head"><h2 id="password-title">修改密码</h2><button id="password-close" type="button">关闭</button></div>
  <p id="password-notice" role="status" style="color:var(--warn)"></p>
@@ -222,7 +258,7 @@ function h(tag, cls, ...children) {
   for (const c of children) if (c !== null && c !== undefined && c !== false) n.append(c);
   return n;
 }
-function notice(s) { $('notice').textContent = s; $('members-notice').textContent = $('members-dialog').open ? s : ''; $('password-notice').textContent = $('password-dialog').open ? s : '' }
+function notice(s) { $('project-notice').textContent=$('project-dialog').open?s:''; $('notice').textContent = s; $('members-notice').textContent = $('members-dialog').open ? s : ''; $('password-notice').textContent = $('password-dialog').open ? s : '' }
 function formdata(form) { return Object.fromEntries(new FormData(form)) }
 function handle(fn) {
   return async e => {
@@ -285,7 +321,7 @@ function showLogin() {
   viewer = null; retryKeys.clear();
   $('account-password').hidden=true;
   $('password-dialog').close();$('change-password').reset();
-  $('members-admin').hidden = true;
+  $('project-dialog').close();$('catalog-content').replaceChildren();projectID='';
   $('members-dialog').close();
   $('members-content').replaceChildren();
   selected = ''; cursor = ''; inboxIDs = new Set();
@@ -295,7 +331,7 @@ function showLogin() {
 }
 async function start() {
   viewer = await api('/me');
-  $('members-admin').hidden = !viewer.CanAdmin;
+  $('viewer-name').textContent=viewer.Subject+(viewer.Kind==='agent'?' · Agent':'');
   $('account-password').hidden=viewer.Kind!=='human';
   $('account-password').textContent=viewer.PasswordSet?'修改密码':'设置登录密码';
   const p = await api('/changes');
@@ -307,32 +343,88 @@ async function start() {
   if(viewer.Kind==='human' && !viewer.PasswordSet) openPassword();
 }
 
+let spaceInfo=null, projects=[], projectID='', taskCache=[], inboxMap=new Map(), editingProject=null;
 // ---------- Task list ----------
 async function list() {
-  const [tasks, inbox] = await Promise.all([api('/tasks'), api('/inbox')]);
-  const mine = new Map(inbox.map(x => [x.TaskID, x.NextActor]));
-  inboxIDs = new Set(mine.keys());
-  $('mine-count').hidden = !mine.size;
-  $('mine-count').textContent = mine.size;
-  $('tab-mine').classList.toggle('on', view === 'mine');
-  $('tab-all').classList.toggle('on', view === 'all');
-  const shown = view === 'mine' ? tasks.filter(d => mine.has(d.Task.ID)) : tasks;
-  const nav = $('tasks');
-  nav.replaceChildren();
-  if (!shown.length) nav.append(el('p', view === 'mine' ? '没有等你处理的任务' : '还没有可见任务', 'empty'));
-  for (const d of shown) {
-    const b = h('button', 'task' + (d.Task.ID === selected ? ' selected' : ''),
-      el('strong', d.Task.Title),
-      h('span', 'meta', pill(stateOf(d.Position)), mine.has(d.Task.ID) ? el('span', '等你：' + ACTOR_LABEL[mine.get(d.Task.ID)], 'pill mine') : null));
-    b.type = 'button';
-    b.onclick = handle(async () => { selected = d.Task.ID; await list(); await show() });
-    nav.append(b);
-  }
-  if (selected && !tasks.some(d => d.Task.ID === selected)) {
-    selected = '';
-    $('detail').replaceChildren(h('div', 'panel empty', '任务访问权限已变更'));
-  }
+ const [tasks,inbox,ps,sp]=await Promise.all([api('/tasks'),api('/inbox'),api('/projects'),api('/space')]);
+ taskCache=tasks;projects=ps;spaceInfo=sp;inboxMap=new Map(inbox.map(x=>[x.TaskID,x.NextActor]));inboxIDs=new Set(inboxMap.keys());
+ $('space-name').textContent=sp.Name;$('mine-count').hidden=!inboxMap.size;$('mine-count').textContent=inboxMap.size;
+ for(const name of ['mine','all','projects','space'])$('tab-'+name).classList.toggle('on',view===name);
+ const prev=$('project-filter').value;projectOptions($('project-filter'),true);$('project-filter').value=prev;
+ const createPrev=$('create-project').value;projectOptions($('create-project'),false);$('create-project').value=projectID||createPrev;if(!$('create-project').value)$('create-project').value='';
+ renderBrowse();
+ if(selected&&!tasks.some(d=>d.Task.ID===selected)){selected='';notice('任务访问权限已变更')}
+ $('browse').hidden=!!selected;$('detail-shell').hidden=!selected;
 }
+function projectOptions(select,filter=false,current=''){
+ select.replaceChildren();
+ if(filter){const o=el('option','全部项目');o.value='';select.append(o)}
+ const none=el('option','未归属项目');none.value=filter?'none':'';select.append(none);
+ for(const p of projects.filter(p=>filter||!p.Archived||p.ID===current)){const o=el('option',p.Name+(p.Archived?'（已归档）':''));o.value=p.ID;select.append(o)}
+}
+function counts(id){const ts=taskCache.filter(d=>d.Task.ProjectID===id);const done=ts.filter(d=>d.Position.Status==='completed').length;const cancelled=ts.filter(d=>d.Position.Status==='cancelled').length;return `可见任务 ${ts.length} · 完成 ${done} · 未完成 ${ts.length-done-cancelled} · 取消 ${cancelled}`}
+function renderBrowse(){
+ const root=$('catalog-content');root.replaceChildren();$('task-area').hidden=view==='projects'||view==='space';
+ $('page-title').textContent=({mine:'等我处理',all:'全部任务',projects:'项目',space:'空间设置',project:'项目任务'})[view];
+ $('create-box').hidden=viewer.Kind!=='human';$('project-filter').hidden=view==='project';
+ if(view==='space'){
+  const name=el('input');name.name='Name';name.required=true;name.value=spaceInfo.Name;name.maxLength=200;
+  const description=textarea('Description');description.value=spaceInfo.Description;description.maxLength=20000;
+  name.disabled=description.disabled=!viewer.CanAdmin;
+  const form=h('form',null,field('空间名称',name),field('空间说明',description));
+  if(viewer.CanAdmin){form.append(h('div','actions',el('button','保存空间设置','primary')));form.onsubmit=handle(async()=>{await api('/space','PATCH',{Name:name.value,Description:description.value,ExpectedVersion:spaceInfo.Version});await list();notice('空间设置已保存')})}
+  root.append(form);
+  if(viewer.CanAdmin){const b=button('用户与 Agent',()=>openMembers());b.id='members-admin';root.append(h('div','actions',b))}
+  else root.append(el('p','空间资料由管理员维护。','muted'));
+  return;
+ }
+ if(view==='projects'){
+  if(viewer.Kind==='human')root.append(h('div','actions',button('+ 新建项目',()=>openProject(),'primary')));
+  const archived=el('input');archived.type='checkbox';archived.style.width='auto';archived.checked=showArchived;
+  archived.onchange=()=>{showArchived=archived.checked;renderBrowse()};root.append(field('显示已归档项目',archived));
+  const grid=h('div','project-grid');root.append(grid);
+  for(const p of projects.filter(p=>showArchived||!p.Archived)){
+   const card=button('',async()=>{view='project';projectID=p.ID;selected='';await list() },'project-card');
+   card.append(el('strong',p.Name+(p.Archived?' · 已归档':'')),el('p',p.Description||'尚未填写项目说明','muted small'),el('p','负责人 '+p.Owner,'small'),el('p',counts(p.ID),'small'));grid.append(card)
+  }
+  if(!grid.children.length)grid.append(el('p','还没有项目。你也可以直接在“全部任务”中创建任务。','empty'));
+  return;
+ }
+ if(view==='project'){
+  const p=projects.find(p=>p.ID===projectID);if(!p){view='projects';renderBrowse();return}
+  $('page-title').textContent=p.Name;root.append(el('p',p.Description||'尚未填写项目说明','muted'),el('p','负责人 '+p.Owner+' · '+counts(p.ID),'small'));
+  const actions=h('div','actions',button('← 所有项目',async()=>{view='projects';projectID='';await list()}));root.append(actions);
+  if(viewer.Kind==='human'&&(viewer.CanAdmin||p.Owner===viewer.Subject)){
+   actions.append(button('编辑项目',()=>openProject(p)),button(p.Archived?'恢复项目':'归档项目',()=>confirmThen(p.Archived?'恢复后可以向项目添加任务。继续？':'归档后不能新增或移入任务，已有任务及历史保留。继续？',async()=>{await api('/projects/'+p.ID,'PATCH',{Name:p.Name,Description:p.Description,Owner:p.Owner,Archived:!p.Archived,ExpectedVersion:p.Version});await list()})))
+  }
+  if(p.Archived){root.append(el('p','项目已归档，已有任务仍可处理。','muted'));$('create-box').hidden=true}
+ }
+ renderTasks();
+}
+let showArchived=false;
+function renderTasks(){
+ const search=$('task-search').value.trim().toLowerCase(),filter=$('project-filter').value,status=$('status-filter').value;
+ const shown=taskCache.filter(d=>(view!=='mine'||inboxIDs.has(d.Task.ID))&&(view!=='project'||d.Task.ProjectID===projectID)&&(!filter||view==='project'||(filter==='none'?!d.Task.ProjectID:d.Task.ProjectID===filter))&&(!status||(d.Position.Status==='active'?d.Position.State: d.Position.Status)===status)&&(!search||[d.Task.Title,d.Task.Goal,d.Task.ID].some(x=>(x||'').toLowerCase().includes(search))));
+ const nav=$('tasks');nav.replaceChildren();const board=$('task-layout').value==='board';nav.classList.toggle('board',board);
+ if(!shown.length){nav.append(el('p','没有符合条件的任务','empty'));return}
+ const lanes=new Map();
+ for(const d of shown){
+  const b=button('',async()=>{selected=d.Task.ID;await list();await show()},'task');
+  const project=projects.find(p=>p.ID===d.Task.ProjectID);
+  b.append(el('strong',d.Task.Title),h('span','meta',pill(stateOf(d.Position)),inboxIDs.has(d.Task.ID)?el('span','等你：'+ACTOR_LABEL[inboxMap.get(d.Task.ID)],'pill mine'):null),el('p',(project?.Name||'未归属项目')+' · 负责人 '+d.Task.Owner,'muted small'));
+  if(board){const state=stateOf(d.Position);if(!lanes.has(state.text)){const lane=h('section','lane',el('h3',state.text));lanes.set(state.text,lane);nav.append(lane)}lanes.get(state.text).append(b)}else nav.append(b);
+ }
+}
+async function openProject(p=null){
+ editingProject=p;const people=await api('/project-members');$('project-form').reset();$('project-notice').textContent='';$('project-title').textContent=p?'编辑项目':'新建项目';$('project-name').value=p?.Name||'';$('project-description').value=p?.Description||'';
+ const owner=$('project-owner');owner.replaceChildren();for(const m of people.filter(m=>m.Kind==='human')){const o=el('option',m.Subject);o.value=m.Subject;owner.append(o)}owner.value=p?.Owner||viewer.Subject;
+ $('project-dialog').showModal();
+}
+$('project-close').onclick=()=>$('project-dialog').close();
+$('project-form').onsubmit=handle(async()=>{const p=editingProject;const result=await api(p?'/projects/'+p.ID:'/projects',p?'PATCH':'POST',{Name:$('project-name').value,Description:$('project-description').value,Owner:$('project-owner').value,Archived:p?.Archived||false,ExpectedVersion:p?.Version||0});$('project-dialog').close();projectID=result.ID;view='project';selected='';await list();notice('项目已保存')});
+for(const id of ['task-search','status-filter','project-filter','task-layout'])$(id).addEventListener(id==='task-search'?'input':'change',()=>renderTasks());
+for(const name of ['mine','all','projects','space'])$('tab-'+name).onclick=handle(async()=>{view=name;projectID='';selected='';await list()});
+$('detail-back').onclick=handle(async()=>{selected='';await list()});
 
 // ---------- Task detail ----------
 async function show() {
@@ -350,6 +442,7 @@ async function show() {
   ctx.commits = new Map(commits.map(c => [c.ID, c]));
   $('detail').replaceChildren(
     renderHead(ctx),
+    renderProject(ctx),
     renderNext(ctx),
     h('div', 'cols',
       h('div', null, renderResult(ctx), renderTimeline(ctx, commits)),
@@ -379,6 +472,14 @@ function renderHead({ d }) {
         h('div', 'meta muted small', el('span', '负责人 ' + d.Task.Owner), el('span', '依据 v' + d.Task.BasisVersion), el('span', '任务 v' + d.Task.Version)))));
 }
 
+function renderProject(ctx){
+ const box=h('div','panel');const p=projects.find(p=>p.ID===ctx.d.Task.ProjectID);
+ box.append(el('h3','所属项目'));
+ if(!ctx.d.CanEdit){box.append(el('p',p?.Name||'未归属项目'));return box}
+ const select=el('select');projectOptions(select,false,ctx.d.Task.ProjectID);select.value=ctx.d.Task.ProjectID||'';
+ box.append(field('移动到项目',select),h('div','actions',button('保存项目归属',async()=>{await api(ctx.path+'/project','POST',{ProjectID:select.value,ExpectedVersion:ctx.d.Task.Version});await list();await show()})));
+ return box;
+}
 function renderNext(ctx) {
   const { d, w, active, base } = ctx;
   const panel = h('div', 'panel next' + (inboxIDs.has(d.Task.ID) ? ' mine' : ''));
@@ -712,7 +813,8 @@ async function openMembers(preselect = '') {
   if(active.length) root.append(h('section',null,credentialForm));
   if(preselect) credentialForm.scrollIntoView({block:'center'});
 }
-$('members-admin').onclick=handle(()=>openMembers());
+/* members entry is created in space settings */
+// $('members-admin').onclick=handle(()=>openMembers());
 $('members-close').onclick=()=>{$('members-content').replaceChildren();$('members-dialog').close()};
 $('members-dialog').addEventListener('cancel',()=>{$('members-content').replaceChildren()});
 $('members-dialog').addEventListener('close',()=>{
@@ -760,7 +862,7 @@ $('create').onsubmit = handle(async () => {
   selected = d.Task.ID;
   $('create').reset();
   $('create-box').open = false;
-  view = 'all';
+  if(view!=='project') view = 'all';
   await list();
   await show();
 });
@@ -768,9 +870,9 @@ $('logout').onclick = handle(async () => {
   await api('/session', 'DELETE');
   showLogin();
 });
-$('refresh').onclick = handle(async () => { await start(); if (selected) await show() });
-$('tab-mine').onclick = handle(async () => { view = 'mine'; await list() });
-$('tab-all').onclick = handle(async () => { view = 'all'; await list() });
+$('refresh').onclick = handle(async () => { await list(); if (selected) await show() });
+
+
 
 // Poll the authorized change feed; never overwrite a form the user is editing.
 setInterval(async () => {
@@ -779,8 +881,8 @@ setInterval(async () => {
     const p = await api('/changes?cursor=' + encodeURIComponent(cursor));
     cursor = p.Cursor;
     pendingRefresh = pendingRefresh || p.Changes.length > 0;
-    const editing = document.activeElement?.matches('input,textarea,select');
-    if (pendingRefresh && !editing) {
+    const editing = document.activeElement?.matches('input,textarea,select') || (view==='space') || $('create-box').open;
+    if (pendingRefresh && !editing && !document.querySelector('dialog[open]')) {
       await list();
       if (selected) await show();
       pendingRefresh = false;

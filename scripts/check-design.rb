@@ -89,7 +89,7 @@ def check_graph(graph, label, quiet: false)
     assert(nodes['sql']['use'] == 'storage/sql', "#{label}: invalid storage kind")
     expected << 'storage/sql'
     if nodes.key?('workspace-api')
-      expected += %w[identity/local access/default state/ready task/flow commands/runtime commands/security workspace/tasks api/workspace]
+      expected += %w[identity/local access/default state/ready task/flow commands/runtime commands/security workspace/tasks api/workspace catalog/projects]
       if nodes.key?('execution-commands')
         expected += %w[task/flow flow/directory state/executing state/accepting state/completed query/workflow commands/execution commands/result commands/question commands/flow api/workflow]
       end

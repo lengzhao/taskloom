@@ -45,8 +45,8 @@ M04 提交时为 12 个实例；M05 为 22 个，加入请求输入后为 23 个
 - task/flow：definitions→flow.DefinitionStore（sql）、positions→flow.PositionStore（sql）、state→ready。
 - commands/runtime：6 字段，transactions、requests、identity、authorization、audit、events；同事务生命周期，不分发业务。
 - commands/security：9 字段，分别为 commands、transactions、principals、credentials、passwords、bootstrap、members、audit、events。HTTP 使用 Administration，不获得离线初始化/恢复能力；members 使用 MemberStore 校验所属人和签发对象的有效性。
-- workspace/tasks：10 字段，transactions、tasks、commits、flow、identity、authorization、commands、members、participants、events。它是当前纵向切片编排边界，事实所有权未合并；成员只读与参与写入明确分开。members 使用 MemberDirectory（GetMember + ListActiveMembers + ListMembers），由现有 SQL 联查成员和主体供候选选择，不增加依赖字段或新表；workflow 等其他消费者仍只获得 MemberReader。
-- api/workspace：5 字段，commands、queries、changes 分别指向同一个 workspace 实例，identity 与 security 提供认证和成员命令。
+- workspace/tasks：11 字段，catalog、transactions、tasks、commits、flow、identity、authorization、commands、members、participants、events。它是当前纵向切片编排边界，事实所有权未合并；成员只读与参与写入明确分开。members 使用 MemberDirectory（GetMember + ListActiveMembers + ListMembers），由现有 SQL 联查成员和主体供候选选择，不增加依赖字段或新表；workflow 等其他消费者仍只获得 MemberReader。
+- api/workspace：6 字段，commands、queries、changes 分别指向同一个 workspace 实例，identity 与 security 提供认证和成员命令，catalog 指向空间/项目应用模块。
 
 超过五字段的三处协调实现明确保留：command-runtime 需幂等/身份/权限/审计/事件的原子生命周期，security 需管理/离线能力，workspace 需同事务协调多种事实。不通过合并不相关接口、依赖包或隐藏查找缩小计数；后续执行/验收应使用独立命名模块，不继续扩张 workspace。
 
@@ -72,4 +72,8 @@ workspace 不再自行构造第二个 Runner：配置将 commands 指向现有 c
 
 人工处理复用 workflow 的分配/执行/交付命令；execution.Reader.Assignee 和 Store.AssignSubject 使用中性处理人命名。ResultAccess 只在 Reader 上增加 SaveExecution，供交付事务结束人工执行；其余只读消费者仍使用 Reader。authorization.Relations 增加 IsAssigned 用于人工处理人的有限转交资格；字段数量、配置及插件数量不变。公共 Snapshot 增加 CanAssign/ViewerKind，Assignee 和 NextActor=assignee 同时服务用户与 Agent。
 
-用户/Agent 管理复用 workspace 的只读成员查询和 security 的已有命令：Viewer 返回当前身份及 CanAdmin，Members 仅返回当前租户管理目录（含停用成员）。API/workspace 仍为 5 个 Deps，Security 改为 Administration；workspace 的依赖字段数量不变；安全模块增加 Passwords 依赖，用于密码存储与单租户登录范围发现。原 domain/security 的凭据 DTO 移至 cap/security，所有 CLI/API/测试消费者同步更新，无别名兼容层。
+用户/Agent 管理复用 workspace 的只读成员查询和 security 的已有命令：Viewer 返回当前身份及 CanAdmin，Members 仅返回当前租户管理目录（含停用成员）。API/workspace 当前为 6 个 Deps（含后续新增的 catalog），Security 改为 Administration；workspace 的依赖字段数量不变；安全模块增加 Passwords 依赖，用于密码存储与单租户登录范围发现。原 domain/security 的凭据 DTO 移至 cap/security，所有 CLI/API/测试消费者同步更新，无别名兼容层。
+
+## 工作空间与项目
+
+cap/catalog.Store 由 SQL 实现，catalog/projects 消费；ProjectReader 供 workspace/tasks 校验任务归属，应用 Service 供 api/workspace 调用。catalog 为独立职责模块，5 个依赖。workspace/tasks 为 11 个依赖，新增只读 catalog 仅用于任务创建和移动的同事务校验；项目 CRUD 不放在该模块。api/workspace 为 6 个依赖，新增 catalog 是命名 API 的协议适配，不承载业务校验；保留这一共享浏览器入口与其现有 Cookie/CSRF 生命周期，避免复制认证处理。task.Store 新增显式 SetProject，不增加通用字段更新能力。

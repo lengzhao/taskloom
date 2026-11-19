@@ -50,7 +50,7 @@ func (s *Service) Check(ctx context.Context, p identity.Principal, op, resource 
 		return nil
 	}
 	switch op {
-	case "identity.create", "identity.issue", "identity.revoke", "identity.password", "member.set":
+	case "space.edit", "identity.create", "identity.issue", "identity.revoke", "identity.password", "member.set":
 		if resource == p.Tenant && m.Role == "admin" && p.Kind == "human" {
 			return nil
 		}
@@ -60,7 +60,7 @@ func (s *Service) Check(ctx context.Context, p identity.Principal, op, resource 
 			return nil
 		}
 		return az.ErrForbidden
-	case "task.read", "task.edit", "commit.append", "participant.set", "execution.open", "execution.renew", "execution.end", "execution.assign", "execution.isolate", "result.submit", "result.review", "result.withdraw", "task.cancel", "task.return", "task.reopen":
+	case "task.project", "task.read", "task.edit", "commit.append", "participant.set", "execution.open", "execution.renew", "execution.end", "execution.assign", "execution.isolate", "result.submit", "result.review", "result.withdraw", "task.cancel", "task.return", "task.reopen":
 		t, e := s.d.Tasks.GetTask(ctx, p.Tenant, resource)
 		if errors.Is(e, fault.ErrNotFound) {
 			return az.ErrForbidden

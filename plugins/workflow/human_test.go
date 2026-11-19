@@ -34,12 +34,13 @@ func TestHumanProcessesAndSubmitsWithoutRuntimeProof(t *testing.T) {
 	d := f.create(t)
 	s := f.read(t, d.Task.ID)
 	var e error
-	s, e = f.ex.Assign(f.ctx, f.owner, "assign-human", api.Assignment{Basis: basis(d, s), Subject: "worker"})
+	s, e = f.ex.Assign(f.ctx, f.owner, "assign-human", api.Assignment{TaskID: d.Task.ID, Subject: "worker"})
 	if e != nil {
 		t.Fatal(e)
 	}
+	// Assigning a person starts their manual work; there is no separate claim.
 	s, e = f.query.Read(f.ctx, worker, d.Task.ID)
-	if e != nil || !s.CanOpen || !s.CanAssign || s.CanManage || s.ViewerKind != "human" {
+	if e != nil || s.CanOpen || !s.CanSubmit || !s.CanAssign || s.CanManage || s.ViewerKind != "human" {
 		t.Fatalf("human flags %+v %v", s, e)
 	}
 	items, e := f.query.Inbox(f.ctx, worker)
@@ -49,29 +50,21 @@ func TestHumanProcessesAndSubmitsWithoutRuntimeProof(t *testing.T) {
 	if _, e = f.taskQueries.Candidates(f.ctx, worker, d.Task.ID); e != nil {
 		t.Fatal("human delegate cannot list candidates", e)
 	}
-	s, e = f.ex.Open(f.ctx, worker, "start", api.Open{Basis: basis(d, s)})
-	if e != nil {
-		t.Fatal(e)
-	}
-	if !s.Execution.Manual || !s.Execution.Writable || s.Execution.InstanceID != "" {
+	if !s.Execution.Manual || !s.Execution.Writable || s.Execution.CredentialID != "" || s.Execution.Subject != "worker" {
 		t.Fatal("human requires no runtime", s.Execution)
 	}
-	s, e = f.query.Read(f.ctx, worker, d.Task.ID)
-	if e != nil || s.CanOpen || !s.CanSubmit {
-		t.Fatal("manual actions", s, e)
-	}
-	if _, e = f.ex.Open(f.ctx, worker, "duplicate-start", api.Open{Basis: basis(d, s)}); !errors.Is(e, fault.ErrConflict) {
+	if _, e = f.ex.Open(f.ctx, worker, "duplicate-start", api.Open{TaskID: d.Task.ID, BasisVersion: d.Task.BasisVersion}); !errors.Is(e, fault.ErrConflict) {
 		t.Fatal("duplicate human execution", e)
 	}
 	v := *s.Execution
-	s, e = f.results.Submit(f.ctx, worker, "human-result", api.Submit{Basis: basis(d, s), ExecutionID: v.ID, Body: "人工完成的结果"})
+	s, e = f.results.Submit(f.ctx, worker, "human-result", api.Submit{TaskID: d.Task.ID, ExecutionID: v.ID, Body: "人工完成的结果"})
 	if e != nil {
 		t.Fatal(e)
 	}
 	if s.Review == nil || s.Review.Reviewer != "owner" {
 		t.Fatal("human submission", s)
 	}
-	s, e = f.results.Review(f.ctx, f.owner, "approve", api.Review{Basis: basis(d, s), Verdict: acceptance.Verdict{SubmissionID: s.Submission.ID, CommitID: s.Submission.CommitID, Outcome: "approved"}})
+	s, e = f.results.Review(f.ctx, f.owner, "approve", api.Review{TaskID: d.Task.ID, Verdict: acceptance.Verdict{SubmissionID: s.Submission.ID, CommitID: s.Submission.CommitID, Outcome: "approved"}})
 	if e != nil || s.Position.Status != "completed" {
 		t.Fatal("human completion must not wait on runtime proof", s, e)
 	}
@@ -83,35 +76,34 @@ func TestHumanCanDelegateButOldWorkCannotSubmit(t *testing.T) {
 	other := f.human(t, "other")
 	d := f.create(t)
 	s := f.read(t, d.Task.ID)
-	s, e := f.ex.Assign(f.ctx, f.owner, "assign-human", api.Assignment{Basis: basis(d, s), Subject: "worker"})
+	s, e := f.ex.Assign(f.ctx, f.owner, "assign-human", api.Assignment{TaskID: d.Task.ID, Subject: "worker"})
 	if e != nil {
 		t.Fatal(e)
 	}
 	if e = f.tasks.SetParticipant(f.ctx, f.owner, "other-participant", workspace.Participation{TaskID: d.Task.ID, Subject: "other", Present: true}); e != nil {
 		t.Fatal(e)
 	}
-	if _, e = f.ex.Assign(f.ctx, other, "unauthorized-delegate", api.Assignment{Basis: basis(d, s), Subject: "agent"}); !errors.Is(e, az.ErrForbidden) {
+	if _, e = f.ex.Assign(f.ctx, other, "unauthorized-delegate", api.Assignment{TaskID: d.Task.ID, Subject: "agent"}); !errors.Is(e, az.ErrForbidden) {
 		t.Fatal("participant can delegate", e)
 	}
-	s, e = f.ex.Open(f.ctx, worker, "human-start", api.Open{Basis: basis(d, s)})
-	if e != nil {
-		t.Fatal(e)
-	}
 	old := *s.Execution
-	s, e = f.ex.Assign(f.ctx, worker, "delegate", api.Assignment{Basis: basis(d, s), Subject: "agent"})
+	if !old.Manual || old.Subject != "worker" || !old.Writable {
+		t.Fatal("assignment did not start manual work", old)
+	}
+	s, e = f.ex.Assign(f.ctx, worker, "delegate", api.Assignment{TaskID: d.Task.ID, Subject: "agent"})
 	if e != nil {
 		t.Fatal(e)
 	}
 	if s.Assignee != "agent" || s.Execution.Writable {
 		t.Fatal("delegation not fenced", s)
 	}
-	if _, e = f.results.Submit(f.ctx, worker, "stale-human-result", api.Submit{Basis: basis(d, s), ExecutionID: old.ID, Body: "too late"}); !errors.Is(e, fault.ErrConflict) {
+	if _, e = f.results.Submit(f.ctx, worker, "stale-human-result", api.Submit{TaskID: d.Task.ID, ExecutionID: old.ID, Body: "too late"}); !errors.Is(e, fault.ErrConflict) {
 		t.Fatal("old human submission accepted", e)
 	}
-	if _, e = f.ex.Assign(f.ctx, worker, "steal-back", api.Assignment{Basis: basis(d, s), Subject: "worker"}); !errors.Is(e, az.ErrForbidden) {
+	if _, e = f.ex.Assign(f.ctx, worker, "steal-back", api.Assignment{TaskID: d.Task.ID, Subject: "worker"}); !errors.Is(e, az.ErrForbidden) {
 		t.Fatal("old handler can steal assignment", e)
 	}
-	s, e = f.ex.Open(f.ctx, f.agent, "agent-start", api.Open{Basis: basis(d, s)})
+	s, e = f.ex.Open(f.ctx, f.agent, "agent-start", api.Open{TaskID: d.Task.ID, BasisVersion: d.Task.BasisVersion})
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -120,10 +112,10 @@ func TestHumanCanDelegateButOldWorkCannotSubmit(t *testing.T) {
 	}
 	// Reassigning a running agent fences it at once; nothing waits for it to stop.
 	agentRun := *s.Execution
-	if s, e = f.ex.Assign(f.ctx, f.owner, "reassign", api.Assignment{Basis: basis(d, s), Subject: "worker"}); e != nil || s.Execution.Writable {
+	if s, e = f.ex.Assign(f.ctx, f.owner, "reassign", api.Assignment{TaskID: d.Task.ID, Subject: "worker"}); e != nil || s.Execution.ID == agentRun.ID || !s.Execution.Manual {
 		t.Fatal("reassign over a running agent", e)
 	}
-	if _, e = f.results.Submit(f.ctx, f.agent, "stale-agent-result", api.Submit{Basis: basis(d, s), ExecutionID: agentRun.ID, Body: "too late"}); e == nil {
+	if _, e = f.results.Submit(f.ctx, f.agent, "stale-agent-result", api.Submit{TaskID: d.Task.ID, ExecutionID: agentRun.ID, Body: "too late"}); e == nil {
 		t.Fatal("fenced agent submitted")
 	}
 	d2, e := f.taskQueries.Get(f.ctx, f.owner, d.Task.ID, 0)
@@ -136,15 +128,14 @@ func TestHumanDelegationRevokedWithParticipation(t *testing.T) {
 	f := setup(t, nil)
 	worker := f.human(t, "worker")
 	d := f.create(t)
-	s := f.read(t, d.Task.ID)
-	s, e := f.ex.Assign(f.ctx, f.owner, "assign", api.Assignment{Basis: basis(d, s), Subject: "worker"})
+	_, e := f.ex.Assign(f.ctx, f.owner, "assign", api.Assignment{TaskID: d.Task.ID, Subject: "worker"})
 	if e != nil {
 		t.Fatal(e)
 	}
 	if e = f.tasks.SetParticipant(f.ctx, f.owner, "remove", workspace.Participation{TaskID: d.Task.ID, Subject: "worker", Present: false}); e != nil {
 		t.Fatal(e)
 	}
-	if _, e = f.ex.Assign(f.ctx, worker, "delegate", api.Assignment{Basis: basis(d, s), Subject: "agent"}); !errors.Is(e, az.ErrForbidden) {
+	if _, e = f.ex.Assign(f.ctx, worker, "delegate", api.Assignment{TaskID: d.Task.ID, Subject: "agent"}); !errors.Is(e, az.ErrForbidden) {
 		t.Fatal("removed handler can delegate", e)
 	}
 	// A disabled target is not eligible even if the caller is the administrator.
@@ -154,7 +145,7 @@ func TestHumanDelegationRevokedWithParticipation(t *testing.T) {
 	}); e != nil {
 		t.Fatal(e)
 	}
-	if _, e = f.ex.Assign(f.ctx, f.owner, "inactive", api.Assignment{Basis: basis(d, s), Subject: "worker"}); !errors.Is(e, az.ErrForbidden) {
+	if _, e = f.ex.Assign(f.ctx, f.owner, "inactive", api.Assignment{TaskID: d.Task.ID, Subject: "worker"}); !errors.Is(e, az.ErrForbidden) {
 		t.Fatal("inactive human assigned", e)
 	}
 }

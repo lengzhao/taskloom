@@ -15,7 +15,7 @@ const (
 
 // Question is open until its addressee answers it. It never becomes current
 // again in another round: a question from an older round or an inactive task
-// is obsolete without any write, so Return/Reopen/Cancel need not touch it.
+// is obsolete without any write, so Restart/Cancel need not touch it.
 type Question struct {
 	Tenant, TaskID, ID, RoundID        string
 	CommitID, Asker, Addressee         string

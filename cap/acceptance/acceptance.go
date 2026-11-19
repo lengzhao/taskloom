@@ -1,27 +1,36 @@
+// Package acceptance describes the owner's verdict on a result. A verdict is
+// stored once, as an immutable commit on the task timeline: Kind is
+// KindApproved or KindRejected, Body is the reason, RefID is the result
+// commit and Author is the reviewer. Review is the read view of that commit;
+// a result awaiting acceptance without a verdict is pending, which is derived.
 package acceptance
 
 import "context"
 
-// Review is the owner's recorded verdict on one submission. A submission that
-// needs acceptance and has no review yet is pending; that state is derived,
-// not stored.
-type Review struct {
-	Tenant, TaskID, ID, RoundID, SubmissionID, CommitID, Reviewer, Outcome, Reason string
-	BasisVersion                                                                   int64
-}
-type Reader interface {
-	GetReview(ctx context.Context, tenant, taskID, roundID, submissionID string) (Review, error)
-}
-type Records interface {
-	Reader
-	// SaveReview records a verdict, replacing any earlier one for the same
-	// submission; every verdict is also kept as history.
-	SaveReview(ctx context.Context, value Review) error
-}
-type Verdict struct{ SubmissionID, CommitID, Outcome, Reason string }
-
 const (
+	KindApproved = "review.approved"
+	KindRejected = "review.rejected"
+
 	OutcomePending  = "pending"
 	OutcomeApproved = "approved"
 	OutcomeRejected = "rejected"
 )
+
+type Review struct {
+	Tenant, TaskID, ID, RoundID, SubmissionID, CommitID, Reviewer, Outcome, Reason string
+	BasisVersion                                                                   int64
+}
+
+// Reader finds the latest verdict commit referring to a result commit.
+type Reader interface {
+	LatestReview(ctx context.Context, tenant, taskID, resultCommitID string) (Review, error)
+}
+type Verdict struct{ SubmissionID, CommitID, Outcome, Reason string }
+
+// Kind returns the commit kind recording an outcome.
+func Kind(outcome string) string {
+	if outcome == OutcomeApproved {
+		return KindApproved
+	}
+	return KindRejected
+}

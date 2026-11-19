@@ -7,11 +7,11 @@ import (
 )
 
 type Commit struct {
-	Tenant, TaskID, ID, Author, OwnerID, InstanceID, Incarnation string
-	Kind, Body, RefID                                            string
-	BasisVersion                                                 int64
-	CreatedAt                                                    time.Time
-	Sequence                                                     int64
+	Tenant, TaskID, ID, Author, OwnerID string
+	Kind, Body, RefID                   string
+	BasisVersion                        int64
+	CreatedAt                           time.Time
+	Sequence                            int64
 }
 
 // Append is internal: named domain commands authorize and validate kind/refs.

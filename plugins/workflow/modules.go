@@ -3,7 +3,6 @@ package workflow
 import (
 	"context"
 	"github.com/lengzhao/pluginkit"
-	"github.com/lengzhao/taskloom/cap/acceptance"
 	az "github.com/lengzhao/taskloom/cap/authorization"
 	"github.com/lengzhao/taskloom/cap/command"
 	"github.com/lengzhao/taskloom/cap/commit"
@@ -35,7 +34,6 @@ type ResultDeps struct {
 	Executions execution.ResultAccess `json:"executions"`
 	Results    delivery.Store         `json:"results"`
 	Commits    commit.Log             `json:"commits"`
-	Reviews    acceptance.Records     `json:"reviews"`
 	Snapshots  api.FactsReader        `json:"snapshots"`
 	Events     record.EventWriter     `json:"events"`
 }
@@ -63,10 +61,10 @@ func NewExecution(_ struct{}, d ExecutionDeps) (*ExecutionModule, error) {
 	return &ExecutionModule{&Service{dependencies{Commands: d.Commands, Tasks: d.Tasks, Flow: d.Flow, Executions: d.Executions, ExecutionWrites: d.Executions, Principals: d.Principals, Members: d.Members, Participants: d.Participants, Snapshots: d.Snapshots, Events: d.Events}}}, nil
 }
 func NewResults(_ struct{}, d ResultDeps) (*ResultModule, error) {
-	if d.Commands == nil || d.Tasks == nil || d.Flow == nil || d.Executions == nil || d.Results == nil || d.Commits == nil || d.Reviews == nil || d.Snapshots == nil || d.Events == nil {
+	if d.Commands == nil || d.Tasks == nil || d.Flow == nil || d.Executions == nil || d.Results == nil || d.Commits == nil || d.Snapshots == nil || d.Events == nil {
 		return nil, fault.ErrInput
 	}
-	return &ResultModule{&Service{d: dependencies{Commands: d.Commands, Tasks: d.Tasks, Flow: d.Flow, Executions: d.Executions, ResultExecutions: d.Executions, Results: d.Results, Commits: d.Commits, Reviews: d.Reviews, Snapshots: d.Snapshots, Events: d.Events}}}, nil
+	return &ResultModule{&Service{d: dependencies{Commands: d.Commands, Tasks: d.Tasks, Flow: d.Flow, Executions: d.Executions, ResultExecutions: d.Executions, Results: d.Results, Commits: d.Commits, Snapshots: d.Snapshots, Events: d.Events}}}, nil
 }
 func NewControl(_ struct{}, d ControlDeps) (*ControlModule, error) {
 	if d.Commands == nil || d.Tasks == nil || d.Flow == nil || d.Executions == nil || d.Snapshots == nil || d.Events == nil {
@@ -91,20 +89,12 @@ func (m *ResultModule) Review(ctx context.Context, token, key string, in api.Rev
 	return m.s.Review(ctx, token, key, in)
 }
 
-func (m *ResultModule) Withdraw(ctx context.Context, token, key string, in api.Withdraw) (api.Snapshot, error) {
-	return m.s.Withdraw(ctx, token, key, in)
-}
-
-func (m *ControlModule) Cancel(ctx context.Context, token, key string, in api.Basis) (api.Snapshot, error) {
+func (m *ControlModule) Cancel(ctx context.Context, token, key string, in api.Cancel) (api.Snapshot, error) {
 	return m.s.Cancel(ctx, token, key, in)
 }
 
-func (m *ControlModule) Return(ctx context.Context, token, key string, in api.Basis) (api.Snapshot, error) {
-	return m.s.Return(ctx, token, key, in)
-}
-
-func (m *ControlModule) Reopen(ctx context.Context, token, key string, in api.Basis) (api.Snapshot, error) {
-	return m.s.Reopen(ctx, token, key, in)
+func (m *ControlModule) Restart(ctx context.Context, token, key string, in api.Restart) (api.Snapshot, error) {
+	return m.s.Restart(ctx, token, key, in)
 }
 
 func (m *ExecutionModule) Assign(ctx context.Context, token, key string, in api.Assignment) (api.Snapshot, error) {

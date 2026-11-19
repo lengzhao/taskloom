@@ -24,7 +24,7 @@ func TestSnapshotExplainsBlockedActionsAndNextActor(t *testing.T) {
 	if s.NextActor != api.ActorOwner || s.Blocked != nil {
 		t.Fatal("unassigned task should wait on owner without agent hints", s.NextActor, s.Blocked)
 	}
-	s, e := f.ex.Assign(f.ctx, f.owner, "assign", api.Assignment{Basis: basis(d, s), Subject: "agent"})
+	s, e := f.ex.Assign(f.ctx, f.owner, "assign", api.Assignment{TaskID: d.Task.ID, Subject: "agent"})
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -34,7 +34,7 @@ func TestSnapshotExplainsBlockedActionsAndNextActor(t *testing.T) {
 	if a := asAgent(); !a.CanOpen || a.Blocked != nil {
 		t.Fatal("assigned agent can open", a.Blocked)
 	}
-	if _, e = f.ex.Open(f.ctx, f.agent, "open", api.Open{Basis: basis(d, s)}); e != nil {
+	if _, e = f.ex.Open(f.ctx, f.agent, "open", api.Open{TaskID: d.Task.ID, BasisVersion: d.Task.BasisVersion}); e != nil {
 		t.Fatal(e)
 	}
 	a := asAgent()
@@ -42,7 +42,7 @@ func TestSnapshotExplainsBlockedActionsAndNextActor(t *testing.T) {
 		t.Fatal("running execution", a.CanSubmit, a.Blocked, a.NextActor)
 	}
 	v := *a.Execution
-	if _, e = f.results.Submit(f.ctx, f.agent, "submit", api.Submit{Basis: basis(d, a), ExecutionID: v.ID, Body: "done"}); e != nil {
+	if _, e = f.results.Submit(f.ctx, f.agent, "submit", api.Submit{TaskID: d.Task.ID, ExecutionID: v.ID, Body: "done"}); e != nil {
 		t.Fatal(e)
 	}
 	if s = f.read(t, d.Task.ID); !s.CanReview || s.NextActor != api.ActorReviewer || s.Blocked != nil {
@@ -51,7 +51,7 @@ func TestSnapshotExplainsBlockedActionsAndNextActor(t *testing.T) {
 	if a = asAgent(); a.CanReview || a.Blocked[api.ActionReview] != api.ReasonNotReviewer {
 		t.Fatal("agent cannot review", a.Blocked)
 	}
-	if s, e = f.controls.Cancel(f.ctx, f.owner, "cancel", basis(d, s)); e != nil {
+	if s, e = f.controls.Cancel(f.ctx, f.owner, "cancel", api.Cancel{TaskID: d.Task.ID}); e != nil {
 		t.Fatal(e)
 	}
 	// The run is fenced and nothing waits on anyone.
@@ -93,7 +93,7 @@ func TestInboxListsOnlyTasksWaitingOnCaller(t *testing.T) {
 		t.Fatal("agent sees only its running task", got)
 	}
 	v := s.Execution
-	if s, e = f.results.Submit(f.ctx, f.agent, "submit", api.Submit{Basis: basis(d, s), ExecutionID: v.ID, Body: "done"}); e != nil {
+	if s, e = f.results.Submit(f.ctx, f.agent, "submit", api.Submit{TaskID: d.Task.ID, ExecutionID: v.ID, Body: "done"}); e != nil {
 		t.Fatal(e)
 	}
 	if got := inbox(f.owner); got[d.Task.ID] != api.ActorReviewer {
@@ -103,7 +103,7 @@ func TestInboxListsOnlyTasksWaitingOnCaller(t *testing.T) {
 		t.Fatal("agent waits while review is pending", got)
 	}
 	s = f.read(t, d.Task.ID)
-	if _, e = f.controls.Cancel(f.ctx, f.owner, "cancel", basis(d, s)); e != nil {
+	if _, e = f.controls.Cancel(f.ctx, f.owner, "cancel", api.Cancel{TaskID: d.Task.ID}); e != nil {
 		t.Fatal(e)
 	}
 	if got := inbox(f.agent); len(got) != 0 {
@@ -119,13 +119,13 @@ func TestRejectionRequiresReason(t *testing.T) {
 	d := f.create(t)
 	s := f.open(t, d)
 	v := s.Execution
-	s, e := f.results.Submit(f.ctx, f.agent, "submit", api.Submit{Basis: basis(d, s), ExecutionID: v.ID, Body: "done"})
+	s, e := f.results.Submit(f.ctx, f.agent, "submit", api.Submit{TaskID: d.Task.ID, ExecutionID: v.ID, Body: "done"})
 	if e != nil {
 		t.Fatal(e)
 	}
 	verdict := func(key, reason string) error {
 		s = f.read(t, d.Task.ID)
-		in := api.Review{Basis: basis(d, s)}
+		in := api.Review{TaskID: d.Task.ID}
 		in.SubmissionID, in.CommitID, in.Outcome, in.Reason = s.Submission.ID, s.Submission.CommitID, "rejected", reason
 		_, e := f.results.Review(f.ctx, f.owner, key, in)
 		return e
@@ -149,11 +149,11 @@ func TestApprovedTaskLeavesTheAgentInbox(t *testing.T) {
 	d := f.create(t)
 	s := f.open(t, d)
 	v := s.Execution
-	s, e := f.results.Submit(f.ctx, f.agent, "submit", api.Submit{Basis: basis(d, s), ExecutionID: v.ID, Body: "done"})
+	s, e := f.results.Submit(f.ctx, f.agent, "submit", api.Submit{TaskID: d.Task.ID, ExecutionID: v.ID, Body: "done"})
 	if e != nil {
 		t.Fatal(e)
 	}
-	if _, e = f.results.Review(f.ctx, f.owner, "approve", api.Review{Basis: basis(d, s), Verdict: acceptance.Verdict{SubmissionID: s.Submission.ID, CommitID: s.Submission.CommitID, Outcome: "approved"}}); e != nil {
+	if _, e = f.results.Review(f.ctx, f.owner, "approve", api.Review{TaskID: d.Task.ID, Verdict: acceptance.Verdict{SubmissionID: s.Submission.ID, CommitID: s.Submission.CommitID, Outcome: "approved"}}); e != nil {
 		t.Fatal(e)
 	}
 	if s = f.read(t, d.Task.ID); s.Position.Status != "completed" || s.NextActor != "" {

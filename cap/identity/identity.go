@@ -10,12 +10,13 @@ import (
 var ErrUnauthenticated = errors.New("invalid or expired credential")
 
 type Principal struct {
-	Tenant      string
-	ID          string
-	Kind        string // human or agent
-	OwnerID     string // attribution only, never inherited permissions
-	InstanceID  string
-	Incarnation string
+	Tenant  string
+	ID      string
+	Kind    string // human or agent
+	OwnerID string // attribution only, never inherited permissions
+	// CredentialID is set by authentication: the credential this request used.
+	// It is the only verifiable identity of a running Agent instance.
+	CredentialID string
 }
 type Credential struct {
 	ID        string

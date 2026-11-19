@@ -3,17 +3,14 @@ package workspace
 
 import (
 	"context"
-	"crypto/hmac"
 	"crypto/rand"
-	"crypto/sha256"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/lengzhao/taskloom/cap/catalog"
 	capcommand "github.com/lengzhao/taskloom/cap/command"
+	"strconv"
 	"strings"
-	"time"
 
 	"github.com/lengzhao/pluginkit"
 	az "github.com/lengzhao/taskloom/cap/authorization"
@@ -45,8 +42,7 @@ type Deps struct {
 	Progress execution.Progress `json:"progress"`
 }
 type Service struct {
-	d      Deps
-	secret []byte
+	d Deps
 }
 
 func init() {
@@ -59,11 +55,7 @@ func New(d Deps) (*Service, error) {
 	if d.Commands == nil {
 		return nil, errors.New("command lifecycle required")
 	}
-	secret := make([]byte, 32)
-	if _, e := rand.Read(secret); e != nil {
-		return nil, e
-	}
-	return &Service{d: d, secret: secret}, nil
+	return &Service{d: d}, nil
 }
 func id() string {
 	var b [16]byte
@@ -80,14 +72,14 @@ func (s *Service) allowed(ctx context.Context, p identity.Principal, action, id 
 	return s.d.Authorization.Check(ctx, p, action, id) == nil
 }
 func (s *Service) append(ctx context.Context, p identity.Principal, t task.Task, kind, body, ref string) (commit.Commit, error) {
-	c := commit.Commit{Tenant: p.Tenant, TaskID: t.ID, ID: id(), Author: p.ID, OwnerID: p.OwnerID, InstanceID: p.InstanceID, Incarnation: p.Incarnation, Kind: kind, Body: body, RefID: ref, BasisVersion: t.BasisVersion}
+	c := commit.Commit{Tenant: p.Tenant, TaskID: t.ID, ID: id(), Author: p.ID, OwnerID: p.OwnerID, Kind: kind, Body: body, RefID: ref, BasisVersion: t.BasisVersion}
 	if e := s.d.Commits.Append(ctx, c); e != nil {
 		return c, e
 	}
 	return s.d.Commits.Get(ctx, p.Tenant, t.ID, c.ID)
 }
 func (s *Service) event(ctx context.Context, t task.Task) error {
-	return s.d.Events.AppendEvent(ctx, record.Event{Tenant: t.Tenant, Resource: t.ID, Kind: "task.changed"})
+	return s.d.Events.AppendEvent(ctx, record.Event{Tenant: t.Tenant, Resource: t.ID, Kind: record.EventTaskChanged})
 }
 func (s *Service) Create(ctx context.Context, token, key string, in api.Create) (api.Detail, error) {
 	var out api.Detail
@@ -102,7 +94,7 @@ func (s *Service) Create(ctx context.Context, token, key string, in api.Create) 
 		if e := s.projectOpen(tx, p.Tenant, in.ProjectID); e != nil {
 			return nil, e
 		}
-		t := task.Task{ProjectID: in.ProjectID, Tenant: p.Tenant, ID: id(), Title: in.Title, Goal: in.Goal, Criteria: in.Criteria, Owner: p.ID, Version: 1, BasisVersion: 1}
+		t := task.Task{ProjectID: in.ProjectID, Tenant: p.Tenant, ID: id(), Title: in.Title, Goal: in.Goal, Criteria: in.Criteria, Owner: p.ID, BasisVersion: 1}
 		if e := s.d.Tasks.CreateTask(tx, t); e != nil {
 			return nil, e
 		}
@@ -133,16 +125,20 @@ func (s *Service) Edit(ctx context.Context, token, key string, in api.Edit) (api
 		if e != nil {
 			return nil, e
 		}
-		if t.Version != in.ExpectedVersion {
+		if t.BasisVersion != in.BasisVersion {
 			return nil, fault.ErrConflict
 		}
 		if !valid(in.Title, in.Goal, in.Criteria) {
 			return nil, fault.ErrInput
 		}
-		if e = s.d.Flow.CheckEdit(tx, t); e != nil {
+		// The basis may change at any time on an active task: a claim or result
+		// made on the old basis can no longer submit or complete.
+		if pos, e := s.d.Flow.Read(tx, t); e != nil {
 			return nil, e
+		} else if pos.Status != flow.PhaseActive {
+			return nil, fault.ErrConflict
 		}
-		t, e = s.d.Tasks.UpdateBasis(tx, task.BasisChange{Tenant: p.Tenant, TaskID: in.TaskID, Title: in.Title, Goal: in.Goal, Criteria: in.Criteria, ExpectedVersion: in.ExpectedVersion})
+		t, e = s.d.Tasks.UpdateBasis(tx, task.BasisChange{Tenant: p.Tenant, TaskID: in.TaskID, Title: in.Title, Goal: in.Goal, Criteria: in.Criteria})
 		if e != nil {
 			return nil, e
 		}
@@ -261,85 +257,49 @@ func (s *Service) List(ctx context.Context, token string) ([]api.Detail, error) 
 	return out, e
 }
 
-type cursor struct {
-	Tenant, Subject string
-	Sequence        int64
-	Expires         int64
-}
-
-func (s *Service) encode(c cursor) string {
-	b, _ := json.Marshal(c)
-	h := hmac.New(sha256.New, s.secret)
-	h.Write(b)
-	return base64.RawURLEncoding.EncodeToString(b) + "." + base64.RawURLEncoding.EncodeToString(h.Sum(nil))
-}
-func (s *Service) decode(raw string) (cursor, error) {
-	var c cursor
-	a, b, ok := strings.Cut(raw, ".")
-	if !ok {
-		return c, fault.ErrInput
-	}
-	data, e := base64.RawURLEncoding.DecodeString(a)
-	if e != nil {
-		return c, fault.ErrInput
-	}
-	sig, e := base64.RawURLEncoding.DecodeString(b)
-	if e != nil {
-		return c, fault.ErrInput
-	}
-	h := hmac.New(sha256.New, s.secret)
-	h.Write(data)
-	if !hmac.Equal(sig, h.Sum(nil)) {
-		return c, fault.ErrInput
-	}
-	e = json.Unmarshal(data, &c)
-	if e != nil || c.Expires < time.Now().Unix() {
-		return c, fault.ErrInput
-	}
-	return c, nil
-}
+// Changes reads the change feed after a cursor. The cursor is the plain event
+// sequence: every event is re-authorized for the caller when read, so a cursor
+// grants nothing and needs no signature or expiry. An empty cursor returns the
+// current position without replaying history.
 func (s *Service) Changes(ctx context.Context, token, raw string) (api.Page, error) {
 	out := api.Page{Changes: []api.Change{}}
+	start := raw == ""
+	var after int64
+	if !start {
+		n, e := strconv.ParseInt(raw, 10, 64)
+		if e != nil || n < 0 {
+			return out, fault.ErrInput
+		}
+		after = n
+	}
 	e := s.d.Transactions.Do(ctx, func(tx context.Context) error {
 		p, e := s.actor(tx, token)
 		if e != nil {
 			return e
 		}
-		c := cursor{Tenant: p.Tenant, Subject: p.ID, Expires: time.Now().Add(time.Hour).Unix()}
-		start := raw == ""
-		if !start {
-			c, e = s.decode(raw)
-			if e != nil {
-				return e
-			}
-			if c.Tenant != p.Tenant || c.Subject != p.ID {
-				return az.ErrForbidden
-			}
-		}
 		for {
-			es, e := s.d.Events.ReadEvents(tx, p.Tenant, c.Sequence, 100)
+			es, e := s.d.Events.ReadEvents(tx, p.Tenant, after, 100)
 			if e != nil {
 				return e
 			}
 			for _, event := range es {
-				c.Sequence = event.Sequence
-				if !start && event.Kind == "task.changed" && s.allowed(tx, p, "task.read", event.Resource) {
+				after = event.Sequence
+				if !start && event.Kind == record.EventTaskChanged && s.allowed(tx, p, "task.read", event.Resource) {
 					out.Changes = append(out.Changes, api.Change{TaskID: event.Resource, Kind: event.Kind})
 				}
-				if !start && (event.Kind == "member.set" || event.Kind == "participant.set" || event.Kind == "space.edit" || event.Kind == "project.create" || event.Kind == "project.edit") {
-					out.Changes = append(out.Changes, api.Change{Kind: "access.changed"})
+				if !start && event.Kind == record.EventAccessChanged {
+					out.Changes = append(out.Changes, api.Change{Kind: event.Kind})
 				}
 			}
 			if !start || len(es) < 100 {
 				break
 			}
 		}
-		out.Cursor = s.encode(c)
+		out.Cursor = strconv.FormatInt(after, 10)
 		return nil
 	})
 	return out, e
 }
-
 func (s *Service) actor(ctx context.Context, token string) (identity.Principal, error) {
 	p, e := s.d.Identity.Authenticate(ctx, token)
 	if e != nil {
@@ -366,7 +326,8 @@ func (s *Service) SetParticipant(ctx context.Context, token, key string, in api.
 		if e = s.d.Participants.SetParticipant(tx, az.Participant{Tenant: p.Tenant, TaskID: t.ID, Subject: in.Subject}, in.Present); e != nil {
 			return nil, e
 		}
-		return nil, s.event(tx, t)
+		// Participation changes who may read the task, so every viewer refreshes access.
+		return nil, s.d.Events.AppendEvent(tx, record.Event{Tenant: t.Tenant, Resource: t.ID, Kind: record.EventAccessChanged})
 	})
 	return e
 }
@@ -438,7 +399,7 @@ func (s *Service) SetProject(ctx context.Context, token, key string, in api.Proj
 		if e := s.projectOpen(tx, p.Tenant, in.ProjectID); e != nil {
 			return nil, e
 		}
-		t, e := s.d.Tasks.SetProject(tx, p.Tenant, in.TaskID, in.ProjectID, in.ExpectedVersion)
+		t, e := s.d.Tasks.SetProject(tx, p.Tenant, in.TaskID, in.ProjectID)
 		if e != nil {
 			return nil, e
 		}

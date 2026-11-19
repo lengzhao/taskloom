@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/lengzhao/taskloom/cap/acceptance"
+	"github.com/lengzhao/taskloom/cap/commit"
 	"github.com/lengzhao/taskloom/cap/delivery"
 	"github.com/lengzhao/taskloom/cap/fault"
 	capflow "github.com/lengzhao/taskloom/cap/flow"
@@ -50,7 +51,7 @@ func expect(t *testing.T, p capflow.Position, e error, status capflow.Phase, ste
 func TestStepIsDerivedFromFacts(t *testing.T) {
 	s := open(t)
 	c := controller(t, s, "")
-	tk := task.Task{Tenant: "t", ID: "a", Owner: "u", Version: 1, BasisVersion: 1}
+	tk := task.Task{Tenant: "t", ID: "a", Owner: "u", BasisVersion: 1}
 	e := s.Do(context.Background(), func(ctx context.Context) error {
 		if e := s.CreateTask(ctx, tk); e != nil {
 			return e
@@ -63,15 +64,15 @@ func TestStepIsDerivedFromFacts(t *testing.T) {
 		tk.Goal, tk.Criteria = "g", "c"
 		p, e = c.Refresh(ctx, tk)
 		expect(t, p, e, capflow.PhaseActive, capflow.StepExecuting, "等待有效结果提交")
+		if e = s.Append(ctx, commit.Commit{Tenant: "t", TaskID: "a", ID: "c1", Kind: "result", Body: "r", Author: "x", BasisVersion: 1}); e != nil {
+			return e
+		}
 		sub := delivery.Submission{Tenant: "t", TaskID: "a", ID: "s1", RoundID: p.RoundID, CommitID: "c1", BasisVersion: 1}
 		if e = s.RegisterSubmission(ctx, sub); e != nil {
 			return e
 		}
 		p, e = c.Refresh(ctx, tk)
 		expect(t, p, e, capflow.PhaseActive, capflow.StepAccepting, "等待负责人验收")
-		if e = c.CheckEdit(ctx, tk); !errors.Is(e, fault.ErrConflict) {
-			t.Fatal("basis edit allowed under review", e)
-		}
 		stale := tk
 		stale.BasisVersion = 2
 		p, e = c.Read(ctx, stale)
@@ -79,8 +80,8 @@ func TestStepIsDerivedFromFacts(t *testing.T) {
 		if e = s.CreateQuestion(ctx, question.Question{Tenant: "t", TaskID: "a", ID: "q", RoundID: p.RoundID, Asker: "x", Addressee: "u", Status: question.StatusOpen}); e != nil {
 			return e
 		}
-		review := acceptance.Review{Tenant: "t", TaskID: "a", ID: "r", RoundID: p.RoundID, SubmissionID: "s1", CommitID: "c1", Reviewer: "u", Outcome: acceptance.OutcomeApproved, BasisVersion: 1}
-		if e = s.SaveReview(ctx, review); e != nil {
+		// A verdict is a commit referring to the result.
+		if e = s.Append(ctx, commit.Commit{Tenant: "t", TaskID: "a", ID: "v", Kind: acceptance.KindApproved, RefID: "c1", Author: "u", BasisVersion: 1}); e != nil {
 			return e
 		}
 		p, e = c.Refresh(ctx, tk)
@@ -93,13 +94,9 @@ func TestStepIsDerivedFromFacts(t *testing.T) {
 		if e = s.AnswerQuestion(ctx, q); e != nil {
 			return e
 		}
-		before := p.Revision
 		p, e = c.Refresh(ctx, tk)
 		expect(t, p, e, capflow.PhaseCompleted, capflow.StepCompleted, "")
-		if p.Revision != before+1 {
-			t.Fatal("completion did not advance the revision", p.Revision)
-		}
-		p, e = c.Reopen(ctx, tk)
+		p, e = c.Restart(ctx, tk)
 		expect(t, p, e, capflow.PhaseActive, capflow.StepExecuting, "等待有效结果提交")
 		return nil
 	})
@@ -113,7 +110,7 @@ func TestStepIsDerivedFromFacts(t *testing.T) {
 func TestAcceptanceIsFixedPerTask(t *testing.T) {
 	s := open(t)
 	manual, none := controller(t, s, capflow.AcceptanceManual), controller(t, s, capflow.AcceptanceNone)
-	tk := task.Task{Tenant: "t", ID: "a", Owner: "u", Goal: "g", Criteria: "c", Version: 1, BasisVersion: 1}
+	tk := task.Task{Tenant: "t", ID: "a", Owner: "u", Goal: "g", Criteria: "c", BasisVersion: 1}
 	e := s.Do(context.Background(), func(ctx context.Context) error {
 		if e := s.CreateTask(ctx, tk); e != nil {
 			return e
@@ -128,10 +125,10 @@ func TestAcceptanceIsFixedPerTask(t *testing.T) {
 		// The deployment switched to no acceptance; this task still waits for review.
 		p, e = none.Refresh(ctx, tk)
 		expect(t, p, e, capflow.PhaseActive, capflow.StepAccepting, "等待负责人验收")
-		if e = s.CreateTask(ctx, task.Task{Tenant: "t", ID: "old", Version: 1}); e != nil {
+		if e = s.CreateTask(ctx, task.Task{Tenant: "t", ID: "old"}); e != nil {
 			return e
 		}
-		if e = s.CreatePosition(ctx, capflow.Position{Revision: 1, Status: capflow.PhaseActive, Tenant: "t", TaskID: "old", RoundID: "r"}); e != nil {
+		if e = s.CreatePosition(ctx, capflow.Position{Status: capflow.PhaseActive, Tenant: "t", TaskID: "old", RoundID: "r"}); e != nil {
 			return e
 		}
 		if _, e = none.Read(ctx, task.Task{Tenant: "t", ID: "old"}); !errors.Is(e, fault.ErrConflict) {

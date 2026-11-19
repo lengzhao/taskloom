@@ -45,12 +45,12 @@ func TestOpenQuestionWaitsOnOwnerAndHoldsCompletion(t *testing.T) {
 
 	// The agent keeps working: submit and approve. Completion still waits for the answer.
 	s = f.read(t, d.Task.ID)
-	s, e = f.results.Submit(f.ctx, f.agent, "submit", api.Submit{Basis: basis(d, s), ExecutionID: s.Execution.ID, Body: "result"})
+	s, e = f.results.Submit(f.ctx, f.agent, "submit", api.Submit{TaskID: d.Task.ID, ExecutionID: s.Execution.ID, Body: "result"})
 	if e != nil {
 		t.Fatal(e)
 	}
 	sub := *s.Submission
-	if s, e = f.results.Review(f.ctx, f.owner, "approve", api.Review{Basis: basis(d, s), Verdict: acceptance.Verdict{SubmissionID: sub.ID, CommitID: sub.CommitID, Outcome: "approved"}}); e != nil {
+	if s, e = f.results.Review(f.ctx, f.owner, "approve", api.Review{TaskID: d.Task.ID, Verdict: acceptance.Verdict{SubmissionID: sub.ID, CommitID: sub.CommitID, Outcome: "approved"}}); e != nil {
 		t.Fatal(e)
 	}
 	s = f.read(t, d.Task.ID)
@@ -86,7 +86,7 @@ func TestQuestionFromOldRoundIsObsolete(t *testing.T) {
 		t.Fatal(e)
 	}
 	q := s.Questions[0]
-	s, e = f.controls.Cancel(f.ctx, f.owner, "cancel", basis(d, s))
+	s, e = f.controls.Cancel(f.ctx, f.owner, "cancel", api.Cancel{TaskID: d.Task.ID})
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -97,7 +97,7 @@ func TestQuestionFromOldRoundIsObsolete(t *testing.T) {
 		t.Fatal("answered question of inactive task", e)
 	}
 	s = f.read(t, d.Task.ID)
-	if s, e = f.controls.Reopen(f.ctx, f.owner, "reopen", basis(d, s)); e != nil {
+	if s, e = f.controls.Restart(f.ctx, f.owner, "reopen", api.Restart{TaskID: d.Task.ID, RoundID: s.Position.RoundID}); e != nil {
 		t.Fatal(e)
 	}
 	if len(s.Questions) != 0 || s.Position.RoundID == q.RoundID {
@@ -148,11 +148,11 @@ func TestQuestionToParticipantWaitsOnThem(t *testing.T) {
 		t.Fatal("owner answered a question asked of the helper", e)
 	}
 	s = f.read(t, d.Task.ID)
-	s, e = f.results.Submit(f.ctx, f.agent, "submit", api.Submit{Basis: basis(d, s), ExecutionID: s.Execution.ID, Body: "result"})
+	s, e = f.results.Submit(f.ctx, f.agent, "submit", api.Submit{TaskID: d.Task.ID, ExecutionID: s.Execution.ID, Body: "result"})
 	if e != nil {
 		t.Fatal(e)
 	}
-	if s, e = f.results.Review(f.ctx, f.owner, "approve", api.Review{Basis: basis(d, s), Verdict: acceptance.Verdict{SubmissionID: s.Submission.ID, CommitID: s.Submission.CommitID, Outcome: "approved"}}); e != nil || s.Position.Status == "completed" {
+	if s, e = f.results.Review(f.ctx, f.owner, "approve", api.Review{TaskID: d.Task.ID, Verdict: acceptance.Verdict{SubmissionID: s.Submission.ID, CommitID: s.Submission.CommitID, Outcome: "approved"}}); e != nil || s.Position.Status == "completed" {
 		t.Fatal("completed before the helper answered", e, s.Position)
 	}
 	if s, e = qs.Answer(f.ctx, helper, "helper-answer", api.Answer{TaskID: d.Task.ID, QuestionID: q.ID, Body: "用 Bearer 令牌"}); e != nil || s.Position.Status != "completed" {

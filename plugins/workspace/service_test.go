@@ -46,7 +46,7 @@ func fixtureWithStore(t *testing.T) (*workspace.Service, *security.Service, stri
 	t.Cleanup(func() { s.Close(context.Background()) })
 	id, _ := local.New(local.Deps{Store: s})
 	az, _ := access.New(access.Deps{Store: s, Tasks: s})
-	r, _ := command.New(command.Deps{Transactions: s, Identity: id, Authorization: az, Requests: s, Audit: s, Events: s})
+	r, _ := command.New(command.Deps{Transactions: s, Identity: id, Authorization: az, Requests: s, Audit: s})
 	sec := security.New(security.Deps{Passwords: s, Commands: r, Transactions: s, Principals: s, Credentials: s, Bootstrap: s, Members: s, Audit: s, Events: s})
 	issued, e := sec.Bootstrap(context.Background(), security.BootstrapInput{Tenant: "t", Subject: "u", Operator: "test", Reason: "test", ExpiresAt: time.Now().Add(time.Hour)})
 	if e != nil {
@@ -91,14 +91,14 @@ func TestCreateReadCommitEditAndRevoke(t *testing.T) {
 		t.Fatal(e)
 	}
 	got, e := s.Get(ctx, token, d.Task.ID, 0)
-	if e != nil || len(got.Commits) != 3 || got.Task.Version != 1 {
+	if e != nil || len(got.Commits) != 3 || got.Task.BasisVersion != 1 {
 		t.Fatalf("get %+v %v", got, e)
 	}
-	edited, e := s.Edit(ctx, token, "edit", api.Edit{TaskID: d.Task.ID, Title: "目标", Goal: "交付", Criteria: "通过", ExpectedVersion: 1})
+	edited, e := s.Edit(ctx, token, "edit", api.Edit{TaskID: d.Task.ID, Title: "目标", Goal: "交付", Criteria: "通过", BasisVersion: 1})
 	if e != nil || edited.Task.BasisVersion != 2 || edited.Position.RoundID != d.Position.RoundID {
 		t.Fatal("edit", e)
 	}
-	if _, e = s.Edit(ctx, token, "stale", api.Edit{TaskID: d.Task.ID, Title: "stale", ExpectedVersion: 1}); !errors.Is(e, fault.ErrConflict) {
+	if _, e = s.Edit(ctx, token, "stale", api.Edit{TaskID: d.Task.ID, Title: "stale", BasisVersion: 1}); !errors.Is(e, fault.ErrConflict) {
 		t.Fatal("stale", e)
 	}
 	page, e := s.Changes(ctx, token, start.Cursor)
@@ -130,7 +130,7 @@ func TestCreateReadCommitEditAndRevoke(t *testing.T) {
 		t.Fatal("revoked changes", page, e)
 	}
 }
-func TestConcurrentCreateAndCrossSubjectCursor(t *testing.T) {
+func TestConcurrentCreateAndSharedCursorIsReauthorized(t *testing.T) {
 	s, sec, token := fixture(t)
 	ctx := context.Background()
 
@@ -174,8 +174,21 @@ func TestConcurrentCreateAndCrossSubjectCursor(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	if _, e = s.Changes(ctx, issued.Secret, page.Cursor); !errors.Is(e, az.ErrForbidden) {
-		t.Fatal("cursor subject", e)
+	// A cursor is only a position: another subject reusing it sees only what it may read.
+	if _, e = s.Comment(ctx, token, "after-cursor", api.Comment{TaskID: first, Body: "private"}); e != nil {
+		t.Fatal(e)
+	}
+	other, e := s.Changes(ctx, issued.Secret, page.Cursor)
+	if e != nil {
+		t.Fatal(e)
+	}
+	for _, c := range other.Changes {
+		if c.TaskID == first {
+			t.Fatal("cursor leaked an unreadable task")
+		}
+	}
+	if _, e = s.Changes(ctx, issued.Secret, "not-a-cursor"); !errors.Is(e, fault.ErrInput) {
+		t.Fatal("invalid cursor", e)
 	}
 	if _, e = s.Get(ctx, issued.Secret, first, 0); !errors.Is(e, az.ErrForbidden) {
 		t.Fatal("read", e)
@@ -254,7 +267,7 @@ func TestMembershipOwnerParticipantsAndImmediateRemoval(t *testing.T) {
 	if _, e = s.Comment(ctx, participant, "comment", comment); e != nil {
 		t.Fatal(e)
 	}
-	if _, e = s.Edit(ctx, participant, "edit", api.Edit{TaskID: d.Task.ID, Title: "steal", ExpectedVersion: 1}); !errors.Is(e, az.ErrForbidden) {
+	if _, e = s.Edit(ctx, participant, "edit", api.Edit{TaskID: d.Task.ID, Title: "steal", BasisVersion: 1}); !errors.Is(e, az.ErrForbidden) {
 		t.Fatal("participant edited", e)
 	}
 	if e = s.SetParticipant(ctx, participant, "self-add", api.Participation{TaskID: d.Task.ID, Subject: "outsider", Present: true}); !errors.Is(e, az.ErrForbidden) {

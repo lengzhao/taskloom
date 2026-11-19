@@ -35,5 +35,7 @@ func (s *Service) Authenticate(ctx context.Context, secret string) (identity.Pri
 	if err != nil || c.Revoked || !c.ExpiresAt.After(time.Now()) {
 		return identity.Principal{}, identity.ErrUnauthenticated
 	}
-	return c.Principal, nil
+	p := c.Principal
+	p.CredentialID = c.ID
+	return p, nil
 }

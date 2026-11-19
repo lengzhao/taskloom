@@ -37,8 +37,6 @@ func run(ctx context.Context, args []string, out, errout io.Writer) int {
 	reason := f.String("reason", "", "audited reason")
 	path := f.String("credential-file", "", "new private credential output file")
 	owner := f.String("owner", "", "human owner ID for Agent enrollment")
-	instance := f.String("instance", "", "runtime instance ID")
-	incarnation := f.String("incarnation", "", "runtime boot/incarnation ID")
 	ttl := f.Duration("ttl", 24*time.Hour, "credential lifetime (maximum 90 days)")
 	if err := f.Parse(args); err != nil {
 		if err == flag.ErrHelp {
@@ -94,7 +92,7 @@ func run(ctx context.Context, args []string, out, errout io.Writer) int {
 	in := security.BootstrapInput{Tenant: *tenant, Subject: *subject, Operator: *operator, Reason: *reason, ExpiresAt: time.Now().Add(*ttl)}
 	var issued capsecurity.Issued
 	if *mode == "enroll-agent" {
-		issued, err = svc.EnrollAgent(ctx, security.AgentEnrollment{BootstrapInput: in, Owner: *owner, InstanceID: *instance, Incarnation: *incarnation})
+		issued, err = svc.EnrollAgent(ctx, security.AgentEnrollment{BootstrapInput: in, Owner: *owner})
 	} else if *mode == "bootstrap" {
 		issued, err = svc.Bootstrap(ctx, in)
 	} else {

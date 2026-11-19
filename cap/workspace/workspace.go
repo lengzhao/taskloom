@@ -10,13 +10,14 @@ import (
 )
 
 type Create struct{ Title, Goal, Criteria, ProjectID string }
-type ProjectMove struct {
-	TaskID, ProjectID string
-	ExpectedVersion   int64
-}
+
+// ProjectMove only re-files a task; the last move wins and pins no version.
+type ProjectMove struct{ TaskID, ProjectID string }
+
+// Edit pins the basis version the editor saw.
 type Edit struct {
 	TaskID, Title, Goal, Criteria string
-	ExpectedVersion               int64
+	BasisVersion                  int64
 }
 type Comment struct{ TaskID, Body, RefID string }
 type Detail struct {

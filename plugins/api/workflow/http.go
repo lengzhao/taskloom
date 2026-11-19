@@ -36,12 +36,10 @@ func (m *Module) Routes() []httpapi.Route {
 		{Method: "POST", Path: "/tasks/{id}/execution/open", Operation: "execution.open", Handler: http.HandlerFunc(m.serve)},
 		{Method: "POST", Path: "/tasks/{id}/results", Operation: "result.submit", Handler: http.HandlerFunc(m.serve)},
 		{Method: "POST", Path: "/tasks/{id}/review", Operation: "result.review", Handler: http.HandlerFunc(m.serve)},
-		{Method: "POST", Path: "/tasks/{id}/withdraw", Operation: "result.withdraw", Handler: http.HandlerFunc(m.serve)},
 		{Method: "POST", Path: "/tasks/{id}/questions", Operation: "question.ask", Handler: http.HandlerFunc(m.serve)},
 		{Method: "POST", Path: "/tasks/{id}/questions/{qid}/answer", Operation: "question.answer", Handler: http.HandlerFunc(m.serve)},
 		{Method: "POST", Path: "/tasks/{id}/cancel", Operation: "task.cancel", Handler: http.HandlerFunc(m.serve)},
-		{Method: "POST", Path: "/tasks/{id}/return", Operation: "task.return", Handler: http.HandlerFunc(m.serve)},
-		{Method: "POST", Path: "/tasks/{id}/reopen", Operation: "task.reopen", Handler: http.HandlerFunc(m.serve)},
+		{Method: "POST", Path: "/tasks/{id}/restart", Operation: "task.restart", Handler: http.HandlerFunc(m.serve)},
 	}
 }
 func (m *Module) serve(w http.ResponseWriter, r *http.Request) {
@@ -102,28 +100,20 @@ func (m *Module) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		in.TaskID = taskID
 		result, err = m.d.Results.Review(ctx, token, key, in)
-	case strings.HasSuffix(path, "/withdraw"):
-		var in work.Withdraw
+	case strings.HasSuffix(path, "/cancel"):
+		var in work.Cancel
 		if !httpx.Decode(w, r, &in) {
 			return
 		}
 		in.TaskID = taskID
-		result, err = m.d.Results.Withdraw(ctx, token, key, in)
-	case strings.HasSuffix(path, "/cancel"), strings.HasSuffix(path, "/return"), strings.HasSuffix(path, "/reopen"):
-		var in work.Basis
+		result, err = m.d.Controls.Cancel(ctx, token, key, in)
+	case strings.HasSuffix(path, "/restart"):
+		var in work.Restart
 		if !httpx.Decode(w, r, &in) {
 			return
 		}
 		in.TaskID = taskID
-		switch {
-		case strings.HasSuffix(path, "/cancel"):
-			result, err = m.d.Controls.Cancel(ctx, token, key, in)
-		case strings.HasSuffix(path, "/return"):
-			result, err = m.d.Controls.Return(ctx, token, key, in)
-		default:
-			result, err = m.d.Controls.Reopen(ctx, token, key, in)
-		}
-
+		result, err = m.d.Controls.Restart(ctx, token, key, in)
 	}
 	if err != nil {
 		httpx.Fail(w, err)

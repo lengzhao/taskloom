@@ -3,7 +3,6 @@ package sql
 import (
 	"context"
 	"encoding/json"
-	"github.com/lengzhao/taskloom/cap/acceptance"
 	"github.com/lengzhao/taskloom/cap/delivery"
 	"github.com/lengzhao/taskloom/cap/execution"
 	"github.com/lengzhao/taskloom/cap/fault"
@@ -25,14 +24,6 @@ type submissionRow struct {
 	TaskRound string `gorm:"size:64;index"`
 	Sequence  int64
 	Data      []byte
-}
-type reviewRow struct {
-	Key  string `gorm:"primaryKey;size:64;column:row_key"`
-	Data []byte
-}
-type verdictRow struct {
-	ID   string `gorm:"primaryKey;size:128"`
-	Data []byte
 }
 
 func (s *Store) Current(ctx context.Context, tenant, taskID string) (execution.Execution, error) {
@@ -96,9 +87,6 @@ func (s *Store) CurrentSubmission(ctx context.Context, tenant, taskID, round str
 		}
 		return json.Unmarshal(r.Data, &out)
 	})
-	if e == nil && out.Withdrawn {
-		return out, fault.ErrNotFound
-	}
 	return out, e
 }
 func (s *Store) GetSubmission(ctx context.Context, tenant, id string) (delivery.Submission, error) {
@@ -126,53 +114,6 @@ func (s *Store) RegisterSubmission(ctx context.Context, v delivery.Submission) e
 		return db.Create(&submissionRow{Key: key(v.Tenant, v.ID), TaskRound: key(v.Tenant, v.TaskID, v.RoundID), Sequence: seq.Sequence, Data: b}).Error
 	})
 }
-func (s *Store) WithdrawSubmission(ctx context.Context, tenant, id string) error {
-	return s.use(ctx, true, func(db *gorm.DB) error {
-		var r submissionRow
-		if e := db.First(&r, "row_key = ?", key(tenant, id)).Error; e != nil {
-			return e
-		}
-		var v delivery.Submission
-		if e := json.Unmarshal(r.Data, &v); e != nil {
-			return e
-		}
-		v.Withdrawn = true
-		b, e := json.Marshal(v)
-		if e != nil {
-			return e
-		}
-		return db.Model(&submissionRow{}).Where("row_key = ?", r.Key).Update("data", b).Error
-	})
-}
-func reviewKey(v acceptance.Review) string {
-	return key(v.Tenant, v.TaskID, v.RoundID, v.SubmissionID)
-}
-func (s *Store) GetReview(ctx context.Context, tenant, taskID, round, submission string) (acceptance.Review, error) {
-	var v acceptance.Review
-	e := s.use(ctx, false, func(db *gorm.DB) error {
-		var r reviewRow
-		if e := db.First(&r, "row_key = ?", key(tenant, taskID, round, submission)).Error; e != nil {
-			return e
-		}
-		return json.Unmarshal(r.Data, &v)
-	})
-	return v, e
-}
-
-// SaveReview keeps every verdict as history and the latest per submission as current.
-func (s *Store) SaveReview(ctx context.Context, v acceptance.Review) error {
-	return s.use(ctx, true, func(db *gorm.DB) error {
-		b, e := json.Marshal(v)
-		if e != nil {
-			return e
-		}
-		if e = db.Create(&verdictRow{ID: randomID(), Data: b}).Error; e != nil {
-			return e
-		}
-		return db.Clauses(clause.OnConflict{UpdateAll: true}).Create(&reviewRow{Key: reviewKey(v), Data: b}).Error
-	})
-}
-
 type assignmentRow struct {
 	Key     string `gorm:"primaryKey;size:64;column:row_key"`
 	Subject string

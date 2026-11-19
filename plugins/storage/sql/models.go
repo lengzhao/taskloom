@@ -26,8 +26,6 @@ type credentialRow struct {
 	Digest       string       `gorm:"size:64;uniqueIndex;not null"`
 	ExpiresAt    time.Time
 	Revoked      bool
-	InstanceID   string `gorm:"size:128"`
-	Incarnation  string `gorm:"size:128"`
 }
 type receiptRow struct {
 	Key    string `gorm:"primaryKey;size:64;column:row_key"`
@@ -35,16 +33,14 @@ type receiptRow struct {
 	Result []byte
 }
 type auditRow struct {
-	OwnerID, InstanceID, Incarnation                      string
+	OwnerID, CredentialID                                 string
 	ID                                                    string `gorm:"primaryKey;size:128"`
 	Tenant, Subject, Operation, Resource, Outcome, Reason string
 	CreatedAt                                             time.Time
 }
 type eventRow struct {
-	ID             string `gorm:"primaryKey;size:128"`
-	Sequence       int64  `gorm:"uniqueIndex"`
+	Sequence       int64  `gorm:"primaryKey;autoIncrement:false;index:idx_event_tenant_sequence,priority:2"`
 	Tenant         string `gorm:"size:128;index:idx_event_tenant_sequence,priority:1"`
 	Resource, Kind string
-	Payload        []byte
 	CreatedAt      time.Time
 }

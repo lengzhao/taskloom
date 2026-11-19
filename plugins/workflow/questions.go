@@ -70,7 +70,7 @@ func (m *QuestionModule) activeRound(ctx context.Context, p identity.Principal, 
 }
 
 func (m *QuestionModule) appendCommit(ctx context.Context, p identity.Principal, t task.Task, kind, body, ref string) (commit.Commit, error) {
-	c := commit.Commit{Tenant: t.Tenant, TaskID: t.ID, ID: id(), Kind: kind, Body: body, RefID: ref, Author: p.ID, OwnerID: p.OwnerID, InstanceID: p.InstanceID, Incarnation: p.Incarnation, BasisVersion: t.BasisVersion}
+	c := commit.Commit{Tenant: t.Tenant, TaskID: t.ID, ID: id(), Kind: kind, Body: body, RefID: ref, Author: p.ID, OwnerID: p.OwnerID, BasisVersion: t.BasisVersion}
 	return c, m.s.d.Commits.Append(ctx, c)
 }
 

@@ -34,8 +34,10 @@ type Reader interface {
 }
 type Store interface {
 	Reader
-	SaveSpace(context.Context, Space, int64) error
-	SaveProject(context.Context, Project, int64) error
+	// SaveSpace and SaveProject create or replace; the catalog command checks
+	// the client's expected version under the global write lock first.
+	SaveSpace(context.Context, Space) error
+	SaveProject(context.Context, Project) error
 }
 type Service interface {
 	People(context.Context, string) ([]az.MemberOption, error)

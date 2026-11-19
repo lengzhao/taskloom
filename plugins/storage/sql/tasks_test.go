@@ -15,7 +15,7 @@ func TestImmutableCommitsAndTenantBoundary(t *testing.T) {
 	s := open(t, filepath.Join(t.TempDir(), "db"))
 	ctx := context.Background()
 	err := s.Do(ctx, func(tx context.Context) error {
-		if err := s.CreateTask(tx, task.Task{Tenant: "t", ID: "a", Version: 1, BasisVersion: 1}); err != nil {
+		if err := s.CreateTask(tx, task.Task{Tenant: "t", ID: "a", BasisVersion: 1}); err != nil {
 			return err
 		}
 		return s.Append(tx, commit.Commit{Tenant: "t", TaskID: "a", ID: "c1", Author: "u", Kind: "comment", Body: "first"})
@@ -48,26 +48,20 @@ func TestBasisChangePreservesIdentityAndOwner(t *testing.T) {
 	ctx := context.Background()
 	s := open(t, filepath.Join(t.TempDir(), "db"))
 	if e := s.Do(ctx, func(tx context.Context) error {
-		return s.CreateTask(tx, task.Task{Tenant: "t", ID: "a", Owner: "owner", Version: 1, BasisVersion: 1})
+		return s.CreateTask(tx, task.Task{Tenant: "t", ID: "a", Owner: "owner", BasisVersion: 1})
 	}); e != nil {
 		t.Fatal(e)
 	}
 	if e := s.Do(ctx, func(tx context.Context) error {
-		updated, e := s.UpdateBasis(tx, task.BasisChange{Tenant: "t", TaskID: "a", Title: "new", Goal: "goal", Criteria: "criteria", ExpectedVersion: 1})
+		updated, e := s.UpdateBasis(tx, task.BasisChange{Tenant: "t", TaskID: "a", Title: "new", Goal: "goal", Criteria: "criteria"})
 		if e != nil {
 			return e
 		}
-		if updated.Owner != "owner" || updated.ID != "a" || updated.Tenant != "t" || updated.Version != 2 || updated.BasisVersion != 2 {
+		if updated.Owner != "owner" || updated.ID != "a" || updated.Tenant != "t" || updated.BasisVersion != 2 {
 			t.Fatalf("basis update %+v", updated)
 		}
 		return nil
 	}); e != nil {
 		t.Fatal(e)
-	}
-	if e := s.Do(ctx, func(tx context.Context) error {
-		_, e := s.UpdateBasis(tx, task.BasisChange{Tenant: "t", TaskID: "a", Title: "stale", ExpectedVersion: 1})
-		return e
-	}); !errors.Is(e, fault.ErrConflict) {
-		t.Fatal("stale update", e)
 	}
 }

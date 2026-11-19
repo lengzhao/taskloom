@@ -8,8 +8,11 @@ import (
 )
 
 type Execution struct {
-	Tenant, TaskID, ID, RoundID, Subject, InstanceID, Incarnation string
-	BasisVersion                                                  int64
+	Tenant, TaskID, ID, RoundID, Subject string
+	// CredentialID binds an Agent execution to the credential that claimed it;
+	// a different credential of the same Agent is a different instance.
+	CredentialID string
+	BasisVersion int64
 	// ProgressAt is when the executor last recorded progress (open, comment,
 	// question or result). It is informational: nothing expires on it.
 	ProgressAt time.Time

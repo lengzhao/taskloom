@@ -181,10 +181,12 @@ func TestHTTPMemberAdministration(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	module, _ := build.GetByID[httpapi.Module](graph, "workspace-api")
 	mux := http.NewServeMux()
-	for _, r := range module.Routes() {
-		mux.Handle(r.Method+" /v1"+r.Path, r.Handler)
+	for _, id := range []string{"workspace-api", "audit-api"} {
+		module, _ := build.GetByID[httpapi.Module](graph, id)
+		for _, r := range module.Routes() {
+			mux.Handle(r.Method+" /v1"+r.Path, r.Handler)
+		}
 	}
 	request := func(token, method, path, key string, body any) *httptest.ResponseRecorder {
 		t.Helper()
@@ -232,8 +234,8 @@ func TestHTTPMemberAdministration(t *testing.T) {
 	if !bytes.Contains(userMe.Body.Bytes(), []byte(`"CanAdmin":false`)) {
 		t.Fatal("member admin flag")
 	}
-	must(request(admin.Secret, "POST", "/credentials", "bad-agent-credential", map[string]any{"Subject": "agent", "ExpiresAt": expires}), 400)
-	agentInput := map[string]any{"Subject": "agent", "InstanceID": "machine", "Incarnation": "boot", "ExpiresAt": expires}
+	must(request(admin.Secret, "POST", "/credentials", "stale-agent-fields", map[string]any{"Subject": "agent", "InstanceID": "machine", "ExpiresAt": expires}), 400)
+	agentInput := map[string]any{"Subject": "agent", "ExpiresAt": expires}
 	agentResp := request(admin.Secret, "POST", "/credentials", "issue-agent", agentInput)
 	must(agentResp, 200)
 	var agent capsecurity.Issued
@@ -247,6 +249,22 @@ func TestHTTPMemberAdministration(t *testing.T) {
 	}
 
 	must(request(agent.Secret, "GET", "/members", "", nil), 403)
+	// Administrators can read the audit trail every command writes; nobody else can.
+	auditResp := request(admin.Secret, "GET", "/audit?limit=50", "", nil)
+	must(auditResp, 200)
+	var trail []record.Audit
+	json.Unmarshal(auditResp.Body.Bytes(), &trail)
+	found := false
+	for _, a := range trail {
+		if a.Operation == "identity.issue" && a.Outcome == "committed" && a.Subject == "admin" && !a.At.IsZero() {
+			found = true
+		}
+	}
+	if !found || len(trail) > 50 {
+		t.Fatal("audit trail missing credential issue", len(trail))
+	}
+	must(request(user.Secret, "GET", "/audit", "", nil), 403)
+	must(request(agent.Secret, "GET", "/audit", "", nil), 403)
 	must(request(agent.Secret, "POST", "/identities", "agent-create", map[string]any{"Subject": "intruder", "Kind": "human"}), 403)
 	list := request(admin.Secret, "GET", "/members", "", nil)
 	must(list, 200)

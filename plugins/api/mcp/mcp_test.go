@@ -72,7 +72,7 @@ func setup(t *testing.T) *fixture {
 	if e = sec.Create(ctx, f.owner, "agent", identity.Principal{Tenant: "t", ID: "agent", Kind: "agent", OwnerID: "owner"}); e != nil {
 		t.Fatal(e)
 	}
-	agent, e := sec.Issue(ctx, f.owner, "business", capsecurity.IssueInput{Tenant: "t", Subject: "agent", InstanceID: "machine", Incarnation: "boot", ExpiresAt: time.Now().Add(time.Hour)})
+	agent, e := sec.Issue(ctx, f.owner, "business", capsecurity.IssueInput{Tenant: "t", Subject: "agent", ExpiresAt: time.Now().Add(time.Hour)})
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -160,8 +160,7 @@ func (f *fixture) ok(name string, args map[string]string) map[string]any {
 
 type snapshot struct {
 	Position struct {
-		RoundID  string
-		Revision int64
+		RoundID string
 	}
 	NextActor string
 	Execution *struct {
@@ -186,7 +185,7 @@ func TestAgentWorksATaskThroughMCP(t *testing.T) {
 	id := created.Task.ID
 	var w snapshot
 	f.ownerCall("GET", "/tasks/"+id+"/workflow", nil, &w)
-	f.ownerCall("POST", "/tasks/"+id+"/execution/assign", map[string]any{"RoundID": w.Position.RoundID, "BasisVersion": 1, "ExpectedRevision": w.Position.Revision, "Subject": "agent"}, nil)
+	f.ownerCall("POST", "/tasks/"+id+"/execution/assign", map[string]any{"Subject": "agent"}, nil)
 
 	if text, _ := f.tool("inbox", nil); !strings.Contains(text, id) {
 		t.Fatal("inbox misses assigned task", text)
@@ -295,7 +294,7 @@ func TestAgentAnswersAQuestionAskedOfIt(t *testing.T) {
 	id := created.Task.ID
 	var w snapshot
 	f.ownerCall("GET", "/tasks/"+id+"/workflow", nil, &w)
-	f.ownerCall("POST", "/tasks/"+id+"/execution/assign", map[string]any{"RoundID": w.Position.RoundID, "BasisVersion": 1, "ExpectedRevision": w.Position.Revision, "Subject": "agent"}, nil)
+	f.ownerCall("POST", "/tasks/"+id+"/execution/assign", map[string]any{"Subject": "agent"}, nil)
 	f.ownerCall("GET", "/tasks/"+id+"/workflow", nil, &w)
 	f.ownerCall("POST", "/tasks/"+id+"/questions", map[string]string{"RoundID": w.Position.RoundID, "Body": "预计什么时候完成？", "Addressee": "agent"}, nil)
 

@@ -26,9 +26,8 @@ type Administration interface {
 }
 type Issued struct{ ID, Secret string }
 type IssueInput struct {
-	Tenant, Subject         string
-	InstanceID, Incarnation string
-	ExpiresAt               time.Time
+	Tenant, Subject string
+	ExpiresAt       time.Time
 }
 type RevokeInput struct{ Tenant, CredentialID string }
 

@@ -33,15 +33,15 @@ func (c call) key(parts ...any) string {
 	return hex.EncodeToString(h[:16])
 }
 
-// basis is the version a write is pinned to. It is handed to the model as an
-// opaque token from read_task and returned unchanged, so a write based on a
-// stale view fails with a conflict instead of silently using the latest state.
+// basis is what a write is pinned to: the round and task basis the model read
+// and its execution. It is handed to the model as an opaque token from
+// read_task and returned unchanged, so a write based on a stale view fails
+// with a conflict instead of silently using the latest state.
 type basis struct {
-	TaskID           string `json:"t"`
-	RoundID          string `json:"r"`
-	BasisVersion     int64  `json:"b"`
-	ExpectedRevision int64  `json:"v"`
-	ExecutionID      string `json:"e,omitempty"`
+	TaskID       string `json:"t"`
+	RoundID      string `json:"r"`
+	BasisVersion int64  `json:"b"`
+	ExecutionID  string `json:"e,omitempty"`
 }
 
 func (b basis) token() string {
@@ -61,14 +61,10 @@ func parseBasis(taskID, token string) (basis, error) {
 	return b, nil
 }
 
-func (b basis) flow() work.Basis {
-	return work.Basis{TaskID: b.TaskID, RoundID: b.RoundID, BasisVersion: b.BasisVersion, ExpectedRevision: b.ExpectedRevision}
-}
-
 // next derives the follow-up basis from a command's snapshot. Writes never
 // change the task basis version, so it is carried over.
 func (b basis) next(s work.Snapshot) basis {
-	n := basis{TaskID: b.TaskID, RoundID: s.Position.RoundID, BasisVersion: b.BasisVersion, ExpectedRevision: s.Position.Revision}
+	n := basis{TaskID: b.TaskID, RoundID: s.Position.RoundID, BasisVersion: b.BasisVersion}
 	if s.Execution != nil {
 		n.ExecutionID = s.Execution.ID
 	}
@@ -214,7 +210,7 @@ func (m *Module) call(ctx context.Context, c call, name string, rawArgs json.Raw
 	key := c.key(name, args)
 	switch name {
 	case "start_work":
-		s, err := m.d.Executions.Open(ctx, c.token, key, work.Open{Basis: b.flow()})
+		s, err := m.d.Executions.Open(ctx, c.token, key, work.Open{TaskID: b.TaskID, BasisVersion: b.BasisVersion})
 		if err != nil {
 			return "", err
 		}
@@ -240,7 +236,7 @@ func (m *Module) call(ctx context.Context, c call, name string, rawArgs json.Raw
 		if b.ExecutionID == "" {
 			return "", invalid("还没有执行：先 start_work 认领，再用它返回的 basis 提交")
 		}
-		s, err := m.d.Results.Submit(ctx, c.token, key, work.Submit{Basis: b.flow(), ExecutionID: b.ExecutionID, Body: args["result"]})
+		s, err := m.d.Results.Submit(ctx, c.token, key, work.Submit{TaskID: b.TaskID, ExecutionID: b.ExecutionID, Body: args["result"]})
 		if err != nil {
 			return "", err
 		}
@@ -272,7 +268,7 @@ func (m *Module) readTask(ctx context.Context, c call, taskID string) (string, e
 	for _, cm := range commits {
 		byID[cm.ID] = cm
 	}
-	b := basis{TaskID: d.Task.ID, RoundID: w.Position.RoundID, BasisVersion: d.Task.BasisVersion, ExpectedRevision: w.Position.Revision}
+	b := basis{TaskID: d.Task.ID, RoundID: w.Position.RoundID, BasisVersion: d.Task.BasisVersion}
 	if w.Execution != nil {
 		b.ExecutionID = w.Execution.ID
 	}

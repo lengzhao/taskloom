@@ -40,15 +40,13 @@ func (s *Store) Resolve(ctx context.Context, tenant, id string) (identity.Princi
 }
 func (s *Store) SaveCredential(ctx context.Context, c identity.Credential) error {
 	return s.use(ctx, true, func(db *gorm.DB) error {
-		return db.Create(&credentialRow{ID: c.ID, PrincipalKey: key(c.Principal.Tenant, c.Principal.ID), Digest: c.Digest, ExpiresAt: c.ExpiresAt, Revoked: c.Revoked, InstanceID: c.Principal.InstanceID, Incarnation: c.Principal.Incarnation}).Error
+		return db.Create(&credentialRow{ID: c.ID, PrincipalKey: key(c.Principal.Tenant, c.Principal.ID), Digest: c.Digest, ExpiresAt: c.ExpiresAt, Revoked: c.Revoked}).Error
 	})
 }
 func (s *Store) FindCredential(ctx context.Context, digest string) (identity.Credential, error) {
 	var row credentialRow
 	err := s.use(ctx, false, func(db *gorm.DB) error { return db.Preload("Principal").First(&row, "digest = ?", digest).Error })
 	p := toPrincipal(row.Principal)
-	p.InstanceID = row.InstanceID
-	p.Incarnation = row.Incarnation
 	return identity.Credential{ID: row.ID, Principal: p, Digest: row.Digest, ExpiresAt: row.ExpiresAt, Revoked: row.Revoked}, err
 }
 func (s *Store) RevokeCredential(ctx context.Context, tenant, id string) error {
@@ -92,8 +90,22 @@ func (s *Store) AppendAudit(ctx context.Context, a record.Audit) error {
 		a.ID = randomID()
 	}
 	return s.use(ctx, true, func(db *gorm.DB) error {
-		return db.Create(&auditRow{ID: a.ID, Tenant: a.Tenant, Subject: a.Subject, Operation: a.Operation, Resource: a.Resource, Outcome: a.Outcome, Reason: a.Reason, OwnerID: a.OwnerID, InstanceID: a.InstanceID, Incarnation: a.Incarnation}).Error
+		return db.Create(&auditRow{ID: a.ID, Tenant: a.Tenant, Subject: a.Subject, Operation: a.Operation, Resource: a.Resource, Outcome: a.Outcome, Reason: a.Reason, OwnerID: a.OwnerID, CredentialID: a.CredentialID}).Error
 	})
+}
+func (s *Store) ListAudit(ctx context.Context, tenant string, limit int) ([]record.Audit, error) {
+	out := []record.Audit{}
+	e := s.use(ctx, false, func(db *gorm.DB) error {
+		var rows []auditRow
+		if e := db.Where("tenant = ?", tenant).Order("created_at DESC").Limit(limit).Find(&rows).Error; e != nil {
+			return e
+		}
+		for _, r := range rows {
+			out = append(out, record.Audit{ID: r.ID, Tenant: r.Tenant, Subject: r.Subject, Operation: r.Operation, Resource: r.Resource, Outcome: r.Outcome, Reason: r.Reason, OwnerID: r.OwnerID, CredentialID: r.CredentialID, At: r.CreatedAt})
+		}
+		return nil
+	})
+	return out, e
 }
 func (s *Store) AppendEvent(ctx context.Context, e record.Event) error {
 	return s.use(ctx, true, func(db *gorm.DB) error {
@@ -104,10 +116,7 @@ func (s *Store) AppendEvent(ctx context.Context, e record.Event) error {
 		if err := db.First(&c, 1).Error; err != nil {
 			return err
 		}
-		if e.ID == "" {
-			e.ID = randomID()
-		}
-		return db.Create(&eventRow{ID: e.ID, Sequence: c.Sequence, Tenant: e.Tenant, Resource: e.Resource, Kind: e.Kind, Payload: e.Payload}).Error
+		return db.Create(&eventRow{Sequence: c.Sequence, Tenant: e.Tenant, Resource: e.Resource, Kind: e.Kind}).Error
 	})
 }
 func (s *Store) ReadEvents(ctx context.Context, tenant string, after int64, limit int) ([]record.Event, error) {
@@ -120,7 +129,7 @@ func (s *Store) ReadEvents(ctx context.Context, tenant string, after int64, limi
 	})
 	out := make([]record.Event, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, record.Event{ID: r.ID, Sequence: r.Sequence, Tenant: r.Tenant, Resource: r.Resource, Kind: r.Kind, Payload: r.Payload})
+		out = append(out, record.Event{Sequence: r.Sequence, Tenant: r.Tenant, Resource: r.Resource, Kind: r.Kind})
 	}
 	return out, err
 }

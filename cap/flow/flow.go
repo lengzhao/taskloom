@@ -41,11 +41,9 @@ const (
 	AcceptanceNone   Acceptance = "none"
 )
 
-// Position is a task's place in its lifecycle. Revision, Status, RoundID and
-// Acceptance are stored; State and Waiting are derived on read.
+// Position is a task's place in its lifecycle. Status, RoundID and Acceptance
+// are stored; State and Waiting are derived on read.
 type Position struct {
-	// Revision changes only when the stored phase or round changes.
-	Revision                int64
 	Status                  Phase
 	Tenant, TaskID, RoundID string
 	Acceptance              Acceptance
@@ -59,8 +57,9 @@ type PositionReader interface {
 type PositionStore interface {
 	PositionReader
 	CreatePosition(ctx context.Context, value Position) error
-	// SavePosition fails with fault.ErrConflict unless the stored revision equals expected.
-	SavePosition(ctx context.Context, value Position, expected int64) error
+	// SavePosition replaces the stored position; writes are serialized by the
+	// global write lock, so no compare-and-swap is needed.
+	SavePosition(ctx context.Context, value Position) error
 }
 
 // Controller is the only writer of phase and round. Every method runs inside
@@ -71,13 +70,9 @@ type Controller interface {
 	Read(ctx context.Context, value task.Task) (Position, error)
 	// Refresh completes the task once its facts satisfy completion.
 	Refresh(ctx context.Context, value task.Task) (Position, error)
-	// CheckEdit allows basis changes while no live claim of this round exists
-	// and no valid result waits for acceptance.
-	CheckEdit(ctx context.Context, value task.Task) error
 	// CheckOpen allows assignment and claims on an active task with a complete basis.
 	CheckOpen(ctx context.Context, value task.Task) (Position, error)
 	Cancel(ctx context.Context, value task.Task) (Position, error)
-	// Return starts a new round of an active task; Reopen of a terminal one.
-	Return(ctx context.Context, value task.Task) (Position, error)
-	Reopen(ctx context.Context, value task.Task) (Position, error)
+	// Restart starts a new active round from any phase.
+	Restart(ctx context.Context, value task.Task) (Position, error)
 }

@@ -20,12 +20,12 @@ server 以 resources 管 SQL、以 components 管 http，http 管各 API 模块�
 
 `sh scripts/check.sh all` 验证当前工程及两层真实构建，`race` 检查竞态；文档链接与代码块由 Go 测试检查。不把构建或文档检查当作 SQL、授权、流程或 Agent 联调通过。
 
-## SQL 连接配置（M03 已实现）
+## SQL 连接配置
 
 `storage/sql` 内部使用 GORM；连接字段为 `driver` 和 `dsn`。本地默认 `driver: sqlite`、`dsn: taskloom.db`（相对工作目录），生产通过同一 config.yaml 覆盖。切换到 MySQL/PostgreSQL 时同时选择对应 driver 和原生 DSN；同类型数据库只需改 DSN。业务 Deps、接口及状态配置不变，不新增配置层或通用 DSN 猜测规则。携带凭据的 DSN 不进入日志，当前通过受限部署 config 文件提供，不隐式插值环境变量。
 
-SQL resource 由 server 打开和关闭。支持范围以实际编入并验证的驱动为准；数据库切换与已有数据搬迁是两件事。存储一致性与迁移要求见 [M03](m03-storage.md)。
+SQL resource 由 server 打开和关闭。支持范围以实际编入并验证的驱动为准；数据库切换与已有数据搬迁是两件事。存储一致性与迁移见[架构](architecture.md#存储与迁移)。
 
-实际接口、数据库支持与运维边界见[M03 实现](m03-storage.md)；origin/localHTTP、Cookie 与生产 HTTPS 配置见[M04 说明](m04-workspace.md)。
+origin/localHTTP、loginTenant、Cookie 与生产 HTTPS 配置见 [API](api.md#通用约定)。
 
 用户登录默认从主体目录确定唯一的人类成员租户，因此单租户部署无需填写租户。多租户数据库须在 `workspace-api.config.loginTenant` 指定本页面的登录租户；不提供匿名租户目录或跨租户用户名搜索。Agent 凭据仍携带可信租户。

@@ -47,7 +47,7 @@ func TestBootstrapAndRecoveryUseExclusivePrivateFile(t *testing.T) {
 	}
 }
 
-func TestOfflineAgentEnrollmentRequiresExplicitBinding(t *testing.T) {
+func TestOfflineAgentEnrollmentRequiresHumanOwner(t *testing.T) {
 	dir := t.TempDir()
 	base := filepath.Join(dir, "base.yaml")
 	yaml := "server:\n  use: server\n  deps:\n    resources: [sql]\n    components: []\nsql:\n  use: storage/sql\n  config:\n    dsn: " + filepath.Join(dir, "db") + "\n"
@@ -60,13 +60,13 @@ func TestOfflineAgentEnrollmentRequiresExplicitBinding(t *testing.T) {
 	if code := run(context.Background(), bootstrap, &out, &errs); code != 0 {
 		t.Fatal(code, errs.String())
 	}
-	enroll := append(append([]string{}, common...), "-mode", "enroll-agent", "-subject", "agent", "-owner", "owner", "-instance", "machine", "-incarnation", "boot", "-credential-file", filepath.Join(dir, "agent.json"))
+	enroll := append(append([]string{}, common...), "-mode", "enroll-agent", "-subject", "agent", "-owner", "owner", "-credential-file", filepath.Join(dir, "agent.json"))
 	if code := run(context.Background(), enroll, &out, &errs); code != 0 {
 		t.Fatal(code, errs.String())
 	}
-	args := append(append([]string{}, common...), "-mode", "enroll-agent", "-subject", "bad-agent", "-owner", "owner", "-credential-file", filepath.Join(dir, "bad.json"))
+	args := append(append([]string{}, common...), "-mode", "enroll-agent", "-subject", "bad-agent", "-credential-file", filepath.Join(dir, "bad.json"))
 	if code := run(context.Background(), args, &out, &errs); code == 0 {
-		t.Fatal("unbound credential issued")
+		t.Fatal("agent without a human owner enrolled")
 	}
 	if _, e := os.Stat(filepath.Join(dir, "bad.json")); !os.IsNotExist(e) {
 		t.Fatal("failed enrollment left credential file")

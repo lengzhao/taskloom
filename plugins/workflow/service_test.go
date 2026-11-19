@@ -12,6 +12,7 @@ import (
 	"github.com/lengzhao/taskloom/cap/fault"
 	"github.com/lengzhao/taskloom/cap/identity"
 	"github.com/lengzhao/taskloom/cap/lifecycle"
+	"github.com/lengzhao/taskloom/cap/record"
 	capsecurity "github.com/lengzhao/taskloom/cap/security"
 	"github.com/lengzhao/taskloom/cap/unitofwork"
 	api "github.com/lengzhao/taskloom/cap/workflow"
@@ -88,16 +89,13 @@ func setup(t *testing.T, override map[string]any) *fixture {
 		t.Fatal(e)
 	}
 	for _, purpose := range []string{"business"} {
-		issued, e = f.security.Issue(ctx, f.owner, purpose, capsecurity.IssueInput{Tenant: "t", Subject: "agent", InstanceID: "machine", Incarnation: "boot", ExpiresAt: time.Now().Add(time.Hour)})
+		issued, e = f.security.Issue(ctx, f.owner, purpose, capsecurity.IssueInput{Tenant: "t", Subject: "agent", ExpiresAt: time.Now().Add(time.Hour)})
 		if e != nil {
 			t.Fatal(e)
 		}
 		f.agent = issued.Secret
 	}
 	return f
-}
-func basis(d workspace.Detail, s api.Snapshot) api.Basis {
-	return api.Basis{TaskID: d.Task.ID, RoundID: s.Position.RoundID, BasisVersion: d.Task.BasisVersion, ExpectedRevision: s.Position.Revision}
 }
 func (f *fixture) create(t *testing.T) workspace.Detail {
 	t.Helper()
@@ -118,11 +116,11 @@ func (f *fixture) read(t *testing.T, id string) api.Snapshot {
 func (f *fixture) open(t *testing.T, d workspace.Detail) api.Snapshot {
 	t.Helper()
 	s := f.read(t, d.Task.ID)
-	s, e := f.ex.Assign(f.ctx, f.owner, "assign", api.Assignment{Basis: basis(d, s), Subject: "agent"})
+	s, e := f.ex.Assign(f.ctx, f.owner, "assign", api.Assignment{TaskID: d.Task.ID, Subject: "agent"})
 	if e != nil {
 		t.Fatal(e)
 	}
-	s, e = f.ex.Open(f.ctx, f.agent, "open", api.Open{Basis: basis(d, s)})
+	s, e = f.ex.Open(f.ctx, f.agent, "open", api.Open{TaskID: d.Task.ID, BasisVersion: d.Task.BasisVersion})
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -134,11 +132,8 @@ func TestApprovalCompletesTheTask(t *testing.T) {
 	d := f.create(t)
 	s := f.open(t, d)
 	round := s.Position.RoundID
-	if _, e := f.tasks.Edit(f.ctx, f.owner, "edit-running", workspace.Edit{TaskID: d.Task.ID, Title: "changed", ExpectedVersion: d.Task.Version}); !errors.Is(e, fault.ErrConflict) {
-		t.Fatal("running basis edited", e)
-	}
 	var e error
-	s, e = f.results.Submit(f.ctx, f.agent, "submit", api.Submit{Basis: basis(d, s), ExecutionID: s.Execution.ID, Body: "immutable result"})
+	s, e = f.results.Submit(f.ctx, f.agent, "submit", api.Submit{TaskID: d.Task.ID, ExecutionID: s.Execution.ID, Body: "immutable result"})
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -146,9 +141,25 @@ func TestApprovalCompletesTheTask(t *testing.T) {
 		t.Fatalf("submission %+v", s)
 	}
 	submitted := *s.Submission
-	s, e = f.results.Review(f.ctx, f.owner, "approve", api.Review{Basis: basis(d, s), Verdict: acceptance.Verdict{SubmissionID: submitted.ID, CommitID: submitted.CommitID, Outcome: "approved"}})
+	events, _ := build.GetByID[record.EventLog](f.graph, "sql")
+	before, e := events.ReadEvents(f.ctx, "t", 0, 1000)
 	if e != nil {
 		t.Fatal(e)
+	}
+	s, e = f.results.Review(f.ctx, f.owner, "approve", api.Review{TaskID: d.Task.ID, Verdict: acceptance.Verdict{SubmissionID: submitted.ID, CommitID: submitted.CommitID, Outcome: "approved", Reason: "符合标准"}})
+	if e != nil {
+		t.Fatal(e)
+	}
+	after, e := events.ReadEvents(f.ctx, "t", 0, 1000)
+	if e != nil || len(after) != len(before)+1 || after[len(after)-1].Kind != record.EventTaskChanged {
+		t.Fatal("a command must write exactly one task event", len(before), len(after), e)
+	}
+	timeline, e := f.commits.List(f.ctx, "t", d.Task.ID, 0, 100)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if last := timeline[len(timeline)-1]; last.Kind != acceptance.KindApproved || last.RefID != submitted.CommitID || last.Body != "符合标准" {
+		t.Fatal("verdict missing from the timeline", last)
 	}
 	if s.Position.Status != "completed" || s.Position.RoundID != round || s.NextActor != "" {
 		t.Fatalf("approval did not complete %+v", s.Position)
@@ -157,10 +168,7 @@ func TestApprovalCompletesTheTask(t *testing.T) {
 	if e != nil || c.Body != "immutable result" {
 		t.Fatal("result content drift", c, e)
 	}
-	if _, e = f.results.Withdraw(f.ctx, f.owner, "withdraw-terminal", api.Withdraw{Basis: basis(d, s), SubmissionID: submitted.ID}); !errors.Is(e, fault.ErrConflict) {
-		t.Fatal("terminal modified", e)
-	}
-	reopened, e := f.controls.Reopen(f.ctx, f.owner, "reopen", basis(d, s))
+	reopened, e := f.controls.Restart(f.ctx, f.owner, "reopen", api.Restart{TaskID: d.Task.ID, RoundID: s.Position.RoundID})
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -172,37 +180,75 @@ func TestApprovalCompletesTheTask(t *testing.T) {
 		t.Fatal("history lost", e)
 	}
 }
+
+// The basis may change while work runs. Work on the old basis can no longer
+// submit, a result on it stops counting, and the executor claims again.
+func TestBasisEditDuringWorkRequiresNewClaim(t *testing.T) {
+	f := setup(t, nil)
+	d := f.create(t)
+	s := f.open(t, d)
+	old := *s.Execution
+	first, e := f.results.Submit(f.ctx, f.agent, "first", api.Submit{TaskID: d.Task.ID, ExecutionID: old.ID, Body: "first"})
+	if e != nil || first.Position.State != "accepting" {
+		t.Fatal("first result", first.Position, e)
+	}
+	edited, e := f.tasks.Edit(f.ctx, f.owner, "edit-running", workspace.Edit{TaskID: d.Task.ID, Title: "task", Goal: "new goal", Criteria: "criteria", BasisVersion: d.Task.BasisVersion})
+	if e != nil {
+		t.Fatal("basis edit rejected", e)
+	}
+	if edited.Position.State != "executing" || edited.Position.Waiting != "结果依据已失效" {
+		t.Fatal("stale result still under review", edited.Position)
+	}
+	if _, e = f.results.Submit(f.ctx, f.agent, "stale", api.Submit{TaskID: d.Task.ID, ExecutionID: old.ID, Body: "stale"}); !errors.Is(e, fault.ErrConflict) {
+		t.Fatal("old basis submitted", e)
+	}
+	agentView, e := f.query.Read(f.ctx, f.agent, d.Task.ID)
+	if e != nil || agentView.Blocked[api.ActionSubmit] != api.ReasonBasisChanged || !agentView.CanOpen {
+		t.Fatal("agent not told to claim again", agentView.Blocked, agentView.CanOpen, e)
+	}
+	if _, e = f.ex.Open(f.ctx, f.agent, "stale-open", api.Open{TaskID: d.Task.ID, BasisVersion: d.Task.BasisVersion}); !errors.Is(e, fault.ErrConflict) {
+		t.Fatal("claim on unseen basis", e)
+	}
+	s, e = f.ex.Open(f.ctx, f.agent, "reopen", api.Open{TaskID: d.Task.ID, BasisVersion: edited.Task.BasisVersion})
+	if e != nil || s.Execution.ID == old.ID {
+		t.Fatal("new claim", e)
+	}
+	if s, e = f.results.Submit(f.ctx, f.agent, "second", api.Submit{TaskID: d.Task.ID, ExecutionID: s.Execution.ID, Body: "second"}); e != nil || s.Position.State != "accepting" {
+		t.Fatal("new result", s.Position, e)
+	}
+}
+
 func TestCancelFencesWritesImmediately(t *testing.T) {
 	f := setup(t, nil)
 	d := f.create(t)
 	s := f.open(t, d)
 	old := *s.Execution
 	var e error
-	s, e = f.controls.Cancel(f.ctx, f.owner, "cancel", basis(d, s))
+	s, e = f.controls.Cancel(f.ctx, f.owner, "cancel", api.Cancel{TaskID: d.Task.ID})
 	if e != nil {
 		t.Fatal(e)
 	}
 	if s.Position.Status != "cancelled" || s.Execution.Writable || s.NextActor != "" {
 		t.Fatal("cancel did not fence", s.Execution, s.NextActor)
 	}
-	if _, e = f.results.Submit(f.ctx, f.agent, "late", api.Submit{Basis: basis(d, s), ExecutionID: old.ID, Body: "late"}); !errors.Is(e, fault.ErrConflict) {
+	if _, e = f.results.Submit(f.ctx, f.agent, "late", api.Submit{TaskID: d.Task.ID, ExecutionID: old.ID, Body: "late"}); !errors.Is(e, fault.ErrConflict) {
 		t.Fatal("late write", e)
 	}
 	if items, _ := f.query.Inbox(f.ctx, f.agent); len(items) != 0 {
 		t.Fatal("cancelled task still waits on the agent", items)
 	}
-	s, e = f.controls.Reopen(f.ctx, f.owner, "reopen", basis(d, s))
+	s, e = f.controls.Restart(f.ctx, f.owner, "reopen", api.Restart{TaskID: d.Task.ID, RoundID: s.Position.RoundID})
 	if e != nil {
 		t.Fatal(e)
 	}
-	s, e = f.ex.Open(f.ctx, f.agent, "new-open", api.Open{Basis: basis(d, s)})
+	s, e = f.ex.Open(f.ctx, f.agent, "new-open", api.Open{TaskID: d.Task.ID, BasisVersion: d.Task.BasisVersion})
 	if e != nil {
 		t.Fatal(e)
 	}
 	if s.Execution.ID == old.ID {
 		t.Fatal("generation not advanced")
 	}
-	if _, e = f.results.Submit(f.ctx, f.agent, "old-again", api.Submit{Basis: basis(d, s), ExecutionID: old.ID, Body: "old"}); !errors.Is(e, fault.ErrConflict) {
+	if _, e = f.results.Submit(f.ctx, f.agent, "old-again", api.Submit{TaskID: d.Task.ID, ExecutionID: old.ID, Body: "old"}); !errors.Is(e, fault.ErrConflict) {
 		t.Fatal("old generation wrote into the new round", e)
 	}
 }
@@ -211,11 +257,11 @@ func TestConcurrentClaimAndSilenceKeepsExecution(t *testing.T) {
 	d := f.create(t)
 	s := f.read(t, d.Task.ID)
 	var e error
-	s, e = f.ex.Assign(f.ctx, f.owner, "assign", api.Assignment{Basis: basis(d, s), Subject: "agent"})
+	s, e = f.ex.Assign(f.ctx, f.owner, "assign", api.Assignment{TaskID: d.Task.ID, Subject: "agent"})
 	if e != nil {
 		t.Fatal(e)
 	}
-	in := api.Open{Basis: basis(d, s)}
+	in := api.Open{TaskID: d.Task.ID, BasisVersion: d.Task.BasisVersion}
 	errs := make(chan error, 2)
 	var wg sync.WaitGroup
 	for _, key := range []string{"claim-a", "claim-b"} {
@@ -242,39 +288,32 @@ func TestConcurrentClaimAndSilenceKeepsExecution(t *testing.T) {
 	if !s.Execution.Writable {
 		t.Fatal("execution changed without a command")
 	}
-	if _, e = f.ex.Open(f.ctx, f.agent, "blind-retry", api.Open{Basis: basis(d, s)}); !errors.Is(e, fault.ErrConflict) {
+	if _, e = f.ex.Open(f.ctx, f.agent, "blind-retry", api.Open{TaskID: d.Task.ID, BasisVersion: d.Task.BasisVersion}); !errors.Is(e, fault.ErrConflict) {
 		t.Fatal("blind retry", e)
 	}
 }
 
 // Approval completes a task, so a replacement candidate can only arrive while a
-// review is pending; it replaces that review and withdrawing never restores it.
-func TestNewCandidateReplacesPendingReviewAndWithdrawDoesNotRestoreOld(t *testing.T) {
+// review is pending; it replaces that review and an old verdict cannot apply.
+func TestNewCandidateReplacesPendingReview(t *testing.T) {
 	f := setup(t, nil)
 	d := f.create(t)
 	s := f.open(t, d)
 	var e error
-	s, e = f.results.Submit(f.ctx, f.agent, "first", api.Submit{Basis: basis(d, s), ExecutionID: s.Execution.ID, Body: "first"})
+	s, e = f.results.Submit(f.ctx, f.agent, "first", api.Submit{TaskID: d.Task.ID, ExecutionID: s.Execution.ID, Body: "first"})
 	if e != nil {
 		t.Fatal(e)
 	}
 	old := *s.Submission
-	s, e = f.results.Submit(f.ctx, f.agent, "second", api.Submit{Basis: basis(d, s), ExecutionID: s.Execution.ID, Body: "second"})
+	s, e = f.results.Submit(f.ctx, f.agent, "second", api.Submit{TaskID: d.Task.ID, ExecutionID: s.Execution.ID, Body: "second"})
 	if e != nil {
 		t.Fatal(e)
 	}
 	if s.Review == nil || s.Review.Outcome != "pending" || s.Review.SubmissionID == old.ID {
 		t.Fatal("old review inherited")
 	}
-	if _, e = f.results.Review(f.ctx, f.owner, "stale-review", api.Review{Basis: basis(d, s), Verdict: acceptance.Verdict{SubmissionID: old.ID, CommitID: old.CommitID, Outcome: "approved"}}); !errors.Is(e, fault.ErrConflict) {
+	if _, e = f.results.Review(f.ctx, f.owner, "stale-review", api.Review{TaskID: d.Task.ID, Verdict: acceptance.Verdict{SubmissionID: old.ID, CommitID: old.CommitID, Outcome: "approved"}}); !errors.Is(e, fault.ErrConflict) {
 		t.Fatal("old review click", e)
-	}
-	s, e = f.results.Withdraw(f.ctx, f.owner, "withdraw", api.Withdraw{Basis: basis(d, s), SubmissionID: s.Submission.ID})
-	if e != nil {
-		t.Fatal(e)
-	}
-	if s.Submission != nil || s.Review != nil {
-		t.Fatal("old candidate restored")
 	}
 }
 func TestFlowWithoutAcceptanceCompletesOnSubmission(t *testing.T) {
@@ -282,7 +321,7 @@ func TestFlowWithoutAcceptanceCompletesOnSubmission(t *testing.T) {
 	d := f.create(t)
 	s := f.open(t, d)
 	var e error
-	s, e = f.results.Submit(f.ctx, f.agent, "submit", api.Submit{Basis: basis(d, s), ExecutionID: s.Execution.ID, Body: "auto result"})
+	s, e = f.results.Submit(f.ctx, f.agent, "submit", api.Submit{TaskID: d.Task.ID, ExecutionID: s.Execution.ID, Body: "auto result"})
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -298,30 +337,30 @@ func TestSameRoundRetryFencesOldExecutionAndReturnAdoptsBasis(t *testing.T) {
 	old := *s.Execution
 	oldRound := s.Position.RoundID
 	// A restarted agent on a new instance claims again; the old generation is fenced.
-	other, e := f.security.Issue(f.ctx, f.owner, "other-instance", capsecurity.IssueInput{Tenant: "t", Subject: "agent", InstanceID: "machine-2", Incarnation: "boot-2", ExpiresAt: time.Now().Add(time.Hour)})
+	other, e := f.security.Issue(f.ctx, f.owner, "other-instance", capsecurity.IssueInput{Tenant: "t", Subject: "agent", ExpiresAt: time.Now().Add(time.Hour)})
 	if e != nil {
 		t.Fatal(e)
 	}
 	s = f.read(t, d.Task.ID)
-	s, e = f.ex.Open(f.ctx, other.Secret, "retry", api.Open{Basis: basis(d, s)})
+	s, e = f.ex.Open(f.ctx, other.Secret, "retry", api.Open{TaskID: d.Task.ID, BasisVersion: d.Task.BasisVersion})
 	if e != nil {
 		t.Fatal(e)
 	}
 	if s.Position.RoundID != oldRound || s.Execution.ID == old.ID {
 		t.Fatal("retry switched round or reused generation")
 	}
-	if _, e = f.results.Submit(f.ctx, f.agent, "old-result", api.Submit{Basis: basis(d, s), ExecutionID: old.ID, Body: "late old"}); !errors.Is(e, fault.ErrConflict) {
+	if _, e = f.results.Submit(f.ctx, f.agent, "old-result", api.Submit{TaskID: d.Task.ID, ExecutionID: old.ID, Body: "late old"}); !errors.Is(e, fault.ErrConflict) {
 		t.Fatal("old execution wrote", e)
 	}
 	s = f.read(t, d.Task.ID)
-	s, e = f.controls.Return(f.ctx, f.owner, "return", basis(d, s))
+	s, e = f.controls.Restart(f.ctx, f.owner, "return", api.Restart{TaskID: d.Task.ID, RoundID: s.Position.RoundID})
 	if e != nil {
 		t.Fatal(e)
 	}
 	if s.Position.RoundID == oldRound || s.Submission != nil {
 		t.Fatal("return did not isolate round")
 	}
-	edited, e := f.tasks.Edit(f.ctx, f.owner, "adopt-basis", workspace.Edit{TaskID: d.Task.ID, Title: "new goal", Goal: "new", Criteria: "new", ExpectedVersion: d.Task.Version})
+	edited, e := f.tasks.Edit(f.ctx, f.owner, "adopt-basis", workspace.Edit{TaskID: d.Task.ID, Title: "new goal", Goal: "new", Criteria: "new", BasisVersion: d.Task.BasisVersion})
 	if e != nil {
 		t.Fatal("new round could not adopt basis", e)
 	}

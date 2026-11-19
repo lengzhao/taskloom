@@ -5,13 +5,14 @@ import "context"
 
 type Task struct {
 	Tenant, ID, Title, Goal, Criteria, Owner, ProjectID string
-	Version, BasisVersion                               int64
+	// BasisVersion is the task's only version: it changes with title, goal or
+	// criteria. Executions, results, reviews and edits are pinned to it.
+	BasisVersion int64
 }
 
 // BasisChange contains only fields the named basis update may change.
 type BasisChange struct {
 	Tenant, TaskID, Title, Goal, Criteria string
-	ExpectedVersion                       int64
 }
 
 // Reader is used by access checks without write authority.
@@ -27,7 +28,7 @@ type Lister interface {
 
 // Store is the task use-case consumer's cohesive read/write capability.
 type Store interface {
-	SetProject(ctx context.Context, tenant, taskID, projectID string, expectedVersion int64) (Task, error)
+	SetProject(ctx context.Context, tenant, taskID, projectID string) (Task, error)
 	Lister
 	CreateTask(ctx context.Context, value Task) error
 	UpdateBasis(ctx context.Context, change BasisChange) (Task, error)

@@ -12,7 +12,7 @@ http:
     listen: 127.0.0.1:8080
     apiPrefix: /v1
   deps:
-    modules: [health, workspace-api, workflow-api, mcp-api]
+    modules: [health, workspace-api, workflow-api, mcp-api, audit-api]
 health:
   use: api/health
 
@@ -49,7 +49,6 @@ command-runtime:
     identity: identity
     authorization: access
     audit: sql
-    events: sql
 security:
   use: commands/security
   deps:
@@ -70,6 +69,7 @@ catalog:
     members: sql
     store: sql
     commands: command-runtime
+    events: sql
 workspace:
   use: workspace/tasks
   deps:
@@ -132,7 +132,6 @@ result-commands:
     executions: sql
     results: sql
     commits: sql
-    reviews: sql
     snapshots: workflow-query
     events: sql
 question-commands:
@@ -175,4 +174,12 @@ mcp-api:
     executions: execution-commands
     results: result-commands
     questions: question-commands
+    security: workspace-api
+audit-api:
+  use: api/audit
+  deps:
+    transactions: sql
+    identity: identity
+    authorization: access
+    audit: sql
     security: workspace-api

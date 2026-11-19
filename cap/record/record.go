@@ -3,6 +3,7 @@ package record
 
 import (
 	"context"
+	"time"
 )
 
 type RequestKey struct{ Tenant, Subject, Operation, Key string }
@@ -17,17 +18,31 @@ type Receipts interface {
 }
 type Audit struct {
 	ID, Tenant, Subject, Operation, Resource, Outcome, Reason string
-	OwnerID, InstanceID, Incarnation                          string
+	OwnerID, CredentialID                                     string
+	At                                                        time.Time
 }
 type AuditWriter interface {
 	AppendAudit(ctx context.Context, value Audit) error
 }
+
+// AuditReader lists a tenant's audit trail, newest first.
+type AuditReader interface {
+	ListAudit(ctx context.Context, tenant string, limit int) ([]Audit, error)
+}
+// Event says that a resource changed; readers re-read current facts.
 type Event struct {
-	ID                     string
 	Sequence               int64
 	Tenant, Resource, Kind string
-	Payload                []byte
 }
+
+// Each use case appends exactly one event naming what changed; the command
+// runtime writes none of its own.
+const (
+	// EventTaskChanged names a task whose facts changed; Resource is the task ID.
+	EventTaskChanged = "task.changed"
+	// EventAccessChanged means memberships, participants or projects changed.
+	EventAccessChanged = "access.changed"
+)
 
 type EventWriter interface {
 	AppendEvent(ctx context.Context, value Event) error

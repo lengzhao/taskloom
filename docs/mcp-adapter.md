@@ -29,7 +29,7 @@ claude mcp add --transport http taskloom http://localhost:8899/v1/mcp \
 
 ## 约束
 
-- **basis**：read_task 和每次写操作返回不透明 basis（任务、轮次、依据版本、流程修订、执行 ID），写操作须原样带回；不会替模型取最新版本写入，过期视图得到冲突和“先 read_task”的提示。
+- **basis**：read_task 和每次写操作返回不透明 basis（任务、轮次、依据版本、执行 ID），写操作须原样带回；不会替模型取最新版本写入，过期视图得到冲突和“先 read_task”的提示。
 - **幂等**：同一会话内相同工具与参数复用同一幂等键，客户端重试不会重复写入；因此同一会话内完全相同的留言只记录一次。
 - **进展而非保活**：执行没有租约或超时。认领、本人留言、提问、提交结果都会更新执行的最近进展时间，负责人据此判断是否介入；instructions 提示模型长时间工作时每 10～15 分钟汇报一次。Agent 重启后用同一业务凭据（同实例）read_task 即可继续原执行，不新建执行。沉默或断线不改变执行。
 - **推送**：不订阅变化流；模型通过 inbox/read_task 按需读取，人的留言与回答在下次读取时可见。实时 steer 仍归 Agent 层。
@@ -44,7 +44,7 @@ claude mcp add --transport http taskloom http://localhost:8899/v1/mcp \
 # 1. 让两个容器在同一网络（taskloom 重建时用 --network taskloom-net 启动即可）
 docker network create taskloom-net
 docker network connect taskloom-net taskloom
-# 2. 为 Agent 签发业务凭据（实例 agentkit-docker，30 天），写入 git 忽略的 deploy/agent/taskloom.env，不打印
+# 2. 为 Agent 签发业务凭据（一张凭据即一个运行实例，30 天），写入 git 忽略的 deploy/agent/taskloom.env，不打印
 sh deploy/agent/issue-credential.sh
 # 3. 复制 deploy/agent/.env.example 为 deploy/agent/.env，自行填入模型 Key
 # 4. 构建并启动

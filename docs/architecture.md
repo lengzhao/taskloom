@@ -1,55 +1,65 @@
-# Taskloom 整体设计
+# Taskloom 架构
 
-Taskloom 是人与 Agent 协作的任务系统。采用模块化单体：公共能力接口经 typed Deps 和配置组合，PluginKit 注册/构建；GORM 封装在 SQL 仓储内，本地 SQLite，生产配置驱动和 DSN。本文是目标设计；当前实现进度见 [README](../README.md#当前状态)。
+Taskloom 是人与 Agent 协作的任务系统，采用模块化单体：公共能力接口放 `cap/*`，实现放 `plugins/*`，经 typed Deps 与两层配置组合，由 PluginKit 注册和构建；所有写入共享一个 SQL 事务边界。本文描述当前实现；业务不变量见[核心契约](core-contracts.md)，流转见[任务流程](task-flow.md)，接口见 [API 与权限](api.md)。实际装配以 [base.yaml](../base.yaml)、接口以 `cap/*` 代码为准。
 
-## 四种事实
+## 只存能核实的事实
 
-| 模型 | 保存什么 | 不承担什么 |
+| 事实 | 保存什么 | 不保存什么 |
 | --- | --- | --- |
-| Task | 当前目标、标准、负责人与依据版本 | 聊天上下文、模型运行 |
-| Commit | 不可变协作内容、作者归属、引用、提交顺序 | 修改状态、授权、通用动作执行 |
-| 领域事实 | 执行、问题、交付、验收、文件等结构化记录 | 根据自然语言猜测正式决定 |
-| Flow position | 绑定定义、轮次、状态位置、进入标识和等待原因 | 复制各领域判断规则 |
+| Task | 标题、目标、标准、负责人、项目归属及唯一版本 BasisVersion | 聊天上下文、模型运行 |
+| Commit | 不可变正文、作者及代理归属、类型、引用、对应依据版本、提交序号 | 可变状态、通用动作 |
+| 领域记录 | 分配、执行（写资格、凭据、进展时间）、交付登记、问题、成员、参与关系 | 正文副本、由自然语言猜测的决定 |
+| 流程位置 | 阶段、轮次、创建时固定的验收方式 | 当前步骤与等待原因（每次推导） |
 
-Task 与 Flow position 分表/接口归属，task/facts 不写状态。正文唯一保存在 Commit，结构化事实引用 CommitID。没有 Conversation、Message 或消息修订层，也不从日志重放构建整个业务数据库。
+正文只存于 commit，结构化记录只引用 CommitID；验收结论本身就是一条 commit。没有 Conversation/Message 层，也不从日志重放构建数据库。Taskloom 观察不到外部进程，因此不记录"在线""已停止"等无法核实的状态。
 
-## Commit 与命名动作
+## 模块装配
 
-普通评论、进度、提问可以追加 commit。更正追加新 commit，RefID 指向同任务旧记录，历史内容不覆盖；更正不撤回旧结果或旧决定。界面将 commits 和受权业务事实展示为时间线。
+| 节点（use） | 职责 | Deps |
+| --- | --- | --- |
+| server、http（transport/http） | 资源/组件生命周期；路由挂载与 API 模块启停 | 2、1 |
+| sql（storage/sql） | GORM 连接、迁移与全部仓储，不含业务判断 | 0 |
+| identity（identity/local）、access（access/default） | 凭据认证；按成员/负责人/参与关系授权 | 1、2 |
+| command-runtime（commands/runtime） | 命令事务、幂等回执、审计 | 5 |
+| flow（task/flow） | 阶段/轮次唯一写入者，步骤由事实推导 | 5 |
+| workspace（workspace/tasks） | 任务创建/依据修改/评论/参与者/项目归属/变化补拉 | 12 |
+| execution-commands、result-commands、question-commands、flow-commands | 分配与认领；提交与验收；提问与回答；取消与开新轮 | 9、8、9、6 |
+| workflow-query（query/workflow） | 只读快照、可用操作原因、收件箱 | 10 |
+| security（commands/security）、catalog（catalog/projects） | 身份/成员/凭据/密码管理；空间与项目 | 9、6 |
+| workspace-api、workflow-api、mcp-api、audit-api、health | HTTP 与 MCP 协议适配、管理员审计查询、存活检查 | 6、6、7、5、0 |
 
-正式修改目标、提出阻塞问题、回答/解决问题、提交结果、验收、取消和重开分别是命名用例。用例认证、授权、校验版本/依据，然后同事务更新自身领域事实、追加需要的 commit、审计、outbox 和幂等回执。客户端不能通过任意 kind 或正文触发业务动作；commit 类型由对应命令决定。
+超过 5 个 Deps 的模块都是同一命令事务内的协调边界：每个字段是一个独立能力接口（命令生命周期、各领域事实、快照、事件），不是服务定位器；拆开只会把同一事务协调挪到别处。workspace 的 12 项是工作台纵向切片的历史边界，新增执行/验收能力已放入独立命令模块，不再向它堆积。
 
-普通 commit 不增加 BasisVersion，不自动交付，不改变任务终态。结果正文也是 commit，但成为当前结果必须有显式 Submission 登记。验收绑定 SubmissionID、CommitID、Basis 与验收人；更正结果必须重新提交。撤回只撤销当前候选，不恢复旧结果。
+插件之间只经 Deps 注入接口，不 import 其他插件实现；只读消费者不获得写接口；无消费者不预建能力。
 
-## 模块与依赖
+## 命令生命周期
 
-- task/facts：目标、标准、负责人和策略；自己的仓储。
-- commit/immutable：追加、精确读取、提交序分页；自己的仓储，文件阶段组合引用保留能力。
-- decision/facts：阻塞问题、答案与解决事实，引用 commit；普通评论不解除阻塞。
-- execution/facts：执行记录（ExecutionID）、写入资格、最近进展，旧实例写入隔离。
-- delivery/reply：结果登记及当前轮候选引用，不保存正文或评审规则。
-- acceptance/facts：负责人对某次交付的结论（approved/rejected）及历史；待验收不存记录。
-- task/flow：阶段/轮次唯一写入者；当前步骤由依据、交付、结论和未答问题推导。
-- 命名命令与查询：依赖上述能力及事务、身份、权限；HTTP 只协议适配，薄界面调用同一 API。
+每个写命令由 `runtime/command` 包装，在一个 SQL 事务内依次：
 
-当前实例与依赖以 [base.yaml](../base.yaml) 为准，接口以 `cap/*` 代码为准。SQL 实现各领域仓储，不能把领域规则放入 SQL。插件不直接 import 其他插件实现；共享事务不代表共享领域所有权。超过五个 Deps 记录协调职责及拆分理由，不把不同接口打包规避计数。
+1. 更新协调行取得全局写锁（全库写入串行化，吞吐上限待 M11 评估）。
+2. 认证凭据，检查当前成员/任务关系授权。
+3. 查幂等回执：命名空间为租户 + 实际主体 + 操作 + 键，载荷为强类型输入的摘要；同键同载荷返回原结果，不同载荷冲突；重放前仍重新鉴权。
+4. 执行领域回调：检查客户端固定的对象/版本，写领域事实与 commit，写一条事件（`task.changed` 或 `access.changed`）。
+5. 写成功审计与回执，提交。
 
-## 流程组合
+任一步失败整体回滚，嵌套失败标记 rollback-only；认证成功后的拒绝在回滚后另开短事务写审计。在全局写锁之下，仓储写入是普通更新，不做仓储级比较交换；若将来改为按任务加锁，再按需引入条件更新。事务内不调用 Agent、S3 或远端身份。
 
-步骤 ready → executing → accepting → completed 不是插件链，而是从事实推导的结果（规则见[任务流程](task-flow-plugins.md)）。flow 只存阶段、轮次与创建时固定的验收方式 manual/none；部署改默认值只影响新任务。不能把尚未实现的条件配置成假成功。
+事件序号在持锁事务内分配，因此即为提交顺序；变化补拉按序号读取并逐条重新鉴权，详见 [API](api.md#变化补拉)。
 
-正常推进保留 RoundID，退回/重开新轮；执行以 ExecutionID + 写资格单独隔离。认领在同事务通过 CheckOpen 重查。任务完成必须满足有效候选、当前依据、需要时的负责人通过及无未答问题；转交、重新认领、退回、重开、取消立即失效旧执行写资格；普通 commit 或 Hook 不能绕过。Taskloom 不跟踪外部进程是否停止。
+## 存储与迁移
 
-## 一致性、权限与变化流
+GORM v1.31.1，SQLite/MySQL/PostgreSQL 驱动 v1.6.0（SQLite 驱动需 CGO）。默认 `driver: sqlite`、`dsn: taskloom.db`，生产在 config.yaml 覆盖 driver 与原生 DSN；SQLite 使用 immediate 事务、外键检查和 5 秒 busy timeout。MySQL/PostgreSQL 已编入但未连接真实服务验证。
 
-同 SQL UnitOfWork 提交领域事实、commit、审计、outbox 和回执；嵌套失败使整个事务 rollback-only。幂等命名空间 tenant/subject/operation/key，重放仍校验当前权限；业务资格按[成员与任务关系](permissions.md)判断。实际作者由认证产生，Agent 不继承 owner 权限；历史、引用、搜索、附件和变化流逐次检查当前任务范围。
+迁移按模块 ID 顺序登记校验和；已应用的未知迁移或校验和不一致时拒绝打开数据库，不做自动破坏性升级。当前处于开发阶段，表结构变更直接修改迁移定义，本地旧库需删除后重新初始化。
 
-Commit 的 Sequence 与 outbox 游标分别用于内容分页与变化恢复，不互相冒充；均保证提交顺序。用户变化流不直接暴露内部 outbox。先 StartCursor、再快照、再补拉；支持重复、游标过期明确重同步。新任务可通过动态权限范围发现。
+## 身份、凭据与审计
 
-SQL/S3 不共享事务，文件版本固定与删除补偿按 M07 实现。定义、材料及记录保留遵守历史引用；不承诺外部链接内容快照或任意工具副作用恰好一次。
+- 人和 Agent 是稳定主体；Agent 的所属人只用于归属，不传递权限。
+- 凭据是 256 位随机秘密，库中只存 SHA-256 摘要、有效期与撤销状态，每次请求查询当前状态。认证结果带上所用凭据 ID：一张 Agent 凭据即一个运行实例，执行绑定认领时的凭据。
+- 人用用户名和密码登录（PBKDF2-SHA256，600000 次，随机盐），登录得到一小时会话凭据，浏览器只持有 HttpOnly、SameSite Cookie；按来源 IP 每分钟限 20 次尝试。修改或重置密码撤销该用户全部凭据与会话。
+- 首个管理员初始化、离线恢复和 Agent 登记只能用本地 `taskloom-admin` CLI，记录操作者与原因；没有匿名初始化 API。
+- 每个命令（成功与被拒绝）写审计；只有有效人类管理员可查询（`GET /v1/audit`）。
 
-## 交付顺序与相关文档
+## 生命周期 owner
 
-M03 存储/安全基础、M04 任务/commit 工作台、M05 执行/结果/验收/取消已在本地实现；M06 为真实 Agent 适配与恢复联调；文件、树依赖、提醒及历史恢复按[清单](../todo.md)推进。
-
-核心约束见[核心契约](core-contracts.md)，内容与交付见[Commit 与结果交付](reply-delivery.md)，Go 接口以 `cap/*` 代码为准。文档及依赖静态检查不能代替运行验证。
+构造函数只做轻量初始化。server 先按顺序打开 resources（sql），再运行 components（http）；http 拥有各 API 模块的启停与会话清理。退出时先停组件再逆序关闭资源。没有后台扫描器或无 owner 的 goroutine。

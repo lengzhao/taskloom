@@ -68,8 +68,9 @@ func (s *Query) ReadFacts(ctx context.Context, t task.Task) (api.Snapshot, error
 			return out, e
 		}
 		out.ResultCommit = &c
-		r, e := s.d.Reviews.GetReview(ctx, t.Tenant, t.ID, pos.RoundID, v.ID)
+		r, e := s.d.Reviews.LatestReview(ctx, t.Tenant, t.ID, v.CommitID)
 		if e == nil {
+			r.RoundID, r.SubmissionID = pos.RoundID, v.ID
 			out.Review = &r
 		} else if !errors.Is(e, fault.ErrNotFound) {
 			return out, e
@@ -201,12 +202,12 @@ func (s *Query) openBlock(ctx context.Context, p identity.Principal, t task.Task
 	switch {
 	case out.Position.Status != flow.PhaseActive:
 		return api.ReasonTaskNotActive
-	case p.Kind != "human" && (p.Kind != "agent" || p.InstanceID == "" || p.Incarnation == ""):
+	case p.Kind != "human" && (p.Kind != "agent" || p.CredentialID == ""):
 		return api.ReasonCredential
 	case out.Assignee != p.ID:
 		return api.ReasonNotAssigned
-	case out.Execution != nil && out.Execution.Writable && out.Execution.RoundID == out.Position.RoundID && ownExecution(p, *out.Execution):
-		// Already claimed by this caller: continue it rather than claim again.
+	case out.Execution != nil && out.Execution.Writable && out.Execution.RoundID == out.Position.RoundID && out.Execution.BasisVersion == t.BasisVersion && ownExecution(p, *out.Execution):
+		// Already claimed by this caller on the current basis: continue it rather than claim again.
 		return api.ReasonExecutionInProgress
 	}
 	if _, e := s.d.Flow.CheckOpen(ctx, t); e != nil {
@@ -219,7 +220,7 @@ func ownExecution(p identity.Principal, v execution.Execution) bool {
 	if v.Manual {
 		return p.Kind == "human" && v.Subject == p.ID
 	}
-	return p.Kind == "agent" && v.Subject == p.ID && v.InstanceID == p.InstanceID && v.Incarnation == p.Incarnation
+	return p.Kind == "agent" && v.Subject == p.ID && v.CredentialID == p.CredentialID
 }
 
 func submitBlock(p identity.Principal, t task.Task, pos flow.Position, v execution.Execution) string {

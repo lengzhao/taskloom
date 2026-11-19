@@ -20,7 +20,7 @@ func TestExecutorProgressIsRecordedWithoutChangingTheFlow(t *testing.T) {
 		t.Fatal("open is progress")
 	}
 	at := func() time.Time { t.Helper(); return f.read(t, d.Task.ID).Execution.ProgressAt }
-	revision := f.read(t, d.Task.ID).Position.Revision
+	position := f.read(t, d.Task.ID).Position
 
 	time.Sleep(5 * time.Millisecond)
 	if _, e := f.tasks.Comment(f.ctx, f.owner, "owner-note", workspace.Comment{TaskID: d.Task.ID, Body: "加油"}); e != nil {
@@ -36,8 +36,8 @@ func TestExecutorProgressIsRecordedWithoutChangingTheFlow(t *testing.T) {
 	if !commented.After(opened) {
 		t.Fatal("agent comment not recorded as progress")
 	}
-	if r := f.read(t, d.Task.ID); r.Position.Revision != revision {
-		t.Fatal("progress changed the flow revision")
+	if r := f.read(t, d.Task.ID); r.Position != position {
+		t.Fatal("progress changed the flow")
 	}
 
 	time.Sleep(5 * time.Millisecond)
@@ -51,7 +51,7 @@ func TestExecutorProgressIsRecordedWithoutChangingTheFlow(t *testing.T) {
 
 	time.Sleep(5 * time.Millisecond)
 	r := f.read(t, d.Task.ID)
-	if _, e := f.results.Submit(f.ctx, f.agent, "submit", api.Submit{Basis: basis(d, r), ExecutionID: r.Execution.ID, Body: "result"}); e != nil {
+	if _, e := f.results.Submit(f.ctx, f.agent, "submit", api.Submit{TaskID: d.Task.ID, ExecutionID: r.Execution.ID, Body: "result"}); e != nil {
 		t.Fatal(e)
 	}
 	if !at().After(asked) {

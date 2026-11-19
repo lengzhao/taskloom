@@ -22,9 +22,9 @@ type migration struct {
 var migrations = []migration{
 	{"identity/001", "principal-v1+credential-v2", []any{&principalRow{}, &credentialRow{}}},
 	{"command/001", "receipt-v1+audit-v1+event-v1", []any{&receiptRow{}, &auditRow{}, &eventRow{}}},
-	{"task/001", "task-facts-and-immutable-commits-v1", []any{&taskRow{}, &commitRow{}, &positionRow{}}},
+	{"task/001", "task-facts-and-immutable-commits-v2", []any{&taskRow{}, &commitRow{}, &positionRow{}}},
 	{"membership/001", "tenant-members-and-task-participants-v1", []any{&memberRow{}, &participantRow{}}},
-	{"workflow/001", "execution-submission-and-state-owned-review-v2", []any{&assignmentRow{}, &executionRow{}, &submissionRow{}, &reviewRow{}, &verdictRow{}, &positionHistoryRow{}}},
+	{"workflow/001", "execution-and-submission-v4", []any{&assignmentRow{}, &executionRow{}, &submissionRow{}}},
 	{"question/001", "round-scoped-input-requests-v1", []any{&questionRow{}}},
 	{"password/001", "salted-human-password-hash-v1", []any{&passwordRow{}}},
 	{"catalog/001", "workspace-and-project-metadata-v1", []any{&spaceRow{}, &projectRow{}}},

@@ -41,7 +41,7 @@ func (s *Service) Check(ctx context.Context, p identity.Principal, op, resource 
 		return az.ErrForbidden
 	}
 	switch op {
-	case "space.edit", "identity.create", "identity.issue", "identity.revoke", "identity.password", "member.set":
+	case "audit.read", "space.edit", "identity.create", "identity.issue", "identity.revoke", "identity.password", "member.set":
 		if resource == p.Tenant && m.Role == "admin" && p.Kind == "human" {
 			return nil
 		}
@@ -51,7 +51,7 @@ func (s *Service) Check(ctx context.Context, p identity.Principal, op, resource 
 			return nil
 		}
 		return az.ErrForbidden
-	case "task.project", "task.read", "task.edit", "commit.append", "participant.set", "execution.open", "execution.assign", "result.submit", "result.review", "result.withdraw", "task.cancel", "task.return", "task.reopen":
+	case "task.project", "task.read", "task.edit", "commit.append", "participant.set", "execution.open", "execution.assign", "result.submit", "result.review", "task.cancel", "task.restart":
 		t, e := s.d.Tasks.GetTask(ctx, p.Tenant, resource)
 		if errors.Is(e, fault.ErrNotFound) {
 			return az.ErrForbidden
@@ -83,7 +83,7 @@ func (s *Service) Check(ctx context.Context, p identity.Principal, op, resource 
 				}
 			}
 		}
-		if op == "task.edit" || op == "participant.set" || op == "execution.assign" || op == "task.cancel" || op == "task.return" || op == "task.reopen" {
+		if op == "task.edit" || op == "participant.set" || op == "execution.assign" || op == "task.cancel" || op == "task.restart" {
 			return az.ErrForbidden
 		}
 		// Execution commands recheck explicit assignment and instance/generation in

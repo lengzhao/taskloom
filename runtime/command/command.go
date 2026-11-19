@@ -18,20 +18,20 @@ import (
 	"github.com/lengzhao/taskloom/cap/unitofwork"
 )
 
-// Six separate dependencies are intentional: transaction, request persistence,
-// authentication, authorization, audit and events must not become one service.
+// Five separate dependencies are intentional: transaction, request persistence,
+// authentication, authorization and audit must not become one service. Events
+// are written by each use case, which knows what actually changed.
 type Deps struct {
 	Transactions  unitofwork.Manager       `json:"transactions"`
 	Requests      record.Receipts          `json:"requests"`
 	Identity      identity.Authenticator   `json:"identity"`
 	Authorization authorization.Authorizer `json:"authorization"`
 	Audit         record.AuditWriter       `json:"audit"`
-	Events        record.EventWriter       `json:"events"`
 }
 type Runner struct{ d Deps }
 
 func New(d Deps) (*Runner, error) {
-	if d.Transactions == nil || d.Requests == nil || d.Identity == nil || d.Authorization == nil || d.Audit == nil || d.Events == nil {
+	if d.Transactions == nil || d.Requests == nil || d.Identity == nil || d.Authorization == nil || d.Audit == nil {
 		return nil, errors.New("command dependencies required")
 	}
 	return &Runner{d}, nil
@@ -101,9 +101,6 @@ func (r *Runner) Do(ctx context.Context, req capcommand.Request, digest string, 
 		if err = r.d.Audit.AppendAudit(tx, actorAudit(actor, req.Operation, req.Resource, "committed")); err != nil {
 			return err
 		}
-		if err = r.d.Events.AppendEvent(tx, record.Event{Tenant: actor.Tenant, Resource: req.Resource, Kind: req.Operation}); err != nil {
-			return err
-		}
 		return r.d.Requests.SaveReceipt(tx, record.Receipt{RequestKey: key, Digest: digest, Result: result})
 	})
 	if err != nil {
@@ -125,5 +122,5 @@ func (r *Runner) Do(ctx context.Context, req capcommand.Request, digest string, 
 }
 
 func actorAudit(p identity.Principal, op, resource, outcome string) record.Audit {
-	return record.Audit{Tenant: p.Tenant, Subject: p.ID, Operation: op, Resource: resource, Outcome: outcome, OwnerID: p.OwnerID, InstanceID: p.InstanceID, Incarnation: p.Incarnation}
+	return record.Audit{Tenant: p.Tenant, Subject: p.ID, Operation: op, Resource: resource, Outcome: outcome, OwnerID: p.OwnerID, CredentialID: p.CredentialID}
 }

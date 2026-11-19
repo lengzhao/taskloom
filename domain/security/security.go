@@ -83,10 +83,7 @@ func (s *Service) Bootstrap(ctx context.Context, in BootstrapInput) (capsecurity
 		if err := s.d.Members.SetMember(tx, authorization.Member{Tenant: p.Tenant, Subject: p.ID, Role: "admin", Active: true}); err != nil {
 			return err
 		}
-		if err := s.d.Audit.AppendAudit(tx, record.Audit{Tenant: p.Tenant, Subject: in.Operator, Operation: "identity.bootstrap", Resource: p.ID, Outcome: "committed", Reason: in.Reason}); err != nil {
-			return err
-		}
-		return s.d.Events.AppendEvent(tx, record.Event{Tenant: p.Tenant, Resource: p.ID, Kind: "identity.bootstrap"})
+		return s.d.Audit.AppendAudit(tx, record.Audit{Tenant: p.Tenant, Subject: in.Operator, Operation: "identity.bootstrap", Resource: p.ID, Outcome: "committed", Reason: in.Reason})
 	})
 	if err != nil {
 		return capsecurity.Issued{}, err
@@ -104,11 +101,11 @@ func (s *Service) Create(ctx context.Context, token, key string, p identity.Prin
 		if !valid(p.ID) || (p.Kind != "human" && p.Kind != "agent") {
 			return nil, fault.ErrInput
 		}
-		if p.Kind == "human" && (p.OwnerID != "" || p.InstanceID != "" || p.Incarnation != "") {
+		if p.CredentialID != "" || (p.Kind == "human" && p.OwnerID != "") {
 			return nil, fault.ErrInput
 		}
 		if p.Kind == "agent" {
-			if !valid(p.OwnerID) || p.InstanceID != "" || p.Incarnation != "" {
+			if !valid(p.OwnerID) {
 				return nil, fault.ErrInput
 			}
 			owner, err := s.d.Principals.Resolve(tx, p.Tenant, p.OwnerID)
@@ -143,15 +140,6 @@ func (s *Service) Issue(ctx context.Context, token, key string, in capsecurity.I
 		if err != nil || !member.Active {
 			return nil, authorization.ErrForbidden
 		}
-		if subject.Kind == "agent" {
-			if !valid(in.InstanceID) || !valid(in.Incarnation) {
-				return nil, fault.ErrInput
-			}
-		} else if in.InstanceID != "" || in.Incarnation != "" {
-			return nil, fault.ErrInput
-		}
-		subject.InstanceID = in.InstanceID
-		subject.Incarnation = in.Incarnation
 		c, out, err := credential(subject, in.ExpiresAt)
 		if err != nil {
 			return nil, err
@@ -200,7 +188,10 @@ func (s *Service) SetMember(ctx context.Context, token, key string, in authoriza
 		if in.Role == "admin" && subject.Kind != "human" {
 			return nil, authorization.ErrForbidden
 		}
-		return nil, s.d.Members.SetMember(tx, in)
+		if e = s.d.Members.SetMember(tx, in); e != nil {
+			return nil, e
+		}
+		return nil, s.d.Events.AppendEvent(tx, record.Event{Tenant: in.Tenant, Resource: in.Subject, Kind: record.EventAccessChanged})
 	})
 	return err
 }
@@ -242,9 +233,6 @@ func (s *Service) Recover(ctx context.Context, in BootstrapInput) (capsecurity.I
 		if err = s.d.Audit.AppendAudit(tx, record.Audit{Tenant: p.Tenant, Subject: in.Operator, Operation: "identity.recover", Resource: p.ID, Outcome: "committed", Reason: in.Reason}); err != nil {
 			return err
 		}
-		if err = s.d.Events.AppendEvent(tx, record.Event{Tenant: p.Tenant, Resource: p.ID, Kind: "identity.recover"}); err != nil {
-			return err
-		}
 		issued = out
 		return nil
 	})
@@ -254,15 +242,15 @@ func (s *Service) Recover(ctx context.Context, in BootstrapInput) (capsecurity.I
 	return issued, nil
 }
 
-// EnrollAgent is an explicitly invoked offline operator capability. It binds a
-// credential to one runtime instance and incarnation.
+// EnrollAgent is an explicitly invoked offline operator capability. Each
+// credential it issues identifies one running instance of the Agent.
 type AgentEnrollment struct {
 	BootstrapInput
-	Owner, InstanceID, Incarnation string
+	Owner string
 }
 
 func (s *Service) EnrollAgent(ctx context.Context, in AgentEnrollment) (capsecurity.Issued, error) {
-	if !valid(in.Tenant) || !valid(in.Subject) || !valid(in.Owner) || !valid(in.Operator) || !valid(in.Reason) || !valid(in.InstanceID) || !valid(in.Incarnation) {
+	if !valid(in.Tenant) || !valid(in.Subject) || !valid(in.Owner) || !valid(in.Operator) || !valid(in.Reason) {
 		return capsecurity.Issued{}, fault.ErrInput
 	}
 	var issued capsecurity.Issued
@@ -289,8 +277,6 @@ func (s *Service) EnrollAgent(ctx context.Context, in AgentEnrollment) (capsecur
 		if e = s.d.Members.SetMember(tx, authorization.Member{Tenant: p.Tenant, Subject: p.ID, Role: "member", Active: true}); e != nil {
 			return e
 		}
-		p.InstanceID = in.InstanceID
-		p.Incarnation = in.Incarnation
 		c, out, e := credential(p, in.ExpiresAt)
 		if e != nil {
 			return e
@@ -298,10 +284,7 @@ func (s *Service) EnrollAgent(ctx context.Context, in AgentEnrollment) (capsecur
 		if e = s.d.Credentials.SaveCredential(tx, c); e != nil {
 			return e
 		}
-		if e = s.d.Audit.AppendAudit(tx, record.Audit{Tenant: p.Tenant, Subject: in.Operator, Operation: "identity.enroll-agent", Resource: p.ID, Outcome: "committed", Reason: in.Reason, OwnerID: p.OwnerID, InstanceID: p.InstanceID, Incarnation: p.Incarnation}); e != nil {
-			return e
-		}
-		if e = s.d.Events.AppendEvent(tx, record.Event{Tenant: p.Tenant, Resource: p.ID, Kind: "identity.enrolled"}); e != nil {
+		if e = s.d.Audit.AppendAudit(tx, record.Audit{Tenant: p.Tenant, Subject: in.Operator, Operation: "identity.enroll-agent", Resource: p.ID, Outcome: "committed", Reason: in.Reason, OwnerID: p.OwnerID, CredentialID: c.ID}); e != nil {
 			return e
 		}
 		issued = out

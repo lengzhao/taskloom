@@ -67,7 +67,7 @@ func id() string {
 }
 
 func (c *Controller) Initialize(ctx context.Context, t task.Task) (capflow.Position, error) {
-	p := capflow.Position{Revision: 1, Status: capflow.PhaseActive, Tenant: t.Tenant, TaskID: t.ID, RoundID: id(), Acceptance: c.c.Acceptance}
+	p := capflow.Position{Status: capflow.PhaseActive, Tenant: t.Tenant, TaskID: t.ID, RoundID: id(), Acceptance: c.c.Acceptance}
 	if e := c.d.Positions.CreatePosition(ctx, p); e != nil {
 		return p, e
 	}
@@ -139,7 +139,7 @@ func (c *Controller) result(ctx context.Context, t task.Task, p capflow.Position
 	if p.Acceptance == capflow.AcceptanceNone {
 		return capflow.StepExecuting, "", nil
 	}
-	r, e := c.d.Reviews.GetReview(ctx, t.Tenant, t.ID, p.RoundID, v.ID)
+	r, e := c.d.Reviews.LatestReview(ctx, t.Tenant, t.ID, v.CommitID)
 	if errors.Is(e, fault.ErrNotFound) {
 		return capflow.StepAccepting, "等待负责人验收", nil
 	}
@@ -180,16 +180,11 @@ func (c *Controller) Refresh(ctx context.Context, t task.Task) (capflow.Position
 	return c.Read(ctx, t)
 }
 
-// save writes the stored fields of p with the next revision.
+// save writes the stored fields of p.
 func (c *Controller) save(ctx context.Context, p capflow.Position) (capflow.Position, error) {
-	expected := p.Revision
-	p.Revision++
 	stored := p
 	stored.State, stored.Waiting = "", ""
-	if e := c.d.Positions.SavePosition(ctx, stored, expected); e != nil {
-		return p, e
-	}
-	return p, nil
+	return p, c.d.Positions.SavePosition(ctx, stored)
 }
 
 func (c *Controller) CheckOpen(ctx context.Context, t task.Task) (capflow.Position, error) {
@@ -201,28 +196,6 @@ func (c *Controller) CheckOpen(ctx context.Context, t task.Task) (capflow.Positi
 		return p, fault.ErrConflict
 	}
 	return p, nil
-}
-
-func (c *Controller) CheckEdit(ctx context.Context, t task.Task) error {
-	p, e := c.Read(ctx, t)
-	if e != nil {
-		return e
-	}
-	if p.Status != capflow.PhaseActive || p.State == capflow.StepAccepting {
-		return fault.ErrConflict
-	}
-	current, e := c.d.Executions.Current(ctx, t.Tenant, t.ID)
-	if errors.Is(e, fault.ErrNotFound) {
-		return nil
-	}
-	if e != nil {
-		return e
-	}
-	// A running claim must not see its criteria change silently.
-	if current.Writable && current.RoundID == p.RoundID {
-		return fault.ErrConflict
-	}
-	return nil
 }
 
 func (c *Controller) Cancel(ctx context.Context, t task.Task) (capflow.Position, error) {
@@ -240,13 +213,11 @@ func (c *Controller) Cancel(ctx context.Context, t task.Task) (capflow.Position,
 	return c.Read(ctx, t)
 }
 
-func (c *Controller) restart(ctx context.Context, t task.Task, reopen bool) (capflow.Position, error) {
+// Restart starts a new active round; work and results of the old round stay in history.
+func (c *Controller) Restart(ctx context.Context, t task.Task) (capflow.Position, error) {
 	p, e := c.load(ctx, t)
 	if e != nil {
 		return p, e
-	}
-	if reopen == (p.Status == capflow.PhaseActive) {
-		return p, fault.ErrConflict
 	}
 	p.RoundID = id()
 	p.Status = capflow.PhaseActive
@@ -254,10 +225,4 @@ func (c *Controller) restart(ctx context.Context, t task.Task, reopen bool) (cap
 		return p, e
 	}
 	return c.Refresh(ctx, t)
-}
-func (c *Controller) Return(ctx context.Context, t task.Task) (capflow.Position, error) {
-	return c.restart(ctx, t, false)
-}
-func (c *Controller) Reopen(ctx context.Context, t task.Task) (capflow.Position, error) {
-	return c.restart(ctx, t, true)
 }

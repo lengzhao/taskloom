@@ -72,7 +72,7 @@ func TestTaskInsertConcurrencyAndDurability(t *testing.T) {
 		go func(s *store.Store) {
 			defer wg.Done()
 			results <- s.Do(ctx, func(tx context.Context) error {
-				err := s.CreateTask(tx, task.Task{Tenant: "t", ID: "r", Version: 1, BasisVersion: 1})
+				err := s.CreateTask(tx, task.Task{Tenant: "t", ID: "r", BasisVersion: 1})
 				if err != nil {
 					return err
 				}

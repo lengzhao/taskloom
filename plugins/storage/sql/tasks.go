@@ -4,17 +4,15 @@ import (
 	"context"
 	"encoding/json"
 
-	"github.com/lengzhao/taskloom/cap/fault"
 	"github.com/lengzhao/taskloom/cap/task"
 	"gorm.io/gorm"
 )
 
 type taskRow struct {
-	Key     string `gorm:"primaryKey;size:64;column:row_key"`
-	Tenant  string `gorm:"size:128;index"`
-	ID      string `gorm:"size:128"`
-	Version int64
-	Data    []byte
+	Key    string `gorm:"primaryKey;size:64;column:row_key"`
+	Tenant string `gorm:"size:128;index"`
+	ID     string `gorm:"size:128"`
+	Data   []byte
 }
 
 func (s *Store) CreateTask(ctx context.Context, t task.Task) error {
@@ -23,7 +21,7 @@ func (s *Store) CreateTask(ctx context.Context, t task.Task) error {
 		if err != nil {
 			return err
 		}
-		return db.Create(&taskRow{Key: key(t.Tenant, t.ID), Tenant: t.Tenant, ID: t.ID, Version: t.Version, Data: b}).Error
+		return db.Create(&taskRow{Key: key(t.Tenant, t.ID), Tenant: t.Tenant, ID: t.ID, Data: b}).Error
 	})
 }
 func (s *Store) GetTask(ctx context.Context, tenant, id string) (task.Task, error) {
@@ -55,70 +53,36 @@ func (s *Store) ListTasks(ctx context.Context, tenant string) ([]task.Task, erro
 	})
 	return out, err
 }
+
+// Task writes run under the global write lock, so they are plain updates;
+// commands check the client's pinned basis version before writing.
 func (s *Store) UpdateBasis(ctx context.Context, change task.BasisChange) (task.Task, error) {
-	var updated task.Task
-	err := s.use(ctx, true, func(db *gorm.DB) error {
-		var row taskRow
-		if e := db.First(&row, "row_key = ?", key(change.Tenant, change.TaskID)).Error; e != nil {
-			return e
-		}
-		if row.Version != change.ExpectedVersion {
-			return fault.ErrConflict
-		}
-		if e := json.Unmarshal(row.Data, &updated); e != nil {
-			return e
-		}
-		updated.Title = change.Title
-		updated.Goal = change.Goal
-		updated.Criteria = change.Criteria
-		updated.Version++
-		updated.BasisVersion++
-		b, e := json.Marshal(updated)
-		if e != nil {
-			return e
-		}
-		r := db.Model(&taskRow{}).Where("row_key = ? AND version = ?", row.Key, change.ExpectedVersion).Updates(map[string]any{"version": updated.Version, "data": b})
-		if r.Error != nil {
-			return r.Error
-		}
-		if r.RowsAffected != 1 {
-			return fault.ErrConflict
-		}
-		return nil
+	return s.updateTask(ctx, change.Tenant, change.TaskID, func(t *task.Task) {
+		t.Title, t.Goal, t.Criteria = change.Title, change.Goal, change.Criteria
+		t.BasisVersion++
 	})
-	if err != nil {
-		return task.Task{}, err
-	}
-	return updated, nil
 }
 
-func (s *Store) SetProject(ctx context.Context, tenant, taskID, projectID string, expected int64) (task.Task, error) {
+func (s *Store) SetProject(ctx context.Context, tenant, taskID, projectID string) (task.Task, error) {
+	return s.updateTask(ctx, tenant, taskID, func(t *task.Task) { t.ProjectID = projectID })
+}
+
+func (s *Store) updateTask(ctx context.Context, tenant, taskID string, change func(*task.Task)) (task.Task, error) {
 	var out task.Task
 	e := s.use(ctx, true, func(db *gorm.DB) error {
 		var row taskRow
 		if e := db.First(&row, "row_key = ?", key(tenant, taskID)).Error; e != nil {
 			return e
 		}
-		if row.Version != expected {
-			return fault.ErrConflict
-		}
 		if e := json.Unmarshal(row.Data, &out); e != nil {
 			return e
 		}
-		out.ProjectID = projectID
-		out.Version++
+		change(&out)
 		b, e := json.Marshal(out)
 		if e != nil {
 			return e
 		}
-		r := db.Model(&taskRow{}).Where("row_key = ? AND version = ?", row.Key, expected).Updates(map[string]any{"version": out.Version, "data": b})
-		if r.Error != nil {
-			return r.Error
-		}
-		if r.RowsAffected != 1 {
-			return fault.ErrConflict
-		}
-		return nil
+		return db.Model(&taskRow{}).Where("row_key = ?", row.Key).Update("data", b).Error
 	})
 	return out, e
 }

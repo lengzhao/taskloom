@@ -235,7 +235,7 @@ const REASON_LABEL = {
 };
 const execLabel = (ex, pos) => pos && pos.Status !== 'active' ? '任务已结束' : ex.Writable ? '进行中' : '已失效（不能再写入）';
 const OUTCOME_LABEL = { pending: '待验收', approved: '已通过', rejected: '未通过' };
-const KIND_LABEL = { comment: '留言', result: '结果', question: '提问', answer: '回答', 'task.created': '创建任务', 'task.basis': '修改约定' };
+const KIND_LABEL = { comment: '留言', result: '结果', question: '提问', answer: '回答', 'review.approved': '验收通过', 'review.rejected': '验收退回', 'task.created': '创建任务', 'task.basis': '修改约定' };
 const AGENT_ACTIONS = ['open', 'submit'];
 
 // ---------- State ----------
@@ -457,7 +457,9 @@ function makeContext(d, w, path) {
   const active = w.Position.Status === 'active';
   return {
     d, w, ex, active, path,
-    base: { RoundID: w.Position.RoundID, BasisVersion: d.Task.BasisVersion, ExpectedRevision: w.Position.Revision },
+    // Each command pins only what it needs: the basis to claim, the round to restart.
+    claim: { BasisVersion: d.Task.BasisVersion },
+    round: { RoundID: w.Position.RoundID },
     ref: ex ? { ExecutionID: ex.ID } : {},
     // Blocked only lists agent actions for agent viewers, so this marks an agent session.
     isAgent: w.ViewerKind === 'agent',
@@ -471,7 +473,7 @@ function renderHead({ d }) {
     h('div', 'head',
       h('div', null,
         el('h2', d.Task.Title),
-        h('div', 'meta muted small', el('span', '负责人 ' + d.Task.Owner), el('span', '依据 v' + d.Task.BasisVersion), el('span', '任务 v' + d.Task.Version)))));
+        h('div', 'meta muted small', el('span', '负责人 ' + d.Task.Owner), el('span', '依据 v' + d.Task.BasisVersion)))));
 }
 
 function renderProject(ctx){
@@ -479,11 +481,11 @@ function renderProject(ctx){
  box.append(el('h3','所属项目'));
  if(!ctx.d.CanEdit){box.append(el('p',p?.Name||'未归属项目'));return box}
  const select=el('select');projectOptions(select,false,ctx.d.Task.ProjectID);select.value=ctx.d.Task.ProjectID||'';
- box.append(field('移动到项目',select),h('div','actions',button('保存项目归属',async()=>{await api(ctx.path+'/project','POST',{ProjectID:select.value,ExpectedVersion:ctx.d.Task.Version});await list();await show()})));
+ box.append(field('移动到项目',select),h('div','actions',button('保存项目归属',async()=>{await api(ctx.path+'/project','POST',{ProjectID:select.value});await list();await show()})));
  return box;
 }
 function renderNext(ctx) {
-  const { d, w, active, base } = ctx;
+  const { d, w, active, claim, round } = ctx;
   const panel = h('div', 'panel next' + (inboxIDs.has(d.Task.ID) ? ' mine' : ''));
   const s = stateOf(w.Position);
   let title;
@@ -497,11 +499,11 @@ function renderNext(ctx) {
 
   renderQuestions(ctx, panel);
   if (!ctx.isAgent && w.ViewerKind === 'human') {
-    if (w.CanOpen) panel.append(h('div', 'actions', button('开始处理', () => ctx.send('/execution/open', base), 'primary')));
+    if (w.CanOpen) panel.append(h('div', 'actions', button('开始处理', () => ctx.send('/execution/open', claim), 'primary')));
     if (w.CanSubmit) {
       const body = textarea('Body', true, '填写本次任务的处理结果');
       const form = h('form', null, field('提交处理结果', body), h('div', 'actions', el('button', '提交结果', 'primary')));
-      form.onsubmit = handle(() => ctx.send('/results', { ...base, ...ctx.ref, Body: body.value }));
+      form.onsubmit = handle(() => ctx.send('/results', { ...ctx.ref, Body: body.value }));
       panel.append(form);
     }
   }
@@ -515,7 +517,7 @@ function renderNext(ctx) {
     const sub = w.Submission;
     const verdict = outcome => {
       if (outcome === 'rejected' && !reason.value.trim()) { reason.focus(); throw Error('验收不通过时请写明需要修改的地方') }
-      return ctx.send('/review', { ...base, SubmissionID: sub.ID, CommitID: sub.CommitID, Outcome: outcome, Reason: reason.value });
+      return ctx.send('/review', { SubmissionID: sub.ID, CommitID: sub.CommitID, Outcome: outcome, Reason: reason.value });
     };
     panel.append(h('div', null, el('label', '验收当前结果'), reason));
     actions.append(button('验收通过', () => verdict('approved'), 'primary'), button('不通过，退回修改', () => verdict('rejected'), 'danger'));
@@ -525,7 +527,7 @@ function renderNext(ctx) {
     panel.classList.add('mine');
     panel.append(assignForm(ctx, '选择处理人'));
   }
-  if (!active && w.CanManage) actions.append(button('重开任务', () => confirmThen('重开会开始新一轮，旧结果保留在历史中。继续？', () => ctx.send('/reopen', base))));
+  if (!active && w.CanManage) actions.append(button('重开任务', () => confirmThen('重开会开始新一轮，旧结果保留在历史中。继续？', () => ctx.send('/restart', round))));
   if (actions.children.length) panel.append(actions);
   return panel;
 }
@@ -572,26 +574,22 @@ function assignForm(ctx, text) {
   if (!ctx.d.Task.Goal.trim() || !ctx.d.Task.Criteria.trim()) return el('p', '请先在「任务约定」中补充目标和验收标准，再选择处理人。', 'muted');
   const input = memberSelect(members, '请选择用户或 Agent');
   const f = h('form', null, field(text, input), h('div', 'actions', el('button', '分配', 'primary')));
-  f.onsubmit = handle(() => ctx.send('/execution/assign', { ...ctx.base, Subject: input.value }));
+  f.onsubmit = handle(() => ctx.send('/execution/assign', { Subject: input.value }));
   return f;
 }
 
 function confirmThen(message, fn) { if (confirm(message)) return fn() }
 
-function renderResult({ w, active, base, send, ...ctx }) {
+function renderResult({ w, active, send, ...ctx }) {
   const panel = h('div', 'panel', el('h3', '当前结果'));
   if (!w.Submission) {
     panel.append(el('p', '还没有提交结果。处理人明确提交后会显示在这里；普通评论不算交付。', 'muted'));
     return panel;
   }
-  const sub = w.Submission;
   const outcome = w.Review ? (OUTCOME_LABEL[w.Review.Outcome] || w.Review.Outcome) : '此流程无需人工验收';
   panel.append(h('div', 'meta muted small', el('span', outcome)));
   if (w.ResultCommit) panel.append(h('div', 'result', el('p', w.ResultCommit.Body), el('p', (w.ResultCommit.Author || '') + ' · ' + time(w.ResultCommit.CreatedAt), 'muted small')));
   if (w.Review?.Reason) panel.append(el('p', '验收意见：' + w.Review.Reason, 'muted'));
-  if (w.CanManage && active) {
-    panel.append(h('div', 'actions', button('撤回当前结果', () => confirmThen('撤回后当前结果失效，且不会恢复更早的结果。继续？', () => send('/withdraw', { ...base, SubmissionID: sub.ID })))));
-  }
   return panel;
 }
 
@@ -635,8 +633,8 @@ function renderBasis({ d, w, ex, active, path }) {
   const panel = h('div', 'panel', el('h3', '任务约定'),
     el('label', '目标'), el('p', d.Task.Goal || '待补充'),
     el('label', '验收标准'), el('p', d.Task.Criteria || '待补充'));
-  // The server enforces CheckEdit; this only hides the form once work has started.
-  const editable = d.CanEdit && active && !w.Submission && (!ex || !(ex.Writable && ex.RoundID === w.Position.RoundID));
+  // The basis can change while work runs: a claim or result on the old basis must be redone.
+  const editable = d.CanEdit && active;
   if (editable) {
     const f = el('form');
     for (const [name, text] of [['Title', '标题'], ['Goal', '目标'], ['Criteria', '验收标准']]) {
@@ -645,12 +643,10 @@ function renderBasis({ d, w, ex, active, path }) {
       input.value = d.Task[name];
       f.append(field(text, input));
     }
+    if (ex && ex.Writable && ex.RoundID === w.Position.RoundID) f.append(el('p', '执行已开始：保存后当前执行和结果需要按新约定重新认领和提交。', 'muted small'));
     f.append(h('div', 'actions', el('button', '保存新依据', 'primary')));
-    f.onsubmit = handle(async () => { await api(path, 'PATCH', { ...formdata(f), ExpectedVersion: d.Task.Version }); await list(); await show() });
+    f.onsubmit = handle(async () => { await api(path, 'PATCH', { ...formdata(f), BasisVersion: d.Task.BasisVersion }); await list(); await show() });
     panel.append(h('details', null, el('summary', '修改约定'), f));
-  } else if (d.CanEdit && active) {
-    panel.append(el('p', '执行已开始，约定暂不能直接修改：补充要求请在时间线给执行 Agent 留言；需要正式改目标或标准时，先在「任务控制」中退回并开始新一轮，再修改。', 'muted small'));
-    panel.lastChild.style.marginTop = '10px';
   }
   return panel;
 }
@@ -703,13 +699,13 @@ function renderParticipants({ d, path, candidates }) {
 }
 
 function renderManage(ctx) {
-  const { w, active, base, ref, send } = ctx;
+  const { w, active, round, send } = ctx;
   if (!w.CanManage) return null;
   const panel = h('div', 'panel', el('h3', '任务控制'));
   const actions = h('div', 'actions');
   if (active && w.CanManage) {
-    actions.append(button('退回并开始新轮', () => confirmThen('退回会开始新一轮，当前结果和验收结论只保留在历史中。继续？', () => send('/return', base))));
-    actions.append(button('取消任务', () => confirmThen('取消后当前执行立即失效，不能再写入。继续？', () => send('/cancel', base)), 'danger'));
+    actions.append(button('退回并开始新轮', () => confirmThen('退回会开始新一轮，当前结果和验收结论只保留在历史中。继续？', () => send('/restart', round))));
+    actions.append(button('取消任务', () => confirmThen('取消后当前执行立即失效，不能再写入。继续？', () => send('/cancel', {})), 'danger'));
   }
   if (actions.children.length) panel.append(actions);
   return panel.children.length > 1 ? panel : null;
@@ -717,7 +713,7 @@ function renderManage(ctx) {
 
 // Agent actions normally go through the API; this panel exists for local debugging.
 function renderAgentDebug(ctx) {
-  const { w, base, ref, send } = ctx;
+  const { w, claim, ref, send } = ctx;
   if (!ctx.isAgent) return null;
   const panel = h('div', 'panel debug', el('h3', 'Agent 调试'), el('p', '正式运行时由 Agent 通过 API 完成这些操作。', 'muted small'));
   const blocked = AGENT_ACTIONS.filter(a => (w.Blocked || {})[a]);
@@ -727,12 +723,12 @@ function renderAgentDebug(ctx) {
     panel.append(ul);
   }
   const actions = h('div', 'actions');
-  if (w.CanOpen) actions.append(button('认领并开始执行', () => send('/execution/open', base), 'primary'));
+  if (w.CanOpen) actions.append(button('认领并开始执行', () => send('/execution/open', claim), 'primary'));
   if (actions.children.length) panel.append(actions);
   if (w.CanSubmit) {
     const body = textarea('Body', true, '这是正式交付的结果正文');
     const f = h('form', null, field('提交结果', body), h('div', 'actions', el('button', '提交结果', 'primary')));
-    f.onsubmit = handle(() => send('/results', { ...base, ...ref, Body: body.value }));
+    f.onsubmit = handle(() => send('/results', { ...ref, Body: body.value }));
     panel.append(f);
   }
   return panel;
@@ -749,7 +745,7 @@ async function openMembers(preselect = '') {
   for (const m of members) {
     const actions = h('div', 'actions');
     if(m.Kind==='human') actions.append(button('设置 / 重置密码',()=>openPassword(m.Subject)));
-    if (m.Active && m.Kind==='agent') actions.append(button('签发凭据', () => { subject.value = m.Subject; binding(); credentialForm.scrollIntoView({block:'center'}); }));
+    if (m.Active && m.Kind==='agent') actions.append(button('签发凭据', () => { subject.value = m.Subject; credentialForm.scrollIntoView({block:'center'}); }));
     if (m.Subject !== viewer.Subject) actions.append(button(m.Active ? '停用' : '启用', () => confirmThen(
       m.Active ? '停用后，该成员将不能访问和处理任务。继续？' : '启用后将恢复仍保留的任务关系。继续？',
       async () => { await api('/members', 'POST', {Tenant:viewer.Tenant,Subject:m.Subject,Role:m.Role,Active:!m.Active}); await openMembers(); }), m.Active ? 'danger' : ''));
@@ -782,25 +778,17 @@ async function openMembers(preselect = '') {
   const days=el('select');
   for (const n of [1,7,30,90]) {const o=el('option',n+' 天');o.value=n;days.append(o)}
   days.value='7';
-  const instance=el('input');instance.value='instance-'+crypto.randomUUID().slice(0,8);
-  const incarnation=el('input');incarnation.value=crypto.randomUUID();
-  const agentFields=h('div',null,field('运行实例标识',instance),field('本次启动标识',incarnation),
-    el('p','同一实例和启动标识可继续之前认领的执行；换实例需由负责人先停止旧执行。','muted small'));
-  function binding(){const agent=members.find(m=>m.Subject===subject.value)?.Kind==='agent';agentFields.hidden=!agent;instance.required=agent;incarnation.required=agent}
-  subject.onchange=binding;binding();
+  const agentFields=el('p','每张凭据代表一个运行实例：同一凭据可继续它认领的执行；用新凭据认领会使旧凭据的执行失效。','muted small');
   const result=h('div',null);result.id='issued-credential';
   const credentialForm=h('form',null,el('h3','签发 Agent 接入凭据'),field('签发对象',subject),field('有效期',days),agentFields,
     h('div','actions',el('button','生成凭据','primary')),result);
   let pendingIssue=null;
   credentialForm.onsubmit=handle(async()=>{
     result.replaceChildren();
-    const member=members.find(m=>m.Subject===subject.value);
     const fields={Subject:subject.value,Days:days.value};
-    if(member.Kind==='agent') Object.assign(fields,{InstanceID:instance.value,Incarnation:incarnation.value});
     const fingerprint=JSON.stringify(fields);
     if(!pendingIssue || pendingIssue.fingerprint!==fingerprint) pendingIssue={fingerprint,input:{Subject:subject.value,ExpiresAt:new Date(Date.now()+Number(days.value)*86400000).toISOString()}};
     const input=pendingIssue.input;
-    if(member.Kind==='agent') Object.assign(input,{InstanceID:instance.value,Incarnation:incarnation.value});
     const issued=await api('/credentials','POST',input);
     pendingIssue=null;
     if(!issued.Secret){result.append(el('p','这次请求已签发过凭据，明文不能重新读取。请先撤销该凭据，再生成新的凭据。','muted'));}
@@ -816,6 +804,12 @@ async function openMembers(preselect = '') {
     result.append(el('p','凭据编号：'+issued.ID,'muted small'),button('撤销本次凭据',async()=>{await api('/credentials/revoke','POST',{CredentialID:issued.ID});result.replaceChildren(el('p','凭据已撤销'))},'danger'));
   });
   if(active.length) root.append(h('section',null,credentialForm));
+  // Audit trail: every committed or rejected command, newest first.
+  const trail=h('div',null);
+  root.append(h('section',null,el('h3','审计记录'),h('div','actions',button('查看最近 100 条',async()=>{
+    const items=await api('/audit?limit=100');
+    trail.replaceChildren(...(items.length?items.map(a=>el('p',time(a.At)+' · '+a.Subject+' · '+a.Operation+' · '+a.Resource+' · '+(a.Outcome==='committed'?'成功':'被拒绝')+(a.Reason?' · '+a.Reason:''),'muted small')):[el('p','暂无记录','muted')]));
+  })),trail));
   if(preselect) credentialForm.scrollIntoView({block:'center'});
 }
 /* members entry is created in space settings */

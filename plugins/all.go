@@ -4,6 +4,7 @@ package plugins
 
 import (
 	_ "github.com/lengzhao/taskloom/plugins/access/default"
+	_ "github.com/lengzhao/taskloom/plugins/api/audit"
 	_ "github.com/lengzhao/taskloom/plugins/api/health"
 	_ "github.com/lengzhao/taskloom/plugins/api/mcp"
 	_ "github.com/lengzhao/taskloom/plugins/api/workflow"

@@ -12,23 +12,29 @@ import (
 	cmd "github.com/lengzhao/taskloom/cap/command"
 	"github.com/lengzhao/taskloom/cap/fault"
 	"github.com/lengzhao/taskloom/cap/identity"
+	"github.com/lengzhao/taskloom/cap/record"
 	"github.com/lengzhao/taskloom/cap/unitofwork"
 	"github.com/lengzhao/taskloom/runtime/command"
 	"strings"
 )
 
+// Deps has six fields: projects and spaces are tenant-wide metadata whose
+// commands read the caller and membership, write the store inside the shared
+// command lifecycle, and announce the change; none of these is a second role.
 type Deps struct {
 	Transactions unitofwork.Manager     `json:"transactions"`
 	Identity     identity.Authenticator `json:"identity"`
 	Members      az.MemberDirectory     `json:"members"`
 	Store        api.Store              `json:"store"`
 	Commands     cmd.Handler            `json:"commands"`
+	// Events announces space and project changes; viewers refresh access from it.
+	Events record.EventWriter `json:"events"`
 }
 type Service struct{ d Deps }
 
 func init() {
 	pluginkit.Register("catalog/projects", func(_ struct{}, d Deps) (*Service, error) {
-		if d.Transactions == nil || d.Identity == nil || d.Members == nil || d.Store == nil || d.Commands == nil {
+		if d.Transactions == nil || d.Identity == nil || d.Members == nil || d.Store == nil || d.Commands == nil || d.Events == nil {
 			return nil, errors.New("catalog capabilities required")
 		}
 		return &Service{d}, nil
@@ -90,7 +96,10 @@ func (s *Service) EditSpace(ctx context.Context, token, key string, in api.Space
 			return nil, fault.ErrConflict
 		}
 		out = api.Space{Tenant: p.Tenant, Name: strings.TrimSpace(in.Name), Description: in.Description, Version: old.Version + 1}
-		if e = s.d.Store.SaveSpace(tx, out, old.Version); e != nil {
+		if e = s.d.Store.SaveSpace(tx, out); e != nil {
+			return nil, e
+		}
+		if e = s.d.Events.AppendEvent(tx, record.Event{Tenant: p.Tenant, Resource: p.Tenant, Kind: record.EventAccessChanged}); e != nil {
 			return nil, e
 		}
 		return json.Marshal(out)
@@ -171,7 +180,10 @@ func (s *Service) SaveProject(ctx context.Context, token, key string, in api.Pro
 			id = hex.EncodeToString(b[:])
 		}
 		out = api.Project{Tenant: p.Tenant, ID: id, Name: strings.TrimSpace(in.Name), Description: in.Description, Owner: owner, Archived: in.Archived, Version: old.Version + 1}
-		if e = s.d.Store.SaveProject(tx, out, old.Version); e != nil {
+		if e = s.d.Store.SaveProject(tx, out); e != nil {
+			return nil, e
+		}
+		if e = s.d.Events.AppendEvent(tx, record.Event{Tenant: p.Tenant, Resource: out.ID, Kind: record.EventAccessChanged}); e != nil {
 			return nil, e
 		}
 		return json.Marshal(out)

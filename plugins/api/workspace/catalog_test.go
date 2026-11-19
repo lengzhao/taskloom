@@ -107,17 +107,16 @@ func TestWorkspaceProjectsLifecycle(t *testing.T) {
 	if len(visible) != 1 {
 		t.Fatalf("project leaked tasks: %d", len(visible))
 	}
-	call(alice.Secret, "POST", "/tasks/"+task.Task.ID+"/project", "move", api.ProjectMove{ProjectID: other.ID, ExpectedVersion: task.Task.Version}, 200)
+	call(alice.Secret, "POST", "/tasks/"+task.Task.ID+"/project", "move", api.ProjectMove{ProjectID: other.ID}, 200)
 	var moved api.Detail
 	json.Unmarshal(call(alice.Secret, "GET", "/tasks/"+task.Task.ID, "", nil, 200), &moved)
 	if moved.Task.BasisVersion != task.Task.BasisVersion || !reflect.DeepEqual(moved.Position, task.Position) || moved.Task.ProjectID != other.ID {
 		t.Fatal("move changed workflow/basis")
 	}
-	call(alice.Secret, "POST", "/tasks/"+task.Task.ID+"/project", "stale", api.ProjectMove{ExpectedVersion: task.Task.Version}, 409)
 	archive := catalog.ProjectEdit{Name: other.Name, Owner: other.Owner, Archived: true, ExpectedVersion: 1}
 	call(admin.Secret, "PATCH", "/projects/"+other.ID, "archive", archive, 200)
 	call(alice.Secret, "POST", "/tasks", "archived", api.Create{Title: "No", ProjectID: other.ID}, 409)
-	call(alice.Secret, "POST", "/tasks/"+task.Task.ID+"/project", "out", api.ProjectMove{ExpectedVersion: moved.Task.Version}, 200)
+	call(alice.Secret, "POST", "/tasks/"+task.Task.ID+"/project", "out", api.ProjectMove{}, 200)
 	call(admin.Secret, "PATCH", "/projects/"+other.ID, "stale-project", archive, 409)
 	archive.Archived = false
 	archive.ExpectedVersion = 2
@@ -153,7 +152,7 @@ func TestWorkspaceProjectsLifecycle(t *testing.T) {
 	store, _ := build.GetByID[catalog.Store](graph, "sql")
 	tx, _ := build.GetByID[unitofwork.Manager](graph, "sql")
 	if e = tx.Do(ctx, func(ctx context.Context) error {
-		return store.SaveProject(ctx, catalog.Project{Tenant: "other", ID: "foreign", Name: "Hidden", Owner: "admin", Version: 1}, 0)
+		return store.SaveProject(ctx, catalog.Project{Tenant: "other", ID: "foreign", Name: "Hidden", Owner: "admin", Version: 1})
 	}); e != nil {
 		t.Fatal(e)
 	}
@@ -171,7 +170,7 @@ func TestWorkspaceProjectsLifecycle(t *testing.T) {
 	if e = sec.Create(ctx, admin.Secret, "agent", identity.Principal{Tenant: "t", ID: "agent", Kind: "agent", OwnerID: "admin"}); e != nil {
 		t.Fatal(e)
 	}
-	agent, e := sec.Issue(ctx, admin.Secret, "agent", cs.IssueInput{Tenant: "t", Subject: "agent", InstanceID: "test", Incarnation: "1", ExpiresAt: time.Now().Add(time.Hour)})
+	agent, e := sec.Issue(ctx, admin.Secret, "agent", cs.IssueInput{Tenant: "t", Subject: "agent", ExpiresAt: time.Now().Add(time.Hour)})
 	if e != nil {
 		t.Fatal(e)
 	}

@@ -42,12 +42,11 @@ func TestIdenticalResultDifferentKeyDoesNotDuplicateCandidate(t *testing.T) {
 	f := setup(t, nil)
 	d := f.create(t)
 	s := f.open(t, d)
-	in := api.Submit{Basis: basis(d, s), ExecutionID: s.Execution.ID, Body: "same result"}
+	in := api.Submit{TaskID: d.Task.ID, ExecutionID: s.Execution.ID, Body: "same result"}
 	first, e := f.results.Submit(f.ctx, f.agent, "first", in)
 	if e != nil {
 		t.Fatal(e)
 	}
-	in.Basis = basis(d, first)
 	second, e := f.results.Submit(f.ctx, f.agent, "second", in)
 	if e != nil {
 		t.Fatal(e)
@@ -64,14 +63,14 @@ func TestNoAcceptanceVerdictAndWrongInstanceRejected(t *testing.T) {
 	f := setup(t, map[string]any{"flow": map[string]any{"config": map[string]any{"acceptance": "none"}}})
 	d := f.create(t)
 	s := f.open(t, d)
-	issued, e := f.security.Issue(f.ctx, f.owner, "other-instance", capsecurity.IssueInput{Tenant: "t", Subject: "agent", InstanceID: "other-machine", Incarnation: "boot", ExpiresAt: time.Now().Add(time.Hour)})
+	issued, e := f.security.Issue(f.ctx, f.owner, "other-instance", capsecurity.IssueInput{Tenant: "t", Subject: "agent", ExpiresAt: time.Now().Add(time.Hour)})
 	if e != nil {
 		t.Fatal(e)
 	}
-	if _, e = f.results.Submit(f.ctx, issued.Secret, "wrong-instance", api.Submit{Basis: basis(d, s), ExecutionID: s.Execution.ID, Body: "x"}); e == nil {
+	if _, e = f.results.Submit(f.ctx, issued.Secret, "wrong-instance", api.Submit{TaskID: d.Task.ID, ExecutionID: s.Execution.ID, Body: "x"}); e == nil {
 		t.Fatal("wrong instance submitted into another instance's execution")
 	}
-	if _, e = f.results.Review(f.ctx, f.owner, "no-state", api.Review{Basis: basis(d, s)}); !errors.Is(e, fault.ErrConflict) {
+	if _, e = f.results.Review(f.ctx, f.owner, "no-state", api.Review{TaskID: d.Task.ID}); !errors.Is(e, fault.ErrConflict) {
 		t.Fatal("no acceptance state allowed verdict", e)
 	}
 }
@@ -111,8 +110,8 @@ func TestPostReviewFailureRollsBackEverySubmissionFact(t *testing.T) {
 	f := setup(t, map[string]any{"observed": map[string]any{"use": "test/observed-outbox-failure", "deps": map[string]any{"events": "sql", "facts": "workflow-query", "tasks": "sql"}}, "result-commands": map[string]any{"deps": map[string]any{"events": "observed"}}})
 	d := f.create(t)
 	s := f.open(t, d)
-	revision := s.Position.Revision
-	_, e := f.results.Submit(f.ctx, f.agent, "post-review-failure", api.Submit{Basis: basis(d, s), ExecutionID: s.Execution.ID, Body: "rollback everything"})
+	position := s.Position
+	_, e := f.results.Submit(f.ctx, f.agent, "post-review-failure", api.Submit{TaskID: d.Task.ID, ExecutionID: s.Execution.ID, Body: "rollback everything"})
 	if e == nil {
 		t.Fatal("failure accepted")
 	}
@@ -127,7 +126,7 @@ func TestPostReviewFailureRollsBackEverySubmissionFact(t *testing.T) {
 	if _, e = f.deliveries.GetSubmission(f.ctx, "t", captured.Submission.ID); !errors.Is(e, fault.ErrNotFound) {
 		t.Fatal("submission survived", e)
 	}
-	if _, e = f.reviews.GetReview(f.ctx, "t", d.Task.ID, captured.Position.RoundID, captured.Submission.ID); !errors.Is(e, fault.ErrNotFound) {
+	if _, e = f.reviews.LatestReview(f.ctx, "t", d.Task.ID, captured.Submission.CommitID); !errors.Is(e, fault.ErrNotFound) {
 		t.Fatal("review survived", e)
 	}
 	receipts, _ := build.GetByID[record.Receipts](f.graph, "sql")
@@ -135,7 +134,7 @@ func TestPostReviewFailureRollsBackEverySubmissionFact(t *testing.T) {
 		t.Fatal("receipt survived", e)
 	}
 	s = f.read(t, d.Task.ID)
-	if s.Position.Revision != revision || s.Position.State != "executing" {
+	if s.Position != position {
 		t.Fatal("position survived rollback")
 	}
 }

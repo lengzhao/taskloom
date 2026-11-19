@@ -37,7 +37,6 @@ type dependencies struct {
 	ResultExecutions execution.ResultAccess
 	Results          delivery.Store
 	Commits          commit.Log
-	Reviews          acceptance.Records
 	Snapshots        api.FactsReader
 	Events           record.EventWriter
 }
@@ -52,19 +51,15 @@ func id() string {
 	}
 	return fmt.Sprintf("%x", b)
 }
-func (s *Service) load(ctx context.Context, p identity.Principal, in api.Basis) (task.Task, flow.Position, error) {
-	t, e := s.d.Tasks.GetTask(ctx, p.Tenant, in.TaskID)
+
+// load reads the task and its position; commands pin their own targets.
+func (s *Service) load(ctx context.Context, p identity.Principal, taskID string) (task.Task, flow.Position, error) {
+	t, e := s.d.Tasks.GetTask(ctx, p.Tenant, taskID)
 	if e != nil {
 		return t, flow.Position{}, e
 	}
 	pos, e := s.d.Flow.Read(ctx, t)
-	if e != nil {
-		return t, pos, e
-	}
-	if pos.RoundID != in.RoundID || t.BasisVersion != in.BasisVersion || pos.Revision != in.ExpectedRevision {
-		return t, pos, fault.ErrConflict
-	}
-	return t, pos, nil
+	return t, pos, e
 }
 func (s *Service) snapshot(ctx context.Context, t task.Task) (api.Snapshot, error) {
 	return s.d.Snapshots.ReadFacts(ctx, t)
@@ -73,7 +68,7 @@ func (s *Service) finish(ctx context.Context, t task.Task) ([]byte, error) {
 	if _, e := s.d.Flow.Refresh(ctx, t); e != nil {
 		return nil, e
 	}
-	if e := s.d.Events.AppendEvent(ctx, record.Event{Tenant: t.Tenant, Resource: t.ID, Kind: "task.changed"}); e != nil {
+	if e := s.d.Events.AppendEvent(ctx, record.Event{Tenant: t.Tenant, Resource: t.ID, Kind: record.EventTaskChanged}); e != nil {
 		return nil, e
 	}
 	v, e := s.snapshot(ctx, t)
@@ -92,11 +87,14 @@ func run[T any](ctx context.Context, s *Service, token, key, operation, taskID s
 }
 func (s *Service) Open(ctx context.Context, token, key string, in api.Open) (api.Snapshot, error) {
 	return run(ctx, s, token, key, "execution.open", in.TaskID, in, func(tx context.Context, p identity.Principal) ([]byte, error) {
-		t, pos, e := s.load(tx, p, in.Basis)
+		t, pos, e := s.load(tx, p, in.TaskID)
 		if e != nil {
 			return nil, e
 		}
-		if p.Kind != "human" && (p.Kind != "agent" || p.InstanceID == "" || p.Incarnation == "") {
+		if in.BasisVersion != t.BasisVersion {
+			return nil, fault.ErrConflict
+		}
+		if p.Kind != "human" && (p.Kind != "agent" || p.CredentialID == "") {
 			return nil, az.ErrForbidden
 		}
 		assigned, e := s.d.Executions.Assignee(tx, t.Tenant, t.ID)
@@ -110,10 +108,10 @@ func (s *Service) Open(ctx context.Context, token, key string, in api.Open) (api
 			return nil, e
 		}
 		// A new claim replaces any earlier one and fences it at once; only the
-		// caller's own live claim in this round has nothing to replace.
+		// caller's own live claim of this round and basis has nothing to replace.
 		old, e := s.d.Executions.Current(tx, t.Tenant, t.ID)
 		if e == nil {
-			if old.Writable && old.RoundID == pos.RoundID && ownExecution(p, old) {
+			if old.Writable && old.RoundID == pos.RoundID && old.BasisVersion == t.BasisVersion && ownExecution(p, old) {
 				return nil, fault.ErrConflict
 			}
 			old.Writable = false
@@ -123,17 +121,23 @@ func (s *Service) Open(ctx context.Context, token, key string, in api.Open) (api
 		} else if !errors.Is(e, fault.ErrNotFound) {
 			return nil, e
 		}
-		v := execution.Execution{Tenant: t.Tenant, TaskID: t.ID, ID: id(), RoundID: pos.RoundID, Subject: p.ID, InstanceID: p.InstanceID, Incarnation: p.Incarnation, BasisVersion: t.BasisVersion, Writable: true, ProgressAt: time.Now()}
-		if p.Kind == "human" {
-			v.Manual = true
-			v.InstanceID, v.Incarnation = "", ""
-		}
-		_, e = s.d.ExecutionWrites.OpenExecution(tx, v)
-		if e != nil {
+		if e = s.start(tx, t, pos, p.ID, p.Kind == "human", p.CredentialID); e != nil {
 			return nil, e
 		}
 		return s.finish(tx, t)
 	})
+}
+
+// start opens a writable execution on the current round and basis. Human work
+// is manual and not bound to a credential; Agent work is bound to the
+// credential that claimed it.
+func (s *Service) start(ctx context.Context, t task.Task, pos flow.Position, subject string, manual bool, credential string) error {
+	v := execution.Execution{Tenant: t.Tenant, TaskID: t.ID, ID: id(), RoundID: pos.RoundID, Subject: subject, BasisVersion: t.BasisVersion, Writable: true, Manual: manual, ProgressAt: time.Now()}
+	if !manual {
+		v.CredentialID = credential
+	}
+	_, e := s.d.ExecutionWrites.OpenExecution(ctx, v)
+	return e
 }
 func (s *Service) owned(ctx context.Context, p identity.Principal, taskID, executionID string) (task.Task, execution.Execution, error) {
 	t, e := s.d.Tasks.GetTask(ctx, p.Tenant, taskID)
@@ -183,7 +187,7 @@ func (s *Service) RecordProgress(ctx context.Context, p identity.Principal, tena
 
 func (s *Service) Submit(ctx context.Context, token, key string, in api.Submit) (api.Snapshot, error) {
 	return run(ctx, s, token, key, "result.submit", in.TaskID, in, func(tx context.Context, p identity.Principal) ([]byte, error) {
-		t, _, e := s.load(tx, p, in.Basis)
+		t, _, e := s.load(tx, p, in.TaskID)
 		if e != nil {
 			return nil, e
 		}
@@ -217,7 +221,7 @@ func (s *Service) Submit(ctx context.Context, token, key string, in api.Submit) 
 		} else if currentErr != nil && !errors.Is(currentErr, fault.ErrNotFound) {
 			return nil, currentErr
 		}
-		c := commit.Commit{Tenant: t.Tenant, TaskID: t.ID, ID: id(), Kind: "result", Body: in.Body, Author: p.ID, OwnerID: p.OwnerID, InstanceID: p.InstanceID, Incarnation: p.Incarnation, BasisVersion: t.BasisVersion}
+		c := commit.Commit{Tenant: t.Tenant, TaskID: t.ID, ID: id(), Kind: "result", Body: in.Body, Author: p.ID, OwnerID: p.OwnerID, BasisVersion: t.BasisVersion}
 		if e = s.d.Commits.Append(tx, c); e != nil {
 			return nil, e
 		}
@@ -229,7 +233,7 @@ func (s *Service) Submit(ctx context.Context, token, key string, in api.Submit) 
 }
 func (s *Service) Review(ctx context.Context, token, key string, in api.Review) (api.Snapshot, error) {
 	return run(ctx, s, token, key, "result.review", in.TaskID, in, func(tx context.Context, p identity.Principal) ([]byte, error) {
-		t, pos, e := s.load(tx, p, in.Basis)
+		t, pos, e := s.load(tx, p, in.TaskID)
 		if e != nil {
 			return nil, e
 		}
@@ -253,33 +257,9 @@ func (s *Service) Review(ctx context.Context, token, key string, in api.Review) 
 		if v.ID != in.SubmissionID || v.CommitID != in.CommitID || v.BasisVersion != t.BasisVersion {
 			return nil, fault.ErrConflict
 		}
-		r := acceptance.Review{Tenant: t.Tenant, TaskID: t.ID, ID: id(), RoundID: pos.RoundID, SubmissionID: v.ID, CommitID: v.CommitID, Reviewer: p.ID, Outcome: in.Outcome, Reason: in.Reason, BasisVersion: t.BasisVersion}
-		if e = s.d.Reviews.SaveReview(tx, r); e != nil {
-			return nil, e
-		}
-		return s.finish(tx, t)
-	})
-}
-func (s *Service) Withdraw(ctx context.Context, token, key string, in api.Withdraw) (api.Snapshot, error) {
-	return run(ctx, s, token, key, "result.withdraw", in.TaskID, in, func(tx context.Context, p identity.Principal) ([]byte, error) {
-		t, pos, e := s.load(tx, p, in.Basis)
-		if e != nil {
-			return nil, e
-		}
-		if pos.Status != flow.PhaseActive {
-			return nil, fault.ErrConflict
-		}
-		v, e := s.d.Results.CurrentSubmission(tx, t.Tenant, t.ID, pos.RoundID)
-		if e != nil {
-			return nil, e
-		}
-		if v.ID != in.SubmissionID {
-			return nil, fault.ErrConflict
-		}
-		if p.ID != t.Owner && p.ID != v.Author {
-			return nil, az.ErrForbidden
-		}
-		if e = s.d.Results.WithdrawSubmission(tx, t.Tenant, v.ID); e != nil {
+		// The verdict is stored once, as an immutable commit referring to the result.
+		c := commit.Commit{Tenant: t.Tenant, TaskID: t.ID, ID: id(), Kind: acceptance.Kind(in.Outcome), Body: in.Reason, RefID: v.CommitID, Author: p.ID, BasisVersion: t.BasisVersion}
+		if e = s.d.Commits.Append(tx, c); e != nil {
 			return nil, e
 		}
 		return s.finish(tx, t)
@@ -299,9 +279,9 @@ func (s *Service) fence(ctx context.Context, t task.Task) error {
 	v.Writable = false
 	return s.d.ExecutionWrites.SaveExecution(ctx, v)
 }
-func (s *Service) Cancel(ctx context.Context, token, key string, in api.Basis) (api.Snapshot, error) {
+func (s *Service) Cancel(ctx context.Context, token, key string, in api.Cancel) (api.Snapshot, error) {
 	return run(ctx, s, token, key, "task.cancel", in.TaskID, in, func(tx context.Context, p identity.Principal) ([]byte, error) {
-		t, _, e := s.load(tx, p, in)
+		t, _, e := s.load(tx, p, in.TaskID)
 		if e != nil {
 			return nil, e
 		}
@@ -314,31 +294,22 @@ func (s *Service) Cancel(ctx context.Context, token, key string, in api.Basis) (
 		return s.finish(tx, t)
 	})
 }
-func (s *Service) Return(ctx context.Context, token, key string, in api.Basis) (api.Snapshot, error) {
-	return s.restart(ctx, token, key, in, false)
-}
-func (s *Service) Reopen(ctx context.Context, token, key string, in api.Basis) (api.Snapshot, error) {
-	return s.restart(ctx, token, key, in, true)
-}
-func (s *Service) restart(ctx context.Context, token, key string, in api.Basis, reopen bool) (api.Snapshot, error) {
-	op := "task.return"
-	if reopen {
-		op = "task.reopen"
-	}
-	return run(ctx, s, token, key, op, in.TaskID, in, func(tx context.Context, p identity.Principal) ([]byte, error) {
-		t, _, e := s.load(tx, p, in)
+
+// Restart fences the current execution and starts a new round from the round
+// the caller saw: sending active work back, or reopening a terminal task.
+func (s *Service) Restart(ctx context.Context, token, key string, in api.Restart) (api.Snapshot, error) {
+	return run(ctx, s, token, key, "task.restart", in.TaskID, in, func(tx context.Context, p identity.Principal) ([]byte, error) {
+		t, pos, e := s.load(tx, p, in.TaskID)
 		if e != nil {
 			return nil, e
+		}
+		if pos.RoundID != in.RoundID {
+			return nil, fault.ErrConflict
 		}
 		if e = s.fence(tx, t); e != nil {
 			return nil, e
 		}
-		if reopen {
-			_, e = s.d.Flow.Reopen(tx, t)
-		} else {
-			_, e = s.d.Flow.Return(tx, t)
-		}
-		if e != nil {
+		if _, e = s.d.Flow.Restart(tx, t); e != nil {
 			return nil, e
 		}
 		return s.finish(tx, t)
@@ -346,7 +317,7 @@ func (s *Service) restart(ctx context.Context, token, key string, in api.Basis, 
 }
 func (s *Service) Assign(ctx context.Context, token, key string, in api.Assignment) (api.Snapshot, error) {
 	return run(ctx, s, token, key, "execution.assign", in.TaskID, in, func(tx context.Context, p identity.Principal) ([]byte, error) {
-		t, pos, e := s.load(tx, p, in.Basis)
+		t, pos, e := s.load(tx, p, in.TaskID)
 		if e != nil {
 			return nil, e
 		}
@@ -375,6 +346,13 @@ func (s *Service) Assign(ctx context.Context, token, key string, in api.Assignme
 		}
 		if e = s.d.ExecutionWrites.AssignSubject(tx, t.Tenant, t.ID, in.Subject); e != nil {
 			return nil, e
+		}
+		// A person needs no separate claim: assignment starts their manual work.
+		// An Agent still claims, binding the execution to one credential.
+		if subject.Kind == "human" {
+			if e = s.start(tx, t, pos, subject.ID, true, ""); e != nil {
+				return nil, e
+			}
 		}
 		return s.finish(tx, t)
 	})

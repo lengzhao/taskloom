@@ -11,30 +11,26 @@ import (
 	"github.com/lengzhao/taskloom/cap/task"
 )
 
-// Basis pins a flow command to the state the client saw. ExpectedRevision is the
-// flow Position.Revision, distinct from task.Version used by basis edits.
-type Basis struct {
-	TaskID, RoundID                string
-	BasisVersion, ExpectedRevision int64
+// Command inputs carry only what each command must pin. Executions,
+// submissions and commits already identify what a write applies to, so most
+// commands need no client-side version; a fenced or superseded target is a conflict.
+type Assignment struct{ TaskID, Subject string }
+
+// Open pins the basis the caller read, so work never starts on unseen criteria.
+type Open struct {
+	TaskID       string
+	BasisVersion int64
 }
-type Assignment struct {
-	Basis
-	Subject string
-}
-type Open struct{ Basis }
-type Submit struct {
-	Basis
-	ExecutionID, Body string
-}
+type Submit struct{ TaskID, ExecutionID, Body string }
 type Review struct {
-	Basis
+	TaskID string
 	acceptance.Verdict
 }
+type Cancel struct{ TaskID string }
 
-type Withdraw struct {
-	Basis
-	SubmissionID string
-}
+// Restart starts a new round from the round the caller saw: on an active task
+// it sends work back, on a terminal one it reopens the task.
+type Restart struct{ TaskID, RoundID string }
 
 // Actor names who must act next for the task to move. Empty means nothing is
 // pending from a fixed role; Position.Waiting still carries step-specific text.
@@ -104,12 +100,10 @@ type ExecutionCommands interface {
 type ResultCommands interface {
 	Submit(ctx context.Context, token, key string, in Submit) (Snapshot, error)
 	Review(ctx context.Context, token, key string, in Review) (Snapshot, error)
-	Withdraw(ctx context.Context, token, key string, in Withdraw) (Snapshot, error)
 }
 type ControlCommands interface {
-	Cancel(ctx context.Context, token, key string, in Basis) (Snapshot, error)
-	Return(ctx context.Context, token, key string, in Basis) (Snapshot, error)
-	Reopen(ctx context.Context, token, key string, in Basis) (Snapshot, error)
+	Cancel(ctx context.Context, token, key string, in Cancel) (Snapshot, error)
+	Restart(ctx context.Context, token, key string, in Restart) (Snapshot, error)
 }
 
 // Pending is one task whose NextActor is the caller.

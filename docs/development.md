@@ -54,6 +54,27 @@ Go 依赖首次需下载，不需要 Ruby。配置图由 PluginKit 真实构建�
 
 测试覆盖合并/替换/禁用、可达与内联实例、配置错误、默认流程引用、脱敏、无监听构造、实际 HTTP、模块失败清理、根取消和资源逆序关闭。
 
-## 阶段实现
+## 初始化与 Agent 登记
 
-[M03](m03-storage.md) 存储与管理员 CLI（SQLite CGO 驱动需 C 编译器；MySQL/PostgreSQL 已编入但未经真实服务验证）、[M04](m04-workspace.md) 工作台与 HTTP 变化补拉、[M05](m05-workflow.md) 执行/结果/验收闭环的接口与验证见各页。WS 与 Harness 仍属后续阶段。
+```sh
+go run ./cmd/taskloom-admin -mode bootstrap -tenant example -subject admin \
+  -operator local-operator -reason initial-setup \
+  -credential-file /private/tmp/taskloom-admin-credential.json
+go run ./cmd/taskloom-admin -mode enroll-agent -tenant example \
+  -subject worker-1 -owner admin -operator local-operator -reason agent-enrollment \
+  -credential-file /private/tmp/taskloom-worker.json
+go run ./cmd/taskloom
+```
+
+打开 `http://127.0.0.1:8080/v1/app`，用凭据文件中的 Secret 首次登录并设置密码。遗失管理员凭据时用 `-mode recover` 和新的 `-credential-file` 路径：撤销该人全部旧凭据并清空密码。输出文件必须不存在、权限 0600，秘密不打印；数据库与文件不共享事务，写文件失败时用 recover 重来。`-operator` 是审计声明，可信边界是部署机与数据库运维权限。
+
+## 验证范围与已知限制
+
+已由真实 SQLite、PluginKit 装配与 HTTP 测试覆盖：
+
+- 存储：持久化、跨仓储回滚、嵌套错误/panic 的 rollback-only、迁移校验和拒绝、事件顺序。
+- 安全：并发幂等与冲突、撤权后重放、跨租户、未知操作、初始化一次性、离线恢复、凭据签发不重复泄密、Agent 不继承所属人、管理员审计查询、Origin/CSRF、会话失效。
+- 任务与流程：信息不足、评论不改依据、更正引用、commit 分页、依据版本冲突、并发认领、换凭据重新认领、取消与旧写入、执行中改依据、结果替换、退回/重开、未答问题阻止完成、人工处理与转交、无验收配置、变化补拉重新鉴权、写入失败整体回滚、新 API 模块路由冲突启动前拒绝。
+- 工作台：内置浏览器在独立临时库中验证过创建、分配、认领、提交、验收、项目与看板等主路径（最近几轮界面改动只做了脚本语法检查）。
+
+尚未验证：真实 Agent/Harness 联调与进程清理（M06）、MySQL/PostgreSQL 真实服务、生产负载、WebSocket、文件/S3。本地测试不能表述为生产可用。

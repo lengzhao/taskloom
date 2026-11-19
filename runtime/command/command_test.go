@@ -41,7 +41,7 @@ func fixture(t *testing.T) (*store.Store, *command.Runner, *security.Service, st
 	if err != nil {
 		t.Fatal(err)
 	}
-	runner, err := command.New(command.Deps{Transactions: s, Requests: s, Identity: id, Authorization: az, Audit: s, Events: s})
+	runner, err := command.New(command.Deps{Transactions: s, Requests: s, Identity: id, Authorization: az, Audit: s})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -219,11 +219,11 @@ func TestAgentBindingsAreCredentialScopedAndDoNotInheritOwner(t *testing.T) {
 	if err := svc.Create(ctx, token, "agent", p); err != nil {
 		t.Fatal(err)
 	}
-	first, err := svc.Issue(ctx, token, "agent-1", capsecurity.IssueInput{Tenant: "t", Subject: "agent", InstanceID: "instance", Incarnation: "boot-1", ExpiresAt: time.Now().Add(time.Hour)})
+	first, err := svc.Issue(ctx, token, "agent-1", capsecurity.IssueInput{Tenant: "t", Subject: "agent", ExpiresAt: time.Now().Add(time.Hour)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := svc.Issue(ctx, token, "agent-2", capsecurity.IssueInput{Tenant: "t", Subject: "agent", InstanceID: "instance", Incarnation: "boot-2", ExpiresAt: time.Now().Add(time.Hour)})
+	second, err := svc.Issue(ctx, token, "agent-2", capsecurity.IssueInput{Tenant: "t", Subject: "agent", ExpiresAt: time.Now().Add(time.Hour)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -236,7 +236,7 @@ func TestAgentBindingsAreCredentialScopedAndDoNotInheritOwner(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if a.ID != b.ID || a.Incarnation != "boot-1" || b.Incarnation != "boot-2" {
+	if a.ID != b.ID || a.CredentialID != first.ID || b.CredentialID != second.ID || a.CredentialID == b.CredentialID {
 		t.Fatal("runtime binding drift")
 	}
 	req := capcommand.Request{Token: first.Secret, Operation: "identity.issue", Key: "forbidden", Resource: "t"}
@@ -272,15 +272,19 @@ func TestOutboxFailureRollsBackFactsAndReceipt(t *testing.T) {
 
 	auth, _ := local.New(local.Deps{Store: s})
 	az, _ := access.New(access.Deps{Store: s, Tasks: s})
-	runner, _ := command.New(command.Deps{Transactions: s, Requests: s, Identity: auth, Authorization: az, Audit: s, Events: failingEvents{s}})
+	runner, _ := command.New(command.Deps{Transactions: s, Requests: s, Identity: auth, Authorization: az, Audit: s})
+	events := failingEvents{s}
 	before, err := s.ReadEvents(ctx, "t", 0, 100)
 	if err != nil {
 		t.Fatal(err)
 	}
 	req := capcommand.Request{Token: token, Operation: "identity.create", Key: "outbox-failure", Resource: "t"}
 	_, err = command.Run(ctx, runner, req, 1, func(tx context.Context, p identity.Principal) ([]byte, error) {
-		_, err := insertTask(s, tx, p.Tenant, "a")
-		return []byte("never committed"), err
+		if _, err := insertTask(s, tx, p.Tenant, "a"); err != nil {
+			return nil, err
+		}
+		// The use case writes its event; a failure there rolls back everything.
+		return []byte("never committed"), events.AppendEvent(tx, record.Event{Tenant: p.Tenant, Resource: "a", Kind: record.EventTaskChanged})
 	})
 	if err == nil {
 		t.Fatal("outbox failure accepted")
@@ -298,7 +302,7 @@ func TestOutboxFailureRollsBackFactsAndReceipt(t *testing.T) {
 }
 
 func insertTask(s *store.Store, ctx context.Context, tenant, id string) (int64, error) {
-	return 1, s.CreateTask(ctx, task.Task{Tenant: tenant, ID: id, Version: 1, BasisVersion: 1})
+	return 1, s.CreateTask(ctx, task.Task{Tenant: tenant, ID: id, BasisVersion: 1})
 }
 
 func TestExtensionUseCaseCheckRunsBeforeReceiptReplay(t *testing.T) {

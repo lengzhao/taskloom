@@ -5,15 +5,19 @@ import (
 	"encoding/json"
 	"time"
 
+	"github.com/lengzhao/taskloom/cap/acceptance"
 	"github.com/lengzhao/taskloom/cap/commit"
 	"gorm.io/gorm"
 )
 
 type commitRow struct {
 	Key      string `gorm:"primaryKey;size:64;column:row_key"`
-	TaskKey  string `gorm:"size:64;index"`
+	TaskKey  string `gorm:"size:64;index;index:idx_commit_ref,priority:1"`
 	Sequence int64
-	Data     []byte
+	// Kind and RefID are copied out of Data so verdicts can be found by the result they refer to.
+	Kind  string `gorm:"size:32"`
+	RefID string `gorm:"size:128;index:idx_commit_ref,priority:2"`
+	Data  []byte
 }
 
 func (s *Store) Append(ctx context.Context, c commit.Commit) error {
@@ -41,7 +45,7 @@ func (s *Store) Append(ctx context.Context, c commit.Commit) error {
 		if err != nil {
 			return err
 		}
-		return db.Create(&commitRow{Key: key(c.Tenant, c.TaskID, c.ID), TaskKey: parent.Key, Sequence: c.Sequence, Data: data}).Error
+		return db.Create(&commitRow{Key: key(c.Tenant, c.TaskID, c.ID), TaskKey: parent.Key, Sequence: c.Sequence, Kind: c.Kind, RefID: c.RefID, Data: data}).Error
 	})
 }
 func (s *Store) Get(ctx context.Context, tenant, taskID, id string) (commit.Commit, error) {
@@ -75,4 +79,24 @@ func (s *Store) List(ctx context.Context, tenant, taskID string, after int64, li
 		return nil
 	})
 	return out, err
+}
+
+// LatestReview reads the newest verdict commit on a result commit.
+func (s *Store) LatestReview(ctx context.Context, tenant, taskID, resultCommitID string) (acceptance.Review, error) {
+	var c commit.Commit
+	err := s.use(ctx, false, func(db *gorm.DB) error {
+		var row commitRow
+		if err := db.Where("task_key = ? AND ref_id = ? AND kind IN ?", key(tenant, taskID), resultCommitID, []string{acceptance.KindApproved, acceptance.KindRejected}).Order("sequence DESC").First(&row).Error; err != nil {
+			return err
+		}
+		return json.Unmarshal(row.Data, &c)
+	})
+	if err != nil {
+		return acceptance.Review{}, err
+	}
+	outcome := acceptance.OutcomeRejected
+	if c.Kind == acceptance.KindApproved {
+		outcome = acceptance.OutcomeApproved
+	}
+	return acceptance.Review{Tenant: c.Tenant, TaskID: c.TaskID, ID: c.ID, CommitID: c.RefID, Reviewer: c.Author, Outcome: outcome, Reason: c.Body, BasisVersion: c.BasisVersion}, nil
 }

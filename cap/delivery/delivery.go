@@ -8,7 +8,6 @@ import (
 type Submission struct {
 	Tenant, TaskID, ID, RoundID, ExecutionID, CommitID, Author string
 	BasisVersion                                               int64
-	Withdrawn                                                  bool
 	CreatedAt                                                  time.Time
 }
 type Reader interface {
@@ -18,5 +17,4 @@ type Reader interface {
 type Store interface {
 	Reader
 	RegisterSubmission(ctx context.Context, value Submission) error
-	WithdrawSubmission(ctx context.Context, tenant, id string) error
 }

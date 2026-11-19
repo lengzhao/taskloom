@@ -75,15 +75,20 @@ func TestNoAcceptanceVerdictAndWrongInstanceRejected(t *testing.T) {
 	}
 }
 
+// factsReader is the query's in-transaction read, used to observe facts
+// before an injected failure rolls them back.
+type factsReader interface {
+	ReadFacts(ctx context.Context, value task.Task) (api.Snapshot, error)
+}
 type observedFailure struct {
 	events   record.EventWriter
-	facts    api.FactsReader
+	facts    factsReader
 	tasks    task.Reader
 	captured api.Snapshot
 }
 type observedDeps struct {
 	Events record.EventWriter `json:"events"`
-	Facts  api.FactsReader    `json:"facts"`
+	Facts  factsReader        `json:"facts"`
 	Tasks  task.Reader        `json:"tasks"`
 }
 

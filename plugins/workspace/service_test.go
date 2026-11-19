@@ -1,23 +1,25 @@
 package workspace_test
 
 import (
+	"encoding/json"
+
 	"context"
 	"errors"
 	"fmt"
+	"github.com/lengzhao/taskloom/cap/record"
 	capsecurity "github.com/lengzhao/taskloom/cap/security"
 	"path/filepath"
 	"sync"
 	"testing"
-	"time"
 
 	az "github.com/lengzhao/taskloom/cap/authorization"
 	"github.com/lengzhao/taskloom/cap/fault"
 	"github.com/lengzhao/taskloom/cap/identity"
 	api "github.com/lengzhao/taskloom/cap/workspace"
-	"github.com/lengzhao/taskloom/domain/security"
 	access "github.com/lengzhao/taskloom/plugins/access/default"
 	flow "github.com/lengzhao/taskloom/plugins/flow"
 	local "github.com/lengzhao/taskloom/plugins/identity/local"
+	"github.com/lengzhao/taskloom/plugins/security"
 	store "github.com/lengzhao/taskloom/plugins/storage/sql"
 	workspace "github.com/lengzhao/taskloom/plugins/workspace"
 	"github.com/lengzhao/taskloom/runtime/command"
@@ -30,11 +32,30 @@ func (noProgress) RecordProgress(context.Context, identity.Principal, string, st
 	return nil
 }
 
-func fixture(t *testing.T) (*workspace.Service, *security.Service, string) {
+// readBack answers Create and Edit with current facts, as the HTTP API does:
+// commands return only a Ref, the same Ref their receipt stores.
+type readBack struct{ *workspace.Service }
+
+func (r readBack) Create(ctx context.Context, token, key string, in api.Create) (api.Detail, error) {
+	ref, e := r.Service.Create(ctx, token, key, in)
+	return r.read(ctx, token, ref, e)
+}
+func (r readBack) Edit(ctx context.Context, token, key string, in api.Edit) (api.Detail, error) {
+	ref, e := r.Service.Edit(ctx, token, key, in)
+	return r.read(ctx, token, ref, e)
+}
+func (r readBack) read(ctx context.Context, token string, ref api.Ref, e error) (api.Detail, error) {
+	if e != nil {
+		return api.Detail{}, e
+	}
+	return r.Get(ctx, token, ref.TaskID, 0)
+}
+
+func fixture(t *testing.T) (readBack, *security.Service, string) {
 	svc, sec, token, _ := fixtureWithStore(t)
 	return svc, sec, token
 }
-func fixtureWithStore(t *testing.T) (*workspace.Service, *security.Service, string, *store.Store) {
+func fixtureWithStore(t *testing.T) (readBack, *security.Service, string, *store.Store) {
 	t.Helper()
 	s, e := store.New(store.Config{DSN: filepath.Join(t.TempDir(), "db")})
 	if e != nil {
@@ -48,7 +69,10 @@ func fixtureWithStore(t *testing.T) (*workspace.Service, *security.Service, stri
 	az, _ := access.New(access.Deps{Store: s, Tasks: s})
 	r, _ := command.New(command.Deps{Transactions: s, Identity: id, Authorization: az, Requests: s, Audit: s})
 	sec := security.New(security.Deps{Passwords: s, Commands: r, Transactions: s, Principals: s, Credentials: s, Bootstrap: s, Members: s, Audit: s, Events: s})
-	issued, e := sec.Bootstrap(context.Background(), security.BootstrapInput{Tenant: "t", Subject: "u", Operator: "test", Reason: "test", ExpiresAt: time.Now().Add(time.Hour)})
+	if e := sec.Bootstrap(context.Background(), security.AdminInput{Tenant: "t", Subject: "u", Operator: "test", Reason: "test", Password: "AdminPassword123!"}); e != nil {
+		t.Fatal(e)
+	}
+	issued, e := sec.Login(context.Background(), capsecurity.LoginInput{Tenant: "t", Username: "u", Password: "AdminPassword123!"})
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -56,11 +80,11 @@ func fixtureWithStore(t *testing.T) (*workspace.Service, *security.Service, stri
 	if e != nil {
 		t.Fatal(e)
 	}
-	svc, e := workspace.New(workspace.Deps{Catalog: s, Transactions: s, Tasks: s, Commits: s, Flow: f, Identity: id, Authorization: az, Commands: r, Events: s, Members: s, Participants: s, Progress: noProgress{}})
+	inner, e := workspace.New(workspace.Deps{Catalog: s, Transactions: s, Tasks: s, Commits: s, Flow: f, Identity: id, Authorization: az, Commands: r, Events: s, Members: s, Participants: s, Progress: noProgress{}})
 	if e != nil {
 		t.Fatal(e)
 	}
-	return svc, sec, issued.Secret, s
+	return readBack{inner}, sec, issued.Secret, s
 }
 
 func TestCreateReadCommitEditAndRevoke(t *testing.T) {
@@ -86,7 +110,7 @@ func TestCreateReadCommitEditAndRevoke(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	_, e = s.Comment(ctx, token, "correction", api.Comment{TaskID: d.Task.ID, Body: "更正", RefID: c.ID})
+	_, e = s.Comment(ctx, token, "correction", api.Comment{TaskID: d.Task.ID, Body: "更正", RefID: c.CommitID})
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -105,13 +129,13 @@ func TestCreateReadCommitEditAndRevoke(t *testing.T) {
 	if e != nil || len(page.Changes) < 4 {
 		t.Fatalf("changes %+v %v", page, e)
 	}
-	if e = sec.Create(ctx, token, "second-admin", identity.Principal{Tenant: "t", ID: "admin2", Kind: "human"}); e != nil {
+	if e = sec.CreateUser(ctx, token, "second-admin", capsecurity.UserInput{Tenant: "t", Username: "admin2", Password: "UserPassword123!"}); e != nil {
 		t.Fatal(e)
 	}
 	if e = sec.SetMember(ctx, token, "promote", az.Member{Tenant: "t", Subject: "admin2", Role: "admin", Active: true}); e != nil {
 		t.Fatal(e)
 	}
-	second, e := sec.Issue(ctx, token, "admin2-token", capsecurity.IssueInput{Tenant: "t", Subject: "admin2", ExpiresAt: time.Now().Add(time.Hour)})
+	second, e := sec.Login(ctx, capsecurity.LoginInput{Tenant: "t", Username: "admin2", Password: "UserPassword123!"})
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -163,10 +187,10 @@ func TestConcurrentCreateAndSharedCursorIsReauthorized(t *testing.T) {
 			t.Fatal("duplicate tasks")
 		}
 	}
-	if e := sec.Create(ctx, token, "user", identity.Principal{Tenant: "t", ID: "v", Kind: "human"}); e != nil {
+	if e := sec.CreateUser(ctx, token, "user", capsecurity.UserInput{Tenant: "t", Username: "v", Password: "UserPassword123!"}); e != nil {
 		t.Fatal(e)
 	}
-	issued, e := sec.Issue(ctx, token, "issue", capsecurity.IssueInput{Tenant: "t", Subject: "v", ExpiresAt: time.Now().Add(time.Hour)})
+	issued, e := sec.Login(ctx, capsecurity.LoginInput{Tenant: "t", Username: "v", Password: "UserPassword123!"})
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -211,7 +235,7 @@ func TestCommitPaginationAndForeignReference(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	if _, e = s.Comment(ctx, token, "bad-ref", api.Comment{TaskID: a.Task.ID, Body: "wrong", RefID: foreign.ID}); !errors.Is(e, fault.ErrNotFound) {
+	if _, e = s.Comment(ctx, token, "bad-ref", api.Comment{TaskID: a.Task.ID, Body: "wrong", RefID: foreign.CommitID}); !errors.Is(e, fault.ErrNotFound) {
 		t.Fatal("foreign ref", e)
 	}
 	for i := 0; i < 103; i++ {
@@ -234,10 +258,10 @@ func TestMembershipOwnerParticipantsAndImmediateRemoval(t *testing.T) {
 	ctx := context.Background()
 	createUser := func(name string) string {
 		t.Helper()
-		if e := sec.Create(ctx, admin, "create-"+name, identity.Principal{Tenant: "t", ID: name, Kind: "human"}); e != nil {
+		if e := sec.CreateUser(ctx, admin, "create-"+name, capsecurity.UserInput{Tenant: "t", Username: name, Password: "UserPassword123!"}); e != nil {
 			t.Fatal(e)
 		}
-		issued, e := sec.Issue(ctx, admin, "issue-"+name, capsecurity.IssueInput{Tenant: "t", Subject: name, ExpiresAt: time.Now().Add(time.Hour)})
+		issued, e := sec.Login(ctx, capsecurity.LoginInput{Tenant: "t", Username: name, Password: "UserPassword123!"})
 		if e != nil {
 			t.Fatal(e)
 		}
@@ -320,14 +344,17 @@ func TestMembershipOwnerParticipantsAndImmediateRemoval(t *testing.T) {
 func TestCandidatesRequireTaskManagementAndFilterInactiveMembers(t *testing.T) {
 	s, sec, admin, db := fixtureWithStore(t)
 	ctx := context.Background()
-	for _, p := range []identity.Principal{{Tenant: "t", ID: "owner", Kind: "human"}, {Tenant: "t", ID: "guest", Kind: "human"}, {Tenant: "t", ID: "agent", Kind: "agent", OwnerID: "owner"}} {
-		if e := sec.Create(ctx, admin, "create-"+p.ID, p); e != nil {
+	for _, name := range []string{"owner", "guest"} {
+		if e := sec.CreateUser(ctx, admin, "create-"+name, capsecurity.UserInput{Tenant: "t", Username: name, Password: "UserPassword123!"}); e != nil {
 			t.Fatal(e)
 		}
 	}
+	if e := sec.Create(ctx, admin, "create-agent", identity.Principal{Tenant: "t", ID: "agent", Kind: "agent", OwnerID: "owner"}); e != nil {
+		t.Fatal(e)
+	}
 	issue := func(id string) string {
 		t.Helper()
-		v, e := sec.Issue(ctx, admin, "issue-"+id, capsecurity.IssueInput{Tenant: "t", Subject: id, ExpiresAt: time.Now().Add(time.Hour)})
+		v, e := sec.Login(ctx, capsecurity.LoginInput{Tenant: "t", Username: id, Password: "UserPassword123!"})
 		if e != nil {
 			t.Fatal(e)
 		}
@@ -374,7 +401,10 @@ func TestCandidatesRequireTaskManagementAndFilterInactiveMembers(t *testing.T) {
 	}); e != nil {
 		t.Fatal(e)
 	}
-	foreign, e := sec.Recover(ctx, security.BootstrapInput{Tenant: "other", Subject: "foreign", Operator: "test", Reason: "isolation test", ExpiresAt: time.Now().Add(time.Hour)})
+	if e := sec.Recover(ctx, security.AdminInput{Tenant: "other", Subject: "foreign", Operator: "test", Reason: "isolation test", Password: "AdminPassword123!"}); e != nil {
+		t.Fatal(e)
+	}
+	foreign, e := sec.Login(ctx, capsecurity.LoginInput{Tenant: "other", Username: "foreign", Password: "AdminPassword123!"})
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -390,5 +420,46 @@ func TestCandidatesRequireTaskManagementAndFilterInactiveMembers(t *testing.T) {
 	}
 	if _, e = s.Candidates(ctx, owner, d.Task.ID); !errors.Is(e, az.ErrForbidden) {
 		t.Fatal("revoked owner", e)
+	}
+}
+
+// Receipts keep only the Ref: a replayed create or comment returns the same
+// Ref, and the task read afterwards shows facts written since, not the old ones.
+func TestReplayReturnsSameRefAndReceiptStoresNoFacts(t *testing.T) {
+	s, _, token, db := fixtureWithStore(t)
+	ctx := context.Background()
+	in := api.Create{Title: "旧标题", Goal: "goal", Criteria: "criteria"}
+	first, e := s.Service.Create(ctx, token, "create", in)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if _, e = s.Service.Edit(ctx, token, "edit", api.Edit{TaskID: first.TaskID, Title: "新标题", Goal: "goal", Criteria: "criteria", BasisVersion: 1}); e != nil {
+		t.Fatal(e)
+	}
+	replayed, e := s.Service.Create(ctx, token, "create", in)
+	if e != nil || replayed != first {
+		t.Fatal("replay changed the ref", replayed, first, e)
+	}
+	if d, e := s.Get(ctx, token, replayed.TaskID, 0); e != nil || d.Task.Title != "新标题" {
+		t.Fatal("current facts not visible after replay", d.Task.Title, e)
+	}
+	comment, e := s.Service.Comment(ctx, token, "comment", api.Comment{TaskID: first.TaskID, Body: "留言"})
+	if e != nil || comment.CommitID == "" || comment.TaskID != first.TaskID {
+		t.Fatal("comment ref", comment, e)
+	}
+	for op, key := range map[string]string{"task.create": "create", "task.edit": "edit", "commit.append": "comment"} {
+		stored, e := db.FindReceipt(ctx, record.RequestKey{Tenant: "t", Subject: "u", Operation: op, Key: key})
+		if e != nil {
+			t.Fatal(op, e)
+		}
+		var fields map[string]any
+		if e = json.Unmarshal(stored.Result, &fields); e != nil {
+			t.Fatal(op, e)
+		}
+		for k := range fields {
+			if k != "TaskID" && k != "CommitID" {
+				t.Fatal("receipt stores derivable facts", op, k)
+			}
+		}
 	}
 }

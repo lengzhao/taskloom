@@ -8,7 +8,6 @@ import (
 	"github.com/lengzhao/taskloom/cap/execution"
 	"github.com/lengzhao/taskloom/cap/flow"
 	"github.com/lengzhao/taskloom/cap/question"
-	"github.com/lengzhao/taskloom/cap/task"
 )
 
 // Command inputs carry only what each command must pin. Executions,
@@ -89,21 +88,30 @@ type Ask struct {
 type Answer struct {
 	TaskID, QuestionID, Body string
 }
+
+// Ref is what a command fixed: the task, the round it left the task in and,
+// when it opened one, the execution. Its receipt stores only this, so a replay
+// returns the same Ref; callers read current facts through Queries.
+type Ref struct {
+	TaskID, RoundID string
+	ExecutionID     string `json:",omitempty"`
+}
+
 type QuestionCommands interface {
-	Ask(ctx context.Context, token, key string, in Ask) (Snapshot, error)
-	Answer(ctx context.Context, token, key string, in Answer) (Snapshot, error)
+	Ask(ctx context.Context, token, key string, in Ask) (Ref, error)
+	Answer(ctx context.Context, token, key string, in Answer) (Ref, error)
 }
 type ExecutionCommands interface {
-	Assign(ctx context.Context, token, key string, in Assignment) (Snapshot, error)
-	Open(ctx context.Context, token, key string, in Open) (Snapshot, error)
+	Assign(ctx context.Context, token, key string, in Assignment) (Ref, error)
+	Open(ctx context.Context, token, key string, in Open) (Ref, error)
 }
 type ResultCommands interface {
-	Submit(ctx context.Context, token, key string, in Submit) (Snapshot, error)
-	Review(ctx context.Context, token, key string, in Review) (Snapshot, error)
+	Submit(ctx context.Context, token, key string, in Submit) (Ref, error)
+	Review(ctx context.Context, token, key string, in Review) (Ref, error)
 }
 type ControlCommands interface {
-	Cancel(ctx context.Context, token, key string, in Cancel) (Snapshot, error)
-	Restart(ctx context.Context, token, key string, in Restart) (Snapshot, error)
+	Cancel(ctx context.Context, token, key string, in Cancel) (Ref, error)
+	Restart(ctx context.Context, token, key string, in Restart) (Ref, error)
 }
 
 // Pending is one task whose NextActor is the caller.
@@ -115,8 +123,4 @@ type Queries interface {
 	Read(ctx context.Context, token, taskID string) (Snapshot, error)
 	// Inbox lists readable active tasks currently waiting on the caller.
 	Inbox(ctx context.Context, token string) ([]Pending, error)
-}
-
-type FactsReader interface {
-	ReadFacts(ctx context.Context, value task.Task) (Snapshot, error)
 }

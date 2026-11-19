@@ -1,30 +1,31 @@
 // Command taskloom-admin is an offline, explicitly invoked bootstrap/recovery
-// entry point. It never listens on HTTP or prints issued credentials.
+// entry point. It never listens on HTTP or prints issued credentials. People
+// authenticate only with a password, so bootstrap and recovery read it from
+// stdin (never an argument) and issue nothing; only Agent enrollment writes a
+// credential file.
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
-	capsecurity "github.com/lengzhao/taskloom/cap/security"
 	"io"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/lengzhao/pluginkit/build"
-	"github.com/lengzhao/taskloom/cap/authorization"
-	"github.com/lengzhao/taskloom/cap/identity"
 	"github.com/lengzhao/taskloom/cap/lifecycle"
-	"github.com/lengzhao/taskloom/cap/record"
-	"github.com/lengzhao/taskloom/cap/unitofwork"
-	"github.com/lengzhao/taskloom/domain/security"
+	domain "github.com/lengzhao/taskloom/domain/security"
 	_ "github.com/lengzhao/taskloom/plugins"
+	"github.com/lengzhao/taskloom/plugins/security"
 	"github.com/lengzhao/taskloom/runtime/config"
 )
 
-func main() { os.Exit(run(context.Background(), os.Args[1:], os.Stdout, os.Stderr)) }
-func run(ctx context.Context, args []string, out, errout io.Writer) int {
+func main() { os.Exit(run(context.Background(), os.Args[1:], os.Stdin, os.Stdout, os.Stderr)) }
+func run(ctx context.Context, args []string, stdin io.Reader, out, errout io.Writer) int {
 	f := flag.NewFlagSet("taskloom-admin", flag.ContinueOnError)
 	f.SetOutput(errout)
 	base := f.String("base", "base.yaml", "base configuration")
@@ -35,18 +36,39 @@ func run(ctx context.Context, args []string, out, errout io.Writer) int {
 	subject := f.String("subject", "", "administrator or Agent ID")
 	operator := f.String("operator", "", "audited local operator")
 	reason := f.String("reason", "", "audited reason")
-	path := f.String("credential-file", "", "new private credential output file")
-	owner := f.String("owner", "", "human owner ID for Agent enrollment")
-	ttl := f.Duration("ttl", 24*time.Hour, "credential lifetime (maximum 90 days)")
+	passwordStdin := f.Bool("password-stdin", false, "bootstrap and recover: read the administrator password from the first stdin line")
+	path := f.String("credential-file", "", "enroll-agent: new private credential output file")
+	owner := f.String("owner", "", "enroll-agent: human owner ID")
+	ttl := f.Duration("ttl", 24*time.Hour, "enroll-agent: credential lifetime (maximum 90 days)")
 	if err := f.Parse(args); err != nil {
 		if err == flag.ErrHelp {
 			return 0
 		}
 		return 2
 	}
-	if f.NArg() != 0 || (*mode != "bootstrap" && *mode != "recover" && *mode != "enroll-agent") || *path == "" || *tenant == "" || *subject == "" || *operator == "" || *reason == "" || *ttl <= 0 || *ttl > 90*24*time.Hour {
-		fmt.Fprintln(errout, "explicit mode, tenant, subject, operator, reason and credential-file required; ttl must be within 90 days")
+	agent := *mode == "enroll-agent"
+	if f.NArg() != 0 || (*mode != "bootstrap" && *mode != "recover" && !agent) || *tenant == "" || *subject == "" || *operator == "" || *reason == "" {
+		fmt.Fprintln(errout, "explicit mode, tenant, subject, operator and reason required")
 		return 2
+	}
+	// People sign in with a password and get no credential file; only an Agent
+	// instance receives one.
+	if agent && (*passwordStdin || *path == "" || *ttl <= 0 || *ttl > 90*24*time.Hour) {
+		fmt.Fprintln(errout, "enroll-agent requires credential-file and a ttl within 90 days, and takes no password")
+		return 2
+	}
+	if !agent && (!*passwordStdin || *path != "") {
+		fmt.Fprintln(errout, "bootstrap and recover require -password-stdin and write no credential file")
+		return 2
+	}
+	var password string
+	if !agent {
+		line, err := bufio.NewReader(stdin).ReadString('\n')
+		password = strings.TrimRight(line, "\r\n")
+		if (err != nil && err != io.EOF) || !domain.ValidPassword(password) {
+			fmt.Fprintln(errout, "a password of 8 to 128 bytes is required on stdin")
+			return 2
+		}
 	}
 	_, graph, err := config.BuildFiles(ctx, *base, *overlay)
 	if err != nil {
@@ -58,17 +80,30 @@ func run(ctx context.Context, args []string, out, errout io.Writer) int {
 		fmt.Fprintln(errout, "storage resource missing")
 		return 1
 	}
-	tx, ok1 := build.GetByID[unitofwork.Manager](graph, *id)
-	identities, ok2 := build.GetByID[identity.Principals](graph, *id)
-	members, ok3 := build.GetByID[authorization.MemberStore](graph, *id)
-	audit, ok4 := build.GetByID[record.AuditWriter](graph, *id)
-	events, ok5 := build.GetByID[record.EventWriter](graph, *id)
-	credentials, ok6 := build.GetByID[identity.Credentials](graph, *id)
-	bootstrap, ok7 := build.GetByID[identity.BootstrapClaim](graph, *id)
-	passwords, ok8 := build.GetByID[identity.Passwords](graph, *id)
-	if !ok1 || !ok2 || !ok3 || !ok4 || !ok5 || !ok6 || !ok7 || !ok8 {
-		fmt.Fprintln(errout, "storage lacks administrative capabilities")
+	// The administrative commands are the default graph's "security" instance.
+	svc, ok := build.GetByID[*security.Service](graph, "security")
+	if !ok {
+		fmt.Fprintln(errout, "security instance missing")
 		return 1
+	}
+	if !agent {
+		if err = resource.Open(ctx); err != nil {
+			fmt.Fprintln(errout, err)
+			return 1
+		}
+		defer resource.Close(context.Background())
+		in := security.AdminInput{Tenant: *tenant, Subject: *subject, Operator: *operator, Reason: *reason, Password: password}
+		if *mode == "bootstrap" {
+			err = svc.Bootstrap(ctx, in)
+		} else {
+			err = svc.Recover(ctx, in)
+		}
+		if err != nil {
+			fmt.Fprintln(errout, err)
+			return 1
+		}
+		fmt.Fprintln(out, "administrator password set; sign in with it")
+		return 0
 	}
 	// Reserve the destination before mutating the database, never overwrite it.
 	file, err := os.OpenFile(*path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
@@ -88,16 +123,7 @@ func run(ctx context.Context, args []string, out, errout io.Writer) int {
 		return 1
 	}
 	defer resource.Close(context.Background())
-	svc := security.New(security.Deps{Passwords: passwords, Transactions: tx, Principals: identities, Credentials: credentials, Bootstrap: bootstrap, Members: members, Audit: audit, Events: events})
-	in := security.BootstrapInput{Tenant: *tenant, Subject: *subject, Operator: *operator, Reason: *reason, ExpiresAt: time.Now().Add(*ttl)}
-	var issued capsecurity.Issued
-	if *mode == "enroll-agent" {
-		issued, err = svc.EnrollAgent(ctx, security.AgentEnrollment{BootstrapInput: in, Owner: *owner})
-	} else if *mode == "bootstrap" {
-		issued, err = svc.Bootstrap(ctx, in)
-	} else {
-		issued, err = svc.Recover(ctx, in)
-	}
+	issued, err := svc.EnrollAgent(ctx, security.AgentEnrollment{Tenant: *tenant, Subject: *subject, Owner: *owner, Operator: *operator, Reason: *reason, ExpiresAt: time.Now().Add(*ttl)})
 	if err != nil {
 		fmt.Fprintln(errout, err)
 		return 1
@@ -110,9 +136,9 @@ func run(ctx context.Context, args []string, out, errout io.Writer) int {
 		err = file.Close()
 	}
 	if err != nil {
-		fmt.Fprintln(errout, "database committed but credential file could not be saved; use offline recover with a new output path")
+		fmt.Fprintln(errout, "database committed but credential file could not be saved; enroll again with a new output path")
 		return 1
 	}
-	fmt.Fprintln(out, "administrator credential saved to the requested private file")
+	fmt.Fprintln(out, "Agent credential saved to the requested private file")
 	return 0
 }

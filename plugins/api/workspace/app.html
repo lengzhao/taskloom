@@ -94,7 +94,6 @@ dialog::backdrop { background: #0006 }
 .kv dd { margin: 0; overflow-wrap: anywhere }
 details > summary { cursor: pointer; color: var(--accent); margin-top: 10px }
 details[open] > summary { margin-bottom: 4px }
-.debug { border-style: dashed }
 
 /* Timeline */
 .timeline { list-style: none; margin: 0; padding: 0 }
@@ -141,14 +140,6 @@ details[open] > summary { margin-bottom: 4px }
     <label>密码<input id="password" type="password" autocomplete="current-password" required maxlength="128"></label>
     <div class="actions"><button class="primary">登录</button></div>
   </form>
-  <details id="credential-login-box">
-    <summary>Agent 接入 / 已有管理员首次设置密码</summary>
-    <form id="credential-login">
-      <p class="muted small">普通用户请使用用户名和密码。首次迁移的管理员可用原凭据登录后设置密码。</p>
-      <label for="token">接入凭据</label><input id="token" type="password" autocomplete="off" required>
-      <div class="actions"><button>凭据登录</button></div>
-    </form>
-  </details>
 </section>
 
 <main id="work" hidden>
@@ -218,7 +209,6 @@ details[open] > summary { margin-bottom: 4px }
 // ---------- Labels (display only; flow rules stay on the server) ----------
 const STATE_LABEL = { ready: '准备', executing: '执行中', accepting: '验收中' };
 const ACTOR_LABEL = { owner: '负责人', assignee: '处理人', reviewer: '验收人', addressee: '被提问人' };
-const ACTION_LABEL = { open: '认领执行', submit: '提交结果', review: '验收' };
 const REASON_LABEL = {
   task_not_active: '任务已结束或已取消',
   business_credential_required: '需要 Agent 业务凭据',
@@ -236,7 +226,6 @@ const REASON_LABEL = {
 const execLabel = (ex, pos) => pos && pos.Status !== 'active' ? '任务已结束' : ex.Writable ? '进行中' : '已失效（不能再写入）';
 const OUTCOME_LABEL = { pending: '待验收', approved: '已通过', rejected: '未通过' };
 const KIND_LABEL = { comment: '留言', result: '结果', question: '提问', answer: '回答', 'review.approved': '验收通过', 'review.rejected': '验收退回', 'task.created': '创建任务', 'task.basis': '修改约定' };
-const AGENT_ACTIONS = ['open', 'submit'];
 
 // ---------- State ----------
 const $ = id => document.getElementById(id);
@@ -334,16 +323,14 @@ function showLogin() {
 }
 async function start() {
   viewer = await api('/me');
-  $('viewer-name').textContent=viewer.Subject+(viewer.Kind==='agent'?' · Agent':'');
-  $('account-password').hidden=viewer.Kind!=='human';
-  $('account-password').textContent=viewer.PasswordSet?'修改密码':'设置登录密码';
+  $('viewer-name').textContent=viewer.Subject;
+  $('account-password').hidden=false;
   const p = await api('/changes');
   cursor = p.Cursor;
   // Open on "待我处理" only when something is actually waiting.
   view = (await api('/inbox')).length ? 'mine' : 'all';
   await list();
   $('work').hidden = false; $('login').hidden = true; $('logout').hidden = false;
-  if(viewer.Kind==='human' && !viewer.PasswordSet) openPassword();
 }
 
 let spaceInfo=null, projects=[], projectID='', taskCache=[], inboxMap=new Map(), editingProject=null;
@@ -369,7 +356,7 @@ function counts(id){const ts=taskCache.filter(d=>d.Task.ProjectID===id);const do
 function renderBrowse(){
  const root=$('catalog-content');root.replaceChildren();$('task-area').hidden=view==='projects'||view==='space';
  $('page-title').textContent=({mine:'等我处理',all:'全部任务',projects:'项目',space:'空间设置',project:'项目任务'})[view];
- $('create-box').hidden=viewer.Kind!=='human';$('project-filter').hidden=view==='project';
+ $('create-box').hidden=false;$('project-filter').hidden=view==='project';
  if(view==='space'){
   const name=el('input');name.name='Name';name.required=true;name.value=spaceInfo.Name;name.maxLength=200;
   const description=textarea('Description');description.value=spaceInfo.Description;description.maxLength=20000;
@@ -382,7 +369,7 @@ function renderBrowse(){
   return;
  }
  if(view==='projects'){
-  if(viewer.Kind==='human')root.append(h('div','actions',button('+ 新建项目',()=>openProject(),'primary')));
+  root.append(h('div','actions',button('+ 新建项目',()=>openProject(),'primary')));
   const archived=el('input');archived.type='checkbox';archived.style.width='auto';archived.checked=showArchived;
   archived.onchange=()=>{showArchived=archived.checked;renderBrowse()};root.append(field('显示已归档项目',archived));
   const grid=h('div','project-grid');root.append(grid);
@@ -397,7 +384,7 @@ function renderBrowse(){
   const p=projects.find(p=>p.ID===projectID);if(!p){view='projects';renderBrowse();return}
   $('page-title').textContent=p.Name;root.append(el('p',p.Description||'尚未填写项目说明','muted'),el('p','负责人 '+p.Owner+' · '+counts(p.ID),'small'));
   const actions=h('div','actions',button('← 所有项目',async()=>{view='projects';projectID='';await list()}));root.append(actions);
-  if(viewer.Kind==='human'&&(viewer.CanAdmin||p.Owner===viewer.Subject)){
+  if(viewer.CanAdmin||p.Owner===viewer.Subject){
    actions.append(button('编辑项目',()=>openProject(p)),button(p.Archived?'恢复项目':'归档项目',()=>confirmThen(p.Archived?'恢复后可以向项目添加任务。继续？':'归档后不能新增或移入任务，已有任务及历史保留。继续？',async()=>{await api('/projects/'+p.ID,'PATCH',{Name:p.Name,Description:p.Description,Owner:p.Owner,Archived:!p.Archived,ExpectedVersion:p.Version});await list()})))
   }
   if(p.Archived){root.append(el('p','项目已归档，已有任务仍可处理。','muted'));$('create-box').hidden=true}
@@ -449,7 +436,7 @@ async function show() {
     renderNext(ctx),
     h('div', 'cols',
       h('div', null, renderResult(ctx), renderTimeline(ctx, commits)),
-      h('div', null, renderBasis(ctx), renderExecution(ctx), renderAsk(ctx), renderParticipants(ctx), renderManage(ctx), renderAgentDebug(ctx))));
+      h('div', null, renderBasis(ctx), renderExecution(ctx), renderAsk(ctx), renderParticipants(ctx), renderManage(ctx))));
 }
 
 function makeContext(d, w, path) {
@@ -461,8 +448,6 @@ function makeContext(d, w, path) {
     claim: { BasisVersion: d.Task.BasisVersion },
     round: { RoundID: w.Position.RoundID },
     ref: ex ? { ExecutionID: ex.ID } : {},
-    // Blocked only lists agent actions for agent viewers, so this marks an agent session.
-    isAgent: w.ViewerKind === 'agent',
     // Refresh the list first: it decides which tasks are waiting on me.
     async send(route, input) { await api(path + route, 'POST', input); await list(); await show() },
   };
@@ -495,17 +480,16 @@ function renderNext(ctx) {
   panel.append(h('div', 'head', el('h3', title), pill(s)));
   if (w.Questions?.length) panel.append(el('p', '有待回答的问题，回答前任务不能完成。', 'muted'));
   else if (w.Position.Waiting) panel.append(el('p', w.Position.Waiting, 'muted'));
-  if (w.Blocked?.review && !ctx.isAgent) panel.append(el('p', '暂不能验收：' + (REASON_LABEL[w.Blocked.review] || w.Blocked.review), 'muted'));
+  if (w.Blocked?.review) panel.append(el('p', '暂不能验收：' + (REASON_LABEL[w.Blocked.review] || w.Blocked.review), 'muted'));
 
   renderQuestions(ctx, panel);
-  if (!ctx.isAgent && w.ViewerKind === 'human') {
-    if (w.CanOpen) panel.append(h('div', 'actions', button('开始处理', () => ctx.send('/execution/open', claim), 'primary')));
-    if (w.CanSubmit) {
-      const body = textarea('Body', true, '填写本次任务的处理结果');
-      const form = h('form', null, field('提交处理结果', body), h('div', 'actions', el('button', '提交结果', 'primary')));
-      form.onsubmit = handle(() => ctx.send('/results', { ...ctx.ref, Body: body.value }));
-      panel.append(form);
-    }
+  // Only people sign in here; Agents work through the API.
+  if (w.CanOpen) panel.append(h('div', 'actions', button('开始处理', () => ctx.send('/execution/open', claim), 'primary')));
+  if (w.CanSubmit) {
+    const body = textarea('Body', true, '填写本次任务的处理结果');
+    const form = h('form', null, field('提交处理结果', body), h('div', 'actions', el('button', '提交结果', 'primary')));
+    form.onsubmit = handle(() => ctx.send('/results', { ...ctx.ref, Body: body.value }));
+    panel.append(form);
   }
   const actions = h('div', 'actions');
   // Review is the main human decision; it lives here, next to the result summary.
@@ -711,28 +695,6 @@ function renderManage(ctx) {
   return panel.children.length > 1 ? panel : null;
 }
 
-// Agent actions normally go through the API; this panel exists for local debugging.
-function renderAgentDebug(ctx) {
-  const { w, claim, ref, send } = ctx;
-  if (!ctx.isAgent) return null;
-  const panel = h('div', 'panel debug', el('h3', 'Agent 调试'), el('p', '正式运行时由 Agent 通过 API 完成这些操作。', 'muted small'));
-  const blocked = AGENT_ACTIONS.filter(a => (w.Blocked || {})[a]);
-  if (blocked.length) {
-    const ul = el('ul', undefined, 'reasons small');
-    for (const a of blocked) ul.append(el('li', '暂不能' + ACTION_LABEL[a] + '：' + (REASON_LABEL[w.Blocked[a]] || w.Blocked[a])));
-    panel.append(ul);
-  }
-  const actions = h('div', 'actions');
-  if (w.CanOpen) actions.append(button('认领并开始执行', () => send('/execution/open', claim), 'primary'));
-  if (actions.children.length) panel.append(actions);
-  if (w.CanSubmit) {
-    const body = textarea('Body', true, '这是正式交付的结果正文');
-    const f = h('form', null, field('提交结果', body), h('div', 'actions', el('button', '提交结果', 'primary')));
-    f.onsubmit = handle(() => send('/results', { ...ref, Body: body.value }));
-    panel.append(f);
-  }
-  return panel;
-}
 
 // ---------- Member administration ----------
 async function openMembers(preselect = '') {
@@ -826,9 +788,9 @@ $('members-dialog').addEventListener('close',()=>{
 let passwordTarget=null;
 function openPassword(target=null){
   passwordTarget=target;$('change-password').reset();$('password-notice').textContent='';
-  const needsCurrent=!target && viewer.PasswordSet;
+  const needsCurrent=!target;
   $('current-password-field').hidden=!needsCurrent;$('current-password').required=needsCurrent;
-  $('password-title').textContent=target?'为 '+target+' 设置密码':viewer.PasswordSet?'修改登录密码':'设置登录密码';
+  $('password-title').textContent=target?'为 '+target+' 设置密码':'修改登录密码';
   if(!$('password-dialog').open)$('password-dialog').showModal();
 }
 $('account-password').onclick=()=>openPassword();
@@ -851,11 +813,6 @@ $('password-login').onsubmit=handle(async()=>{
 });
 
 // ---------- Wiring ----------
-$('credential-login').onsubmit = handle(async () => {
-  await api('/session', 'POST', null, { Authorization: 'Bearer ' + $('token').value });
-  $('token').value = '';
-  await start();
-});
 $('create').onsubmit = handle(async () => {
   const d = await api('/tasks', 'POST', formdata($('create')));
   selected = d.Task.ID;

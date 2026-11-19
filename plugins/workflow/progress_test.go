@@ -4,7 +4,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lengzhao/pluginkit/build"
 	api "github.com/lengzhao/taskloom/cap/workflow"
 	workspace "github.com/lengzhao/taskloom/cap/workspace"
 )
@@ -12,7 +11,7 @@ import (
 // Progress is a timestamp the owner reads; nothing expires on it.
 func TestExecutorProgressIsRecordedWithoutChangingTheFlow(t *testing.T) {
 	f := setup(t, nil)
-	qs, _ := build.GetByID[api.QuestionCommands](f.graph, "question-commands")
+	qs := f.questions()
 	d := f.create(t)
 	s := f.open(t, d)
 	opened := s.Execution.ProgressAt

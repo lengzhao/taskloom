@@ -8,7 +8,7 @@
 | --- | --- |
 | cmd/taskloom | 参数、信号取消、进程退出码 |
 | cap/lifecycle | Resource、Component、App 的生命周期契约 |
-| cap/httpapi | Route、Module 及可选 ModuleLifecycle |
+| cap/httpapi | Route、Module |
 | runtime/config | 严格两文件输入、调用上游合并与真实 PluginKit build |
 | runtime/server | 资源顺序打开、组件并行运行、取消及逆序关闭 |
 | plugins/server | 根插件 typed Config/Deps，关闭超时默认 10s |
@@ -57,16 +57,15 @@ Go 依赖首次需下载，不需要 Ruby。配置图由 PluginKit 真实构建�
 ## 初始化与 Agent 登记
 
 ```sh
-go run ./cmd/taskloom-admin -mode bootstrap -tenant example -subject admin \
-  -operator local-operator -reason initial-setup \
-  -credential-file /private/tmp/taskloom-admin-credential.json
+printf '%s\n' "$ADMIN_PASSWORD" | go run ./cmd/taskloom-admin -mode bootstrap -password-stdin -tenant example -subject admin \
+  -operator local-operator -reason initial-setup
 go run ./cmd/taskloom-admin -mode enroll-agent -tenant example \
   -subject worker-1 -owner admin -operator local-operator -reason agent-enrollment \
   -credential-file /private/tmp/taskloom-worker.json
 go run ./cmd/taskloom
 ```
 
-打开 `http://127.0.0.1:8080/v1/app`，用凭据文件中的 Secret 首次登录并设置密码。遗失管理员凭据时用 `-mode recover` 和新的 `-credential-file` 路径：撤销该人全部旧凭据并清空密码。输出文件必须不存在、权限 0600，秘密不打印；数据库与文件不共享事务，写文件失败时用 recover 重来。`-operator` 是审计声明，可信边界是部署机与数据库运维权限。
+打开 `http://127.0.0.1:8080/v1/app`，用 `admin` 和 stdin 给出的密码登录（8–128 字节，不经命令行参数）。人只用密码登录，初始化和恢复不签发凭据、不写任何文件；脚本同样用密码登录（如 `TASKLOOM_ADMIN_PASSWORD=... python3 scripts/seed-demo.py`）。遗失密码时用 `-mode recover -password-stdin`：撤销该人全部旧凭据与会话并换成新密码。只有 `enroll-agent` 写 `-credential-file`：文件必须不存在、权限 0600，秘密不打印；数据库与文件不共享事务，写文件失败时换新路径重新登记。`-operator` 是审计声明，可信边界是部署机与数据库运维权限。
 
 ## 验证范围与已知限制
 

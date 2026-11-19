@@ -6,11 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/lengzhao/taskloom/cap/acceptance"
-	az "github.com/lengzhao/taskloom/cap/authorization"
+
 	capcommand "github.com/lengzhao/taskloom/cap/command"
-	"github.com/lengzhao/taskloom/cap/commit"
-	"github.com/lengzhao/taskloom/cap/delivery"
 	"github.com/lengzhao/taskloom/cap/execution"
 	"github.com/lengzhao/taskloom/cap/fault"
 	"github.com/lengzhao/taskloom/cap/flow"
@@ -19,30 +16,10 @@ import (
 	"github.com/lengzhao/taskloom/cap/task"
 	api "github.com/lengzhao/taskloom/cap/workflow"
 	"github.com/lengzhao/taskloom/runtime/command"
-	"strings"
-	"time"
 )
 
-// dependencies is an internal implementation detail. Registered constructors
-// below declare each injected capability explicitly, never a dependency bag.
-type dependencies struct {
-	Participants     az.ParticipantWriter
-	Principals       identity.PrincipalReader
-	Members          az.MemberReader
-	Commands         capcommand.Handler
-	Tasks            task.Reader
-	Flow             flow.Controller
-	Executions       execution.Reader
-	ExecutionWrites  execution.Store
-	ResultExecutions execution.ResultAccess
-	Results          delivery.Store
-	Commits          commit.Log
-	Snapshots        api.FactsReader
-	Events           record.EventWriter
-}
-type Service struct {
-	d dependencies
-}
+// Each command module owns its declared Deps; the helpers below take only the
+// narrow capabilities they use, so no module carries another module's fields.
 
 func id() string {
 	var b [16]byte
@@ -52,224 +29,55 @@ func id() string {
 	return fmt.Sprintf("%x", b)
 }
 
-// load reads the task and its position; commands pin their own targets.
-func (s *Service) load(ctx context.Context, p identity.Principal, taskID string) (task.Task, flow.Position, error) {
-	t, e := s.d.Tasks.GetTask(ctx, p.Tenant, taskID)
-	if e != nil {
-		return t, flow.Position{}, e
-	}
-	pos, e := s.d.Flow.Read(ctx, t)
-	return t, pos, e
-}
-func (s *Service) snapshot(ctx context.Context, t task.Task) (api.Snapshot, error) {
-	return s.d.Snapshots.ReadFacts(ctx, t)
-}
-func (s *Service) finish(ctx context.Context, t task.Task) ([]byte, error) {
-	if _, e := s.d.Flow.Refresh(ctx, t); e != nil {
-		return nil, e
-	}
-	if e := s.d.Events.AppendEvent(ctx, record.Event{Tenant: t.Tenant, Resource: t.ID, Kind: record.EventTaskChanged}); e != nil {
-		return nil, e
-	}
-	v, e := s.snapshot(ctx, t)
-	if e != nil {
-		return nil, e
-	}
-	return json.Marshal(v)
-}
-func run[T any](ctx context.Context, s *Service, token, key, operation, taskID string, in T, apply func(context.Context, identity.Principal) ([]byte, error)) (api.Snapshot, error) {
-	var out api.Snapshot
-	b, e := command.Run(ctx, s.d.Commands, capcommand.Request{Token: token, Key: key, Operation: operation, Resource: taskID, ReadOperation: "task.read"}, in, apply)
+// run wraps a task command in the shared lifecycle. The receipt stores only the
+// Ref; current facts are read separately, so a replay never returns stale facts.
+func run[T any](ctx context.Context, h capcommand.Handler, token, key, operation, taskID string, in T, apply func(context.Context, identity.Principal) (api.Ref, error)) (api.Ref, error) {
+	var out api.Ref
+	b, e := command.Run(ctx, h, capcommand.Request{Token: token, Key: key, Operation: operation, Resource: taskID, ReadOperation: "task.read"}, in, func(tx context.Context, p identity.Principal) ([]byte, error) {
+		ref, e := apply(tx, p)
+		if e != nil {
+			return nil, e
+		}
+		return json.Marshal(ref)
+	})
 	if e == nil {
 		e = json.Unmarshal(b, &out)
 	}
 	return out, e
 }
-func (s *Service) Open(ctx context.Context, token, key string, in api.Open) (api.Snapshot, error) {
-	return run(ctx, s, token, key, "execution.open", in.TaskID, in, func(tx context.Context, p identity.Principal) ([]byte, error) {
-		t, pos, e := s.load(tx, p, in.TaskID)
-		if e != nil {
-			return nil, e
-		}
-		if in.BasisVersion != t.BasisVersion {
-			return nil, fault.ErrConflict
-		}
-		if p.Kind != "human" && (p.Kind != "agent" || p.CredentialID == "") {
-			return nil, az.ErrForbidden
-		}
-		assigned, e := s.d.Executions.Assignee(tx, t.Tenant, t.ID)
-		if e != nil {
-			return nil, e
-		}
-		if assigned != p.ID {
-			return nil, az.ErrForbidden
-		}
-		if _, e = s.d.Flow.CheckOpen(tx, t); e != nil {
-			return nil, e
-		}
-		// A new claim replaces any earlier one and fences it at once; only the
-		// caller's own live claim of this round and basis has nothing to replace.
-		old, e := s.d.Executions.Current(tx, t.Tenant, t.ID)
-		if e == nil {
-			if old.Writable && old.RoundID == pos.RoundID && old.BasisVersion == t.BasisVersion && ownExecution(p, old) {
-				return nil, fault.ErrConflict
-			}
-			old.Writable = false
-			if e = s.d.ExecutionWrites.SaveExecution(tx, old); e != nil {
-				return nil, e
-			}
-		} else if !errors.Is(e, fault.ErrNotFound) {
-			return nil, e
-		}
-		if e = s.start(tx, t, pos, p.ID, p.Kind == "human", p.CredentialID); e != nil {
-			return nil, e
-		}
-		return s.finish(tx, t)
-	})
+
+// load reads the task and its position; commands pin their own targets.
+func load(ctx context.Context, tasks task.Reader, fl flow.Controller, p identity.Principal, taskID string) (task.Task, flow.Position, error) {
+	t, e := tasks.GetTask(ctx, p.Tenant, taskID)
+	if e != nil {
+		return t, flow.Position{}, e
+	}
+	pos, e := fl.Read(ctx, t)
+	return t, pos, e
 }
 
-// start opens a writable execution on the current round and basis. Human work
-// is manual and not bound to a credential; Agent work is bound to the
-// credential that claimed it.
-func (s *Service) start(ctx context.Context, t task.Task, pos flow.Position, subject string, manual bool, credential string) error {
-	v := execution.Execution{Tenant: t.Tenant, TaskID: t.ID, ID: id(), RoundID: pos.RoundID, Subject: subject, BasisVersion: t.BasisVersion, Writable: true, Manual: manual, ProgressAt: time.Now()}
-	if !manual {
-		v.CredentialID = credential
-	}
-	_, e := s.d.ExecutionWrites.OpenExecution(ctx, v)
-	return e
-}
-func (s *Service) owned(ctx context.Context, p identity.Principal, taskID, executionID string) (task.Task, execution.Execution, error) {
-	t, e := s.d.Tasks.GetTask(ctx, p.Tenant, taskID)
+// finish lets the flow derive completion from the facts just written and
+// announces the change; the Ref carries the round the task is now in.
+func finish(ctx context.Context, fl flow.Controller, events record.EventWriter, t task.Task) (api.Ref, error) {
+	pos, e := fl.Refresh(ctx, t)
 	if e != nil {
-		return t, execution.Execution{}, e
+		return api.Ref{}, e
 	}
-	v, e := s.d.Executions.GetExecution(ctx, p.Tenant, executionID)
-	if e != nil {
-		return t, v, e
+	if e = events.AppendEvent(ctx, record.Event{Tenant: t.Tenant, Resource: t.ID, Kind: record.EventTaskChanged}); e != nil {
+		return api.Ref{}, e
 	}
-	if v.TaskID != taskID || !ownExecution(p, v) {
-		return t, v, az.ErrForbidden
-	}
-	return t, v, nil
-}
-func (s *Service) active(ctx context.Context, t task.Task, v execution.Execution) error {
-	pos, e := s.d.Flow.Read(ctx, t)
-	if e != nil {
-		return e
-	}
-	latest, e := s.d.Executions.Current(ctx, t.Tenant, t.ID)
-	if e != nil {
-		return e
-	}
-	if pos.Status != flow.PhaseActive || pos.RoundID != v.RoundID || t.BasisVersion != v.BasisVersion || latest.ID != v.ID || !v.Writable {
-		return fault.ErrConflict
-	}
-	return nil
+	return api.Ref{TaskID: t.ID, RoundID: pos.RoundID}, nil
 }
 
-// RecordProgress implements execution.Progress. Callers invoke it inside their
-// own command transaction; it never changes the flow or emits a task change.
-func (s *Service) RecordProgress(ctx context.Context, p identity.Principal, tenant, taskID string) error {
-	v, e := s.d.Executions.Current(ctx, tenant, taskID)
-	if errors.Is(e, fault.ErrNotFound) {
-		return nil
-	}
-	if e != nil {
-		return e
-	}
-	if !v.Writable || !ownExecution(p, v) {
-		return nil
-	}
-	v.ProgressAt = time.Now()
-	return s.d.ExecutionWrites.SaveExecution(ctx, v)
-}
-
-func (s *Service) Submit(ctx context.Context, token, key string, in api.Submit) (api.Snapshot, error) {
-	return run(ctx, s, token, key, "result.submit", in.TaskID, in, func(tx context.Context, p identity.Principal) ([]byte, error) {
-		t, _, e := s.load(tx, p, in.TaskID)
-		if e != nil {
-			return nil, e
-		}
-		_, v, e := s.owned(tx, p, in.TaskID, in.ExecutionID)
-		if e != nil {
-			return nil, e
-		}
-		if e = s.active(tx, t, v); e != nil {
-			return nil, e
-		}
-		if strings.TrimSpace(in.Body) == "" || len(in.Body) > 20000 {
-			return nil, fault.ErrConflict
-		}
-		v.ProgressAt = time.Now() // a result is progress
-		if e = s.d.ResultExecutions.SaveExecution(tx, v); e != nil {
-			return nil, e
-		}
-		current, currentErr := s.d.Results.CurrentSubmission(tx, t.Tenant, t.ID, v.RoundID)
-		if currentErr == nil && current.ExecutionID == v.ID && current.BasisVersion == t.BasisVersion {
-			old, e := s.d.Commits.Get(tx, t.Tenant, t.ID, current.CommitID)
-			if e != nil {
-				return nil, e
-			}
-			if old.Body == in.Body {
-				snapshot, e := s.snapshot(tx, t)
-				if e != nil {
-					return nil, e
-				}
-				return json.Marshal(snapshot)
-			}
-		} else if currentErr != nil && !errors.Is(currentErr, fault.ErrNotFound) {
-			return nil, currentErr
-		}
-		c := commit.Commit{Tenant: t.Tenant, TaskID: t.ID, ID: id(), Kind: "result", Body: in.Body, Author: p.ID, OwnerID: p.OwnerID, BasisVersion: t.BasisVersion}
-		if e = s.d.Commits.Append(tx, c); e != nil {
-			return nil, e
-		}
-		if e = s.d.Results.RegisterSubmission(tx, delivery.Submission{Tenant: t.Tenant, TaskID: t.ID, ID: id(), RoundID: v.RoundID, ExecutionID: v.ID, CommitID: c.ID, Author: p.ID, BasisVersion: t.BasisVersion}); e != nil {
-			return nil, e
-		}
-		return s.finish(tx, t)
-	})
-}
-func (s *Service) Review(ctx context.Context, token, key string, in api.Review) (api.Snapshot, error) {
-	return run(ctx, s, token, key, "result.review", in.TaskID, in, func(tx context.Context, p identity.Principal) ([]byte, error) {
-		t, pos, e := s.load(tx, p, in.TaskID)
-		if e != nil {
-			return nil, e
-		}
-		if pos.Status != flow.PhaseActive || pos.Acceptance != flow.AcceptanceManual {
-			return nil, fault.ErrConflict
-		}
-		if p.Kind != "human" || p.ID != t.Owner {
-			return nil, az.ErrForbidden
-		}
-		if (in.Outcome != acceptance.OutcomeApproved && in.Outcome != acceptance.OutcomeRejected) || len(in.Reason) > 20000 {
-			return nil, fault.ErrInput
-		}
-		// A rejection returns work to the executor, which needs to know what to change.
-		if in.Outcome == acceptance.OutcomeRejected && strings.TrimSpace(in.Reason) == "" {
-			return nil, fault.ErrInput
-		}
-		v, e := s.d.Results.CurrentSubmission(tx, t.Tenant, t.ID, pos.RoundID)
-		if e != nil {
-			return nil, e
-		}
-		if v.ID != in.SubmissionID || v.CommitID != in.CommitID || v.BasisVersion != t.BasisVersion {
-			return nil, fault.ErrConflict
-		}
-		// The verdict is stored once, as an immutable commit referring to the result.
-		c := commit.Commit{Tenant: t.Tenant, TaskID: t.ID, ID: id(), Kind: acceptance.Kind(in.Outcome), Body: in.Reason, RefID: v.CommitID, Author: p.ID, BasisVersion: t.BasisVersion}
-		if e = s.d.Commits.Append(tx, c); e != nil {
-			return nil, e
-		}
-		return s.finish(tx, t)
-	})
+type executionWriter interface {
+	Current(ctx context.Context, tenant, taskID string) (execution.Execution, error)
+	SaveExecution(ctx context.Context, value execution.Execution) error
 }
 
 // fence revokes the current execution's write access; nothing else about it
 // changes, and nothing waits for the executor to acknowledge.
-func (s *Service) fence(ctx context.Context, t task.Task) error {
-	v, e := s.d.Executions.Current(ctx, t.Tenant, t.ID)
+func fence(ctx context.Context, executions executionWriter, t task.Task) error {
+	v, e := executions.Current(ctx, t.Tenant, t.ID)
 	if errors.Is(e, fault.ErrNotFound) {
 		return nil
 	}
@@ -277,83 +85,5 @@ func (s *Service) fence(ctx context.Context, t task.Task) error {
 		return e
 	}
 	v.Writable = false
-	return s.d.ExecutionWrites.SaveExecution(ctx, v)
-}
-func (s *Service) Cancel(ctx context.Context, token, key string, in api.Cancel) (api.Snapshot, error) {
-	return run(ctx, s, token, key, "task.cancel", in.TaskID, in, func(tx context.Context, p identity.Principal) ([]byte, error) {
-		t, _, e := s.load(tx, p, in.TaskID)
-		if e != nil {
-			return nil, e
-		}
-		if e = s.fence(tx, t); e != nil {
-			return nil, e
-		}
-		if _, e = s.d.Flow.Cancel(tx, t); e != nil {
-			return nil, e
-		}
-		return s.finish(tx, t)
-	})
-}
-
-// Restart fences the current execution and starts a new round from the round
-// the caller saw: sending active work back, or reopening a terminal task.
-func (s *Service) Restart(ctx context.Context, token, key string, in api.Restart) (api.Snapshot, error) {
-	return run(ctx, s, token, key, "task.restart", in.TaskID, in, func(tx context.Context, p identity.Principal) ([]byte, error) {
-		t, pos, e := s.load(tx, p, in.TaskID)
-		if e != nil {
-			return nil, e
-		}
-		if pos.RoundID != in.RoundID {
-			return nil, fault.ErrConflict
-		}
-		if e = s.fence(tx, t); e != nil {
-			return nil, e
-		}
-		if _, e = s.d.Flow.Restart(tx, t); e != nil {
-			return nil, e
-		}
-		return s.finish(tx, t)
-	})
-}
-func (s *Service) Assign(ctx context.Context, token, key string, in api.Assignment) (api.Snapshot, error) {
-	return run(ctx, s, token, key, "execution.assign", in.TaskID, in, func(tx context.Context, p identity.Principal) ([]byte, error) {
-		t, pos, e := s.load(tx, p, in.TaskID)
-		if e != nil {
-			return nil, e
-		}
-		if pos.Status != flow.PhaseActive {
-			return nil, fault.ErrConflict
-		}
-		if _, e = s.d.Flow.CheckOpen(tx, t); e != nil {
-			return nil, e
-		}
-		subject, e := s.d.Principals.Resolve(tx, t.Tenant, in.Subject)
-		if e != nil {
-			return nil, e
-		}
-		if subject.Kind != "agent" && subject.Kind != "human" {
-			return nil, fault.ErrInput
-		}
-		member, e := s.d.Members.GetMember(tx, t.Tenant, subject.ID)
-		if e != nil || !member.Active {
-			return nil, az.ErrForbidden
-		}
-		if e = s.fence(tx, t); e != nil {
-			return nil, e
-		}
-		if e = s.d.Participants.SetParticipant(tx, az.Participant{Tenant: t.Tenant, TaskID: t.ID, Subject: in.Subject}, true); e != nil {
-			return nil, e
-		}
-		if e = s.d.ExecutionWrites.AssignSubject(tx, t.Tenant, t.ID, in.Subject); e != nil {
-			return nil, e
-		}
-		// A person needs no separate claim: assignment starts their manual work.
-		// An Agent still claims, binding the execution to one credential.
-		if subject.Kind == "human" {
-			if e = s.start(tx, t, pos, subject.ID, true, ""); e != nil {
-				return nil, e
-			}
-		}
-		return s.finish(tx, t)
-	})
+	return executions.SaveExecution(ctx, v)
 }

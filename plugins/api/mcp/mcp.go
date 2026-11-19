@@ -11,11 +11,11 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"github.com/lengzhao/taskloom/runtime/httpx"
 	"io"
 	"net/http"
 
 	"github.com/lengzhao/pluginkit"
-	"github.com/lengzhao/taskloom/cap/commit"
 	"github.com/lengzhao/taskloom/cap/fault"
 	"github.com/lengzhao/taskloom/cap/httpapi"
 	work "github.com/lengzhao/taskloom/cap/workflow"
@@ -28,36 +28,35 @@ type taskReader interface {
 	Get(ctx context.Context, credential, taskID string, after int64) (workspace.Detail, error)
 }
 type commenter interface {
-	Comment(ctx context.Context, credential, key string, in workspace.Comment) (commit.Commit, error)
+	Comment(ctx context.Context, credential, key string, in workspace.Comment) (workspace.Ref, error)
 }
 type claimer interface {
-	Open(ctx context.Context, token, key string, in work.Open) (work.Snapshot, error)
+	Open(ctx context.Context, token, key string, in work.Open) (work.Ref, error)
 }
 type submitter interface {
-	Submit(ctx context.Context, token, key string, in work.Submit) (work.Snapshot, error)
+	Submit(ctx context.Context, token, key string, in work.Submit) (work.Ref, error)
 }
 type asker interface {
-	Ask(ctx context.Context, token, key string, in work.Ask) (work.Snapshot, error)
-	Answer(ctx context.Context, token, key string, in work.Answer) (work.Snapshot, error)
+	Ask(ctx context.Context, token, key string, in work.Ask) (work.Ref, error)
+	Answer(ctx context.Context, token, key string, in work.Answer) (work.Ref, error)
 }
 
 // Deps has seven fields, one per Agent-facing capability plus the shared
 // request envelope. Like api/workflow it only translates a protocol; splitting
 // it would scatter one tool table across adapters without separating any rule.
 type Deps struct {
-	Tasks      taskReader              `json:"tasks"`
-	Comments   commenter               `json:"comments"`
-	Workflow   work.Queries            `json:"workflow"`
-	Executions claimer                 `json:"executions"`
-	Results    submitter               `json:"results"`
-	Questions  asker                   `json:"questions"`
-	Security   httpapi.RequestSecurity `json:"security"`
+	Tasks      taskReader   `json:"tasks"`
+	Comments   commenter    `json:"comments"`
+	Workflow   work.Queries `json:"workflow"`
+	Executions claimer      `json:"executions"`
+	Results    submitter    `json:"results"`
+	Questions  asker        `json:"questions"`
 }
 type Module struct{ d Deps }
 
 func init() {
 	pluginkit.Register("api/mcp", func(_ struct{}, d Deps) (*Module, error) {
-		if d.Tasks == nil || d.Comments == nil || d.Workflow == nil || d.Executions == nil || d.Results == nil || d.Questions == nil || d.Security == nil {
+		if d.Tasks == nil || d.Comments == nil || d.Workflow == nil || d.Executions == nil || d.Results == nil || d.Questions == nil {
 			return nil, fault.ErrInput
 		}
 		return &Module{d}, nil
@@ -99,10 +98,7 @@ type rpcResponse struct {
 }
 
 func (m *Module) serve(w http.ResponseWriter, r *http.Request) {
-	token, ok := m.d.Security.Credential(w, r)
-	if !ok {
-		return
-	}
+	token := httpx.Credential(r)
 	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
 	if err != nil {
 		writeRPC(w, rpcResponse{JSONRPC: "2.0", ID: json.RawMessage("null"), Error: &rpcError{-32700, "parse error"}})

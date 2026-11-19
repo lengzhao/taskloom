@@ -18,17 +18,16 @@ import (
 )
 
 type Deps struct {
-	Transactions  unitofwork.Manager      `json:"transactions"`
-	Identity      identity.Authenticator  `json:"identity"`
-	Authorization az.Authorizer           `json:"authorization"`
-	Audit         record.AuditReader      `json:"audit"`
-	Security      httpapi.RequestSecurity `json:"security"`
+	Transactions  unitofwork.Manager     `json:"transactions"`
+	Identity      identity.Authenticator `json:"identity"`
+	Authorization az.Authorizer          `json:"authorization"`
+	Audit         record.AuditReader     `json:"audit"`
 }
 type Module struct{ d Deps }
 
 func init() {
 	pluginkit.Register("api/audit", func(_ struct{}, d Deps) (*Module, error) {
-		if d.Transactions == nil || d.Identity == nil || d.Authorization == nil || d.Audit == nil || d.Security == nil {
+		if d.Transactions == nil || d.Identity == nil || d.Authorization == nil || d.Audit == nil {
 			return nil, fault.ErrInput
 		}
 		return &Module{d}, nil
@@ -63,10 +62,7 @@ func (m *Module) List(ctx context.Context, token string, limit int) ([]record.Au
 }
 
 func (m *Module) serve(w http.ResponseWriter, r *http.Request) {
-	token, ok := m.d.Security.Credential(w, r)
-	if !ok {
-		return
-	}
+	token := httpx.Credential(r)
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
 	out, err := m.List(r.Context(), token, limit)
 	if err != nil {

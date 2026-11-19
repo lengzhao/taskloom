@@ -16,9 +16,9 @@ import (
 	"github.com/lengzhao/taskloom/cap/identity"
 	"github.com/lengzhao/taskloom/cap/record"
 	"github.com/lengzhao/taskloom/cap/task"
-	"github.com/lengzhao/taskloom/domain/security"
 	access "github.com/lengzhao/taskloom/plugins/access/default"
 	local "github.com/lengzhao/taskloom/plugins/identity/local"
+	"github.com/lengzhao/taskloom/plugins/security"
 	store "github.com/lengzhao/taskloom/plugins/storage/sql"
 	"github.com/lengzhao/taskloom/runtime/command"
 )
@@ -46,7 +46,10 @@ func fixture(t *testing.T) (*store.Store, *command.Runner, *security.Service, st
 		t.Fatal(err)
 	}
 	svc := security.New(security.Deps{Passwords: s, Commands: runner, Transactions: s, Principals: s, Credentials: s, Bootstrap: s, Members: s, Audit: s, Events: s})
-	issued, err := svc.Bootstrap(context.Background(), security.BootstrapInput{Tenant: "t", Subject: "admin", Operator: "test-operator", Reason: "initial setup", ExpiresAt: time.Now().Add(time.Hour)})
+	if err := svc.Bootstrap(context.Background(), security.AdminInput{Tenant: "t", Subject: "admin", Operator: "test-operator", Reason: "initial setup", Password: "AdminPassword123!"}); err != nil {
+		t.Fatal(err)
+	}
+	issued, err := svc.Login(context.Background(), capsecurity.LoginInput{Tenant: "t", Username: "admin", Password: "AdminPassword123!"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -145,10 +148,10 @@ func TestCommandRollbackAndTenantIsolation(t *testing.T) {
 func TestBootstrapOnceAndCredentialRevocation(t *testing.T) {
 	_, r, svc, token := fixture(t)
 	ctx := context.Background()
-	if _, err := svc.Bootstrap(ctx, security.BootstrapInput{Tenant: "other", Subject: "admin", Operator: "op", Reason: "again", ExpiresAt: time.Now().Add(time.Hour)}); !errors.Is(err, fault.ErrConflict) {
+	if err := svc.Bootstrap(ctx, security.AdminInput{Tenant: "other", Subject: "admin", Operator: "op", Reason: "again", Password: "AdminPassword123!"}); !errors.Is(err, fault.ErrConflict) {
 		t.Fatalf("second bootstrap: %v", err)
 	}
-	issued, err := svc.Issue(ctx, token, "issue", capsecurity.IssueInput{Tenant: "t", Subject: "admin", ExpiresAt: time.Now().Add(time.Hour)})
+	issued, err := svc.Issue(ctx, token, "issue", capsecurity.IssueInput{Tenant: "t", Subject: agent(t, svc, token), ExpiresAt: time.Now().Add(time.Hour)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -170,10 +173,33 @@ func TestBootstrapOnceAndCredentialRevocation(t *testing.T) {
 
 var _ record.EventWriter = (*store.Store)(nil)
 
+// agent creates the Agent "bot" owned by admin: only Agents hold issued credentials.
+func agent(t *testing.T, svc *security.Service, token string) string {
+	t.Helper()
+	if err := svc.Create(context.Background(), token, "create-bot", identity.Principal{Tenant: "t", ID: "bot", Kind: "agent", OwnerID: "admin"}); err != nil {
+		t.Fatal(err)
+	}
+	return "bot"
+}
+
+// People sign in with a password; issuing them a credential is rejected.
+func TestIssueRejectsPeople(t *testing.T) {
+	_, _, svc, token := fixture(t)
+	if _, err := svc.Issue(context.Background(), token, "human", capsecurity.IssueInput{Tenant: "t", Subject: "admin", ExpiresAt: time.Now().Add(time.Hour)}); !errors.Is(err, fault.ErrInput) {
+		t.Fatal("credential issued to a person", err)
+	}
+	if err := svc.Create(context.Background(), token, "person", identity.Principal{Tenant: "t", ID: "p", Kind: "human"}); !errors.Is(err, fault.ErrInput) {
+		t.Fatal("person created without a password", err)
+	}
+}
+
 func TestRecoveryRevokesOldCredentials(t *testing.T) {
 	_, r, svc, token := fixture(t)
 	ctx := context.Background()
-	recovered, err := svc.Recover(ctx, security.BootstrapInput{Tenant: "t", Subject: "admin", Operator: "local-operator", Reason: "lost credential", ExpiresAt: time.Now().Add(time.Hour)})
+	if err := svc.Recover(ctx, security.AdminInput{Tenant: "t", Subject: "admin", Operator: "local-operator", Reason: "lost credential", Password: "AdminPassword123!"}); err != nil {
+		t.Fatal(err)
+	}
+	recovered, err := svc.Login(ctx, capsecurity.LoginInput{Tenant: "t", Username: "admin", Password: "AdminPassword123!"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -184,14 +210,14 @@ func TestRecoveryRevokesOldCredentials(t *testing.T) {
 	}); !errors.Is(err, identity.ErrUnauthenticated) {
 		t.Fatal(err)
 	}
-	if _, err = svc.Issue(ctx, recovered.Secret, "new", capsecurity.IssueInput{Tenant: "t", Subject: "admin", ExpiresAt: time.Now().Add(time.Hour)}); err != nil {
+	if _, err = svc.Issue(ctx, recovered.Secret, "new", capsecurity.IssueInput{Tenant: "t", Subject: agent(t, svc, recovered.Secret), ExpiresAt: time.Now().Add(time.Hour)}); err != nil {
 		t.Fatal(err)
 	}
 }
 func TestIssuanceReplayDoesNotRediscloseSecret(t *testing.T) {
 	s, _, svc, token := fixture(t)
 	ctx := context.Background()
-	in := capsecurity.IssueInput{Tenant: "t", Subject: "admin", ExpiresAt: time.Now().Add(time.Hour)}
+	in := capsecurity.IssueInput{Tenant: "t", Subject: agent(t, svc, token), ExpiresAt: time.Now().Add(time.Hour)}
 	first, err := svc.Issue(ctx, token, "once", in)
 	if err != nil {
 		t.Fatal(err)

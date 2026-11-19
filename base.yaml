@@ -11,6 +11,8 @@ http:
   config:
     listen: 127.0.0.1:8080
     apiPrefix: /v1
+    # The one browser origin allowed; plain http only for a loopback host.
+    origin: http://127.0.0.1:8080
   deps:
     modules: [health, workspace-api, workflow-api, mcp-api, audit-api]
 health:
@@ -87,9 +89,6 @@ workspace:
     progress: execution-commands
 workspace-api:
   use: api/workspace
-  config:
-    origin: http://127.0.0.1:8080
-    localHTTP: true
   deps:
     commands: workspace
     queries: workspace
@@ -121,7 +120,6 @@ execution-commands:
     tasks: sql
     flow: flow
     executions: sql
-    snapshots: workflow-query
     events: sql
 result-commands:
   use: commands/result
@@ -132,7 +130,6 @@ result-commands:
     executions: sql
     results: sql
     commits: sql
-    snapshots: workflow-query
     events: sql
 question-commands:
   use: commands/question
@@ -144,7 +141,6 @@ question-commands:
     questions: sql
     progress: execution-commands
     relations: sql
-    snapshots: workflow-query
     events: sql
 flow-commands:
   use: commands/flow
@@ -153,7 +149,6 @@ flow-commands:
     tasks: sql
     flow: flow
     executions: sql
-    snapshots: workflow-query
     events: sql
 
 workflow-api:
@@ -164,7 +159,6 @@ workflow-api:
     controls: flow-commands
     workflow: workflow-query
     questions: question-commands
-    security: workspace-api
 mcp-api:
   use: api/mcp
   deps:
@@ -174,7 +168,6 @@ mcp-api:
     executions: execution-commands
     results: result-commands
     questions: question-commands
-    security: workspace-api
 audit-api:
   use: api/audit
   deps:
@@ -182,4 +175,3 @@ audit-api:
     identity: identity
     authorization: access
     audit: sql
-    security: workspace-api

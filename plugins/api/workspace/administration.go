@@ -79,20 +79,6 @@ func (m *Module) administration(w http.ResponseWriter, r *http.Request, token st
 		if !httpx.Decode(w, r, &in) {
 			return nil, errDecoded
 		}
-		members, e := m.d.Queries.Members(ctx, token)
-		if e != nil {
-			return nil, e
-		}
-		agent := false
-		for _, member := range members {
-			if member.Subject == in.Subject && member.Kind == "agent" {
-				agent = true
-				break
-			}
-		}
-		if !agent {
-			return nil, fault.ErrInput
-		}
 		return m.d.Security.Issue(ctx, token, key, security.IssueInput{Tenant: p.Tenant, Subject: in.Subject, ExpiresAt: in.ExpiresAt})
 	}
 }

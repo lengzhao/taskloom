@@ -23,12 +23,14 @@ Taskloom 是人与 Agent 协作的任务系统，采用模块化单体：公共�
 | command-runtime（commands/runtime） | 命令事务、幂等回执、审计 | 5 |
 | flow（task/flow） | 阶段/轮次唯一写入者，步骤由事实推导 | 5 |
 | workspace（workspace/tasks） | 任务创建/依据修改/评论/参与者/项目归属/变化补拉 | 12 |
-| execution-commands、result-commands、question-commands、flow-commands | 分配与认领；提交与验收；提问与回答；取消与开新轮 | 9、8、9、6 |
+| execution-commands、result-commands、question-commands、flow-commands | 分配与认领；提交与验收；提问与回答；取消与开新轮 | 8、7、8、5 |
 | workflow-query（query/workflow） | 只读快照、可用操作原因、收件箱 | 10 |
 | security（commands/security）、catalog（catalog/projects） | 身份/成员/凭据/密码管理；空间与项目 | 9、6 |
-| workspace-api、workflow-api、mcp-api、audit-api、health | HTTP 与 MCP 协议适配、管理员审计查询、存活检查 | 6、6、7、5、0 |
+| workspace-api、workflow-api、mcp-api、audit-api、health | HTTP 与 MCP 协议适配、管理员审计查询、存活检查；Origin/CSRF 由 http 对所有路由统一检查 | 6、5、6、4、0 |
 
-超过 5 个 Deps 的模块都是同一命令事务内的协调边界：每个字段是一个独立能力接口（命令生命周期、各领域事实、快照、事件），不是服务定位器；拆开只会把同一事务协调挪到别处。workspace 的 12 项是工作台纵向切片的历史边界，新增执行/验收能力已放入独立命令模块，不再向它堆积。
+超过 5 个 Deps 的模块都是同一命令事务内的协调边界：每个字段是一个独立能力接口（命令生命周期、各领域事实、事件），不是服务定位器；拆开只会把同一事务协调挪到别处。workspace 的 12 项是工作台纵向切片的历史边界，新增执行/验收能力已放入独立命令模块，不再向它堆积。
+
+命令模块不依赖查询模块：各模块持有自己声明的 Deps，共享步骤是只接收窄接口的包级函数，不存在跨模块共用的依赖并集。
 
 插件之间只经 Deps 注入接口，不 import 其他插件实现；只读消费者不获得写接口；无消费者不预建能力。
 
@@ -38,7 +40,7 @@ Taskloom 是人与 Agent 协作的任务系统，采用模块化单体：公共�
 
 1. 更新协调行取得全局写锁（全库写入串行化，吞吐上限待 M11 评估）。
 2. 认证凭据，检查当前成员/任务关系授权。
-3. 查幂等回执：命名空间为租户 + 实际主体 + 操作 + 键，载荷为强类型输入的摘要；同键同载荷返回原结果，不同载荷冲突；重放前仍重新鉴权。
+3. 查幂等回执：命名空间为租户 + 实际主体 + 操作 + 键，载荷为强类型输入的摘要；同键同载荷返回原结果，不同载荷冲突；重放前仍重新鉴权。回执只存命令固定的引用（任务与流程命令为各自的 `Ref`，项目为 ID，空间无需引用），不存快照、任务详情这类可推导事实；API 在命令后按调用者重读当前事实。
 4. 执行领域回调：检查客户端固定的对象/版本，写领域事实与 commit，写一条事件（`task.changed` 或 `access.changed`）。
 5. 写成功审计与回执，提交。
 
@@ -56,10 +58,10 @@ GORM v1.31.1，SQLite/MySQL/PostgreSQL 驱动 v1.6.0（SQLite 驱动需 CGO）�
 
 - 人和 Agent 是稳定主体；Agent 的所属人只用于归属，不传递权限。
 - 凭据是 256 位随机秘密，库中只存 SHA-256 摘要、有效期与撤销状态，每次请求查询当前状态。认证结果带上所用凭据 ID：一张 Agent 凭据即一个运行实例，执行绑定认领时的凭据。
-- 人用用户名和密码登录（PBKDF2-SHA256，600000 次，随机盐），登录得到一小时会话凭据，浏览器只持有 HttpOnly、SameSite Cookie；按来源 IP 每分钟限 20 次尝试。修改或重置密码撤销该用户全部凭据与会话。
-- 首个管理员初始化、离线恢复和 Agent 登记只能用本地 `taskloom-admin` CLI，记录操作者与原因；没有匿名初始化 API。
+- 人用用户名和密码登录（PBKDF2-SHA256，600000 次，随机盐），登录得到一小时会话凭据，HttpOnly、SameSite Cookie 直接持有它，登出即吊销；浏览器不能用其他凭据登录，管理员初始密码由 `taskloom-admin` 设置；按来源 IP 每分钟限 20 次尝试。修改或重置密码撤销该用户全部凭据与会话。
+- 首个管理员初始化、离线恢复和 Agent 登记只能用本地 `taskloom-admin` CLI，记录操作者与原因；没有匿名初始化 API。人只有密码、Agent 只有签发凭据，均由命令层保证：初始化与恢复只设置密码，不签发凭据。
 - 每个命令（成功与被拒绝）写审计；只有有效人类管理员可查询（`GET /v1/audit`）。
 
 ## 生命周期 owner
 
-构造函数只做轻量初始化。server 先按顺序打开 resources（sql），再运行 components（http）；http 拥有各 API 模块的启停与会话清理。退出时先停组件再逆序关闭资源。没有后台扫描器或无 owner 的 goroutine。
+构造函数只做轻量初始化。server 先按顺序打开 resources（sql），再运行 components（http）；http 挂载各 API 模块的路由，模块本身无启停。退出时先停组件再逆序关闭资源。没有后台扫描器或无 owner 的 goroutine。

@@ -26,6 +26,14 @@ type Detail struct {
 	Commits             []commit.Commit
 	CanEdit, CanComment bool
 }
+
+// Ref is what a task command fixed: the task and, for a comment, the commit it
+// appended. Its receipt stores only this, so a replay returns the same Ref;
+// callers read current facts through Queries.Get.
+type Ref struct {
+	TaskID   string
+	CommitID string `json:",omitempty"`
+}
 type Change struct{ TaskID, Kind string }
 type Page struct {
 	Changes []Change
@@ -38,14 +46,13 @@ type Participation struct {
 type Commands interface {
 	SetProject(ctx context.Context, credential, idempotencyKey string, value ProjectMove) error
 	SetParticipant(ctx context.Context, credential, idempotencyKey string, value Participation) error
-	Create(ctx context.Context, credential, idempotencyKey string, value Create) (Detail, error)
-	Edit(ctx context.Context, credential, idempotencyKey string, value Edit) (Detail, error)
-	Comment(ctx context.Context, credential, idempotencyKey string, value Comment) (commit.Commit, error)
+	Create(ctx context.Context, credential, idempotencyKey string, value Create) (Ref, error)
+	Edit(ctx context.Context, credential, idempotencyKey string, value Edit) (Ref, error)
+	Comment(ctx context.Context, credential, idempotencyKey string, value Comment) (Ref, error)
 }
 type Viewer struct {
 	Tenant, Subject, Kind string
 	CanAdmin              bool
-	PasswordSet           bool
 }
 type Queries interface {
 	Viewer(ctx context.Context, credential string) (Viewer, error)

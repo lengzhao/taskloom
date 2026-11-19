@@ -3,8 +3,8 @@
 # environment, then starts Taskloom. A mounted /app/config.yaml is kept as is.
 #   TASKLOOM_PORT    port to listen on, also published on the host (default 8899)
 #   TASKLOOM_ORIGIN  exact browser origin (default http://localhost:$TASKLOOM_PORT)
-# The session cookie stays Secure (localHTTP=false); browsers accept that on
-# http://localhost. Serve any other host over HTTPS.
+# Plain http is accepted only for a loopback origin such as http://localhost;
+# serve any other host over HTTPS.
 set -eu
 PORT="${TASKLOOM_PORT:-8899}"
 ORIGIN="${TASKLOOM_ORIGIN:-http://localhost:$PORT}"
@@ -14,13 +14,10 @@ if [ ! -f /app/config.yaml ] || [ -f /app/.generated-config ]; then
 http:
   config:
     listen: 0.0.0.0:$PORT
+    origin: $ORIGIN
 sql:
   config:
     dsn: /data/taskloom.db
-workspace-api:
-  config:
-    origin: $ORIGIN
-    localHTTP: false
 EOF
   touch /app/.generated-config
 fi

@@ -5,23 +5,21 @@ import (
 	"errors"
 	capsecurity "github.com/lengzhao/taskloom/cap/security"
 	"testing"
-	"time"
 
 	"github.com/lengzhao/pluginkit/build"
 	"github.com/lengzhao/taskloom/cap/acceptance"
 	az "github.com/lengzhao/taskloom/cap/authorization"
 	"github.com/lengzhao/taskloom/cap/fault"
-	"github.com/lengzhao/taskloom/cap/identity"
 	api "github.com/lengzhao/taskloom/cap/workflow"
 	workspace "github.com/lengzhao/taskloom/cap/workspace"
 )
 
 func (f *fixture) human(t *testing.T, id string) string {
 	t.Helper()
-	if e := f.security.Create(f.ctx, f.owner, "create-"+id, identity.Principal{Tenant: "t", ID: id, Kind: "human"}); e != nil {
+	if e := f.security.CreateUser(f.ctx, f.owner, "create-"+id, capsecurity.UserInput{Tenant: "t", Username: id, Password: "UserPassword123!"}); e != nil {
 		t.Fatal(e)
 	}
-	v, e := f.security.Issue(f.ctx, f.owner, "issue-"+id, capsecurity.IssueInput{Tenant: "t", Subject: id, ExpiresAt: time.Now().Add(time.Hour)})
+	v, e := f.security.Login(f.ctx, capsecurity.LoginInput{Tenant: "t", Username: id, Password: "UserPassword123!"})
 	if e != nil {
 		t.Fatal(e)
 	}

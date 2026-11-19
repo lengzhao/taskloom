@@ -14,12 +14,11 @@ import (
 	"time"
 
 	"github.com/lengzhao/pluginkit/build"
-	"github.com/lengzhao/taskloom/cap/httpapi"
 	"github.com/lengzhao/taskloom/cap/identity"
 	"github.com/lengzhao/taskloom/cap/lifecycle"
 	capsecurity "github.com/lengzhao/taskloom/cap/security"
-	"github.com/lengzhao/taskloom/domain/security"
 	_ "github.com/lengzhao/taskloom/plugins"
+	"github.com/lengzhao/taskloom/plugins/security"
 	"github.com/lengzhao/taskloom/runtime/config"
 )
 
@@ -51,20 +50,15 @@ func setup(t *testing.T) *fixture {
 		t.Fatal(e)
 	}
 	t.Cleanup(func() { storage.Close(ctx) })
-	mux := http.NewServeMux()
-	for _, id := range []string{"workspace-api", "workflow-api", "mcp-api"} {
-		m, ok := build.GetByID[httpapi.Module](graph, id)
-		if !ok {
-			t.Fatal(id)
-		}
-		for _, r := range m.Routes() {
-			mux.Handle(r.Method+" /v1"+r.Path, r.Handler)
-		}
-	}
+	// The real transport: routes, prefix and the shared request envelope.
+	mux, _ := build.GetByID[http.Handler](graph, "http")
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	sec, _ := build.GetByID[*security.Service](graph, "security")
-	issued, e := sec.Bootstrap(ctx, security.BootstrapInput{Tenant: "t", Subject: "owner", Operator: "test", Reason: "fixture", ExpiresAt: time.Now().Add(time.Hour)})
+	if e := sec.Bootstrap(ctx, security.AdminInput{Tenant: "t", Subject: "owner", Operator: "test", Reason: "fixture", Password: "AdminPassword123!"}); e != nil {
+		t.Fatal(e)
+	}
+	issued, e := sec.Login(ctx, capsecurity.LoginInput{Tenant: "t", Username: "owner", Password: "AdminPassword123!"})
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -220,7 +214,7 @@ func TestAgentWorksATaskThroughMCP(t *testing.T) {
 		t.Fatal("agent cannot see its last progress", task["execution"])
 	}
 
-	f.ok("ask_owner", map[string]string{"task_id": id, "basis": started["basis"].(string), "question": "CSV 还是 Excel？"})
+	asked := f.ok("ask_owner", map[string]string{"task_id": id, "basis": started["basis"].(string), "question": "CSV 还是 Excel？"})
 	f.ownerCall("GET", "/tasks/"+id+"/workflow", nil, &w)
 	if len(w.Questions) != 1 || w.NextActor != "addressee" {
 		t.Fatal("question not waiting on the owner it was asked of", w.NextActor)
@@ -232,7 +226,8 @@ func TestAgentWorksATaskThroughMCP(t *testing.T) {
 		t.Fatal("answer not visible to agent", string(timeline))
 	}
 
-	submitted := f.ok("submit_result", map[string]string{"task_id": id, "basis": task["basis"].(string), "result": "已导出 CSV"})
+	// The basis returned by ask_owner still carries the execution it was asked from.
+	submitted := f.ok("submit_result", map[string]string{"task_id": id, "basis": asked["basis"].(string), "result": "已导出 CSV"})
 	if submitted["next_actor"] != "reviewer" {
 		t.Fatal("result not waiting on reviewer", submitted)
 	}

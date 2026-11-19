@@ -11,7 +11,7 @@ claude mcp add --transport http taskloom http://localhost:8899/v1/mcp \
   --header "Authorization: Bearer <Agent 业务凭据的 Secret>"
 ```
 
-请求经共用的 RequestSecurity：带 Origin 时必须等于配置的 origin（防止网页跨站调用），POST 须带 Authorization。`initialize` 返回 `Mcp-Session-Id`，只用于派生幂等键；缺失时按凭据派生。批量 JSON-RPC 不支持。
+请求先经 HTTP 传输层对所有路由统一的检查：带 Origin 时必须等于 `http.config.origin`（防止网页跨站调用），无 Authorization 的写入须带 `X-Taskloom-Request`；Agent 用 Bearer 凭据调用。`initialize` 返回 `Mcp-Session-Id`，只用于派生幂等键；缺失时按凭据派生。批量 JSON-RPC 不支持。
 
 ## 工具
 

@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
 """Seed a local Taskloom with demo tasks in every visible state.
 
-Usage: python3 scripts/seed-demo.py [base-url] [container]
-Defaults: http://localhost:8899, container "taskloom".
-Administrator login: set TASKLOOM_ADMIN_PASSWORD (and optionally
-TASKLOOM_ADMIN_USER, default "admin") to log in with a password; otherwise
-the credential in /data/admin.json inside the container is used. Neither is
-printed. Setting a password revokes that file's credential.
+Usage: TASKLOOM_ADMIN_PASSWORD=... python3 scripts/seed-demo.py [base-url]
+Default base URL: http://localhost:8899.
+Administrator login: the password set by `taskloom-admin -password-stdin`
+(TASKLOOM_ADMIN_USER defaults to "admin"). It is never printed; no
+administrator credential file exists to fall back on.
 
 Creates (idempotent per run only; re-running adds another set of tasks):
 - users zhangsan / lisi (password DEMO_PASSWORD below, local demo only)
@@ -17,7 +16,6 @@ Creates (idempotent per run only; re-running adds another set of tasks):
 """
 import json
 import os
-import subprocess
 import sys
 import urllib.error
 import urllib.request
@@ -26,7 +24,6 @@ from datetime import datetime, timedelta, timezone
 
 DEMO_PASSWORD = "Demo-Passw0rd-2026"
 BASE = (sys.argv[1] if len(sys.argv) > 1 else "http://localhost:8899").rstrip("/") + "/v1"
-CONTAINER = sys.argv[2] if len(sys.argv) > 2 else "taskloom"
 
 
 class Cookie(str):
@@ -36,8 +33,7 @@ class Cookie(str):
 def admin_login():
     password = os.environ.get("TASKLOOM_ADMIN_PASSWORD")
     if not password:
-        raw = subprocess.run(["docker", "exec", CONTAINER, "cat", "/data/admin.json"], check=True, capture_output=True, text=True).stdout
-        return json.loads(raw)["Secret"]
+        raise SystemExit("set TASKLOOM_ADMIN_PASSWORD to the administrator password")
     body = json.dumps({"Username": os.environ.get("TASKLOOM_ADMIN_USER", "admin"), "Password": password}).encode()
     req = urllib.request.Request(BASE + "/session", data=body, method="POST")
     req.add_header("Content-Type", "application/json")
@@ -70,8 +66,7 @@ def call(token, method, path, body=None, ok=(200,)):
     except urllib.error.HTTPError as e:
         if e.code in ok:
             return None
-        hint = "；admin.json 的凭据可能已因设置密码而失效，请设置 TASKLOOM_ADMIN_PASSWORD" if e.code == 401 else ""
-        raise SystemExit(f"{method} {path} -> {e.code} {e.read().decode().strip()}{hint}")
+        raise SystemExit(f"{method} {path} -> {e.code} {e.read().decode().strip()}")
 
 
 def main():

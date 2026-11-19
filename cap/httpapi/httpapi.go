@@ -2,7 +2,6 @@
 package httpapi
 
 import (
-	"context"
 	"net/http"
 )
 
@@ -14,16 +13,3 @@ type Route struct {
 }
 
 type Module interface{ Routes() []Route }
-
-// ModuleLifecycle is optional. The HTTP owner opens and closes it exactly once;
-// it must not also be registered as an application Resource.
-type ModuleLifecycle interface {
-	Open(ctx context.Context) error
-	Close(ctx context.Context) error
-}
-
-// RequestSecurity enforces the shared Origin/CSRF envelope and extracts an
-// existing credential. Domain authentication and authorization still run per use case.
-type RequestSecurity interface {
-	Credential(w http.ResponseWriter, r *http.Request) (token string, ok bool)
-}

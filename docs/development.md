@@ -42,6 +42,8 @@ sh scripts/check.sh all     # 单测（含文档链接/代码块检查）、vet�
 sh scripts/check.sh race    # 竞态检查
 ```
 
+CI（[.github/workflows/ci.yml](../.github/workflows/ci.yml)）在推送 main 和每个 PR 上于 ubuntu 用 go.mod 指定的 Go 版本并行运行以上两条命令，不另写检查逻辑。
+
 Go 依赖首次需下载，不需要 Ruby。配置图由 PluginKit 真实构建校验（`-check` 与 runtime/config、workflow 扩展测试），文档链接由 `runtime/architecture` 测试校验。HTTP 和 CLI 测试需要本机回环端口。受限沙箱若禁止 bind，应在允许本机监听的环境运行，不能把环境失败算作通过。
 
 ## 两层装配实现

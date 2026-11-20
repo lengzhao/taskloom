@@ -128,11 +128,16 @@ func (f *fixture) upload(taskID, token, key, name string, body []byte) (int, fil
 	return code, out
 }
 
-// objects counts stored blobs, excluding the temporary directory.
+// objects counts stored blobs, excluding the store's own tmp directory.
+// The check is relative to the store root: on Linux t.TempDir itself lives
+// under /tmp, so matching the absolute path would exclude everything.
 func (f *fixture) objects() int {
 	n := 0
 	_ = filepath.WalkDir(f.dir, func(path string, d os.DirEntry, err error) error {
-		if err == nil && !d.IsDir() && !strings.Contains(path, string(filepath.Separator)+"tmp"+string(filepath.Separator)) {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		if rel, rerr := filepath.Rel(f.dir, path); rerr == nil && !strings.HasPrefix(rel, "tmp"+string(filepath.Separator)) {
 			n++
 		}
 		return nil

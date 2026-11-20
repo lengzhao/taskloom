@@ -61,7 +61,18 @@ const (
 	ReasonRoundChanged        = "round_changed"
 	ReasonBasisChanged        = "basis_changed"
 	ReasonNotReviewer         = "not_reviewer"
+	// ReasonChildrenPending: a direct required subtask is not completed.
+	ReasonChildrenPending = "required_children_pending"
 )
+
+// PlanTask is a readable neighbour in the work breakdown. For a parent,
+// Required says whether this task is required by it.
+type PlanTask struct {
+	TaskID, Title string
+	Required      bool
+	Status        flow.Phase
+	State         flow.Step
+}
 
 type Snapshot struct {
 	ResultCommit *commit.Commit
@@ -76,6 +87,12 @@ type Snapshot struct {
 	Review                                              *acceptance.Review
 	// Questions are the open requests for input of the current active round.
 	Questions []question.Question `json:",omitempty"`
+	// Parent and Children are the direct relations the viewer may read; a
+	// relation grants no access. HiddenRequired says only that a required
+	// subtask exists that the viewer cannot read.
+	Parent         *PlanTask  `json:",omitempty"`
+	Children       []PlanTask `json:",omitempty"`
+	HiddenRequired bool       `json:",omitempty"`
 }
 
 // Ask raises a request for input to the task owner inside the round the
@@ -114,13 +131,17 @@ type ControlCommands interface {
 	Restart(ctx context.Context, token, key string, in Restart) (Ref, error)
 }
 
-// Pending is one task whose NextActor is the caller.
+// Pending is one task whose NextActor is the caller, or, with WaitingOnSubtasks, one
+// the caller owns or handles that waits on its required subtasks: still the
+// caller's, but nothing on it can move until they complete.
 type Pending struct {
-	TaskID, Title string
-	NextActor     Actor
+	TaskID, Title     string
+	NextActor         Actor
+	WaitingOnSubtasks bool `json:",omitempty"`
 }
 type Queries interface {
 	Read(ctx context.Context, token, taskID string) (Snapshot, error)
-	// Inbox lists readable active tasks currently waiting on the caller.
+	// Inbox lists readable active tasks currently waiting on the caller, then
+	// the caller's own tasks marked WaitingOnSubtasks with no NextActor.
 	Inbox(ctx context.Context, token string) ([]Pending, error)
 }

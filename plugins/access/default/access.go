@@ -51,7 +51,7 @@ func (s *Service) Check(ctx context.Context, p identity.Principal, op, resource 
 			return nil
 		}
 		return az.ErrForbidden
-	case "task.project", "task.read", "task.edit", "commit.append", "participant.set", "execution.open", "execution.assign", "result.submit", "result.review", "task.cancel", "task.restart":
+	case "task.project", "task.read", "task.edit", "commit.append", "participant.set", "execution.open", "execution.assign", "result.submit", "result.review", "task.cancel", "task.restart", "task.plan":
 		t, e := s.d.Tasks.GetTask(ctx, p.Tenant, resource)
 		if errors.Is(e, fault.ErrNotFound) {
 			return az.ErrForbidden
@@ -83,7 +83,7 @@ func (s *Service) Check(ctx context.Context, p identity.Principal, op, resource 
 				}
 			}
 		}
-		if op == "task.edit" || op == "participant.set" || op == "execution.assign" || op == "task.cancel" || op == "task.restart" {
+		if op == "task.edit" || op == "participant.set" || op == "execution.assign" || op == "task.cancel" || op == "task.restart" || op == "task.plan" {
 			return az.ErrForbidden
 		}
 		// Execution commands recheck explicit assignment and instance/generation in

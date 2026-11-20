@@ -60,6 +60,10 @@ func (m *ResultModule) Submit(ctx context.Context, token, key string, in api.Sub
 		if strings.TrimSpace(in.Body) == "" || len(in.Body) > 20000 {
 			return api.Ref{}, fault.ErrConflict
 		}
+		// The parent delivers only once its required subtasks are completed.
+		if e = m.d.Flow.CheckSubmit(tx, t); e != nil {
+			return api.Ref{}, e
+		}
 		v.ProgressAt = time.Now() // a result is progress
 		if e = m.d.Executions.SaveExecution(tx, v); e != nil {
 			return api.Ref{}, e

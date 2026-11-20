@@ -57,14 +57,24 @@ func load(ctx context.Context, tasks task.Reader, fl flow.Controller, p identity
 }
 
 // finish lets the flow derive completion from the facts just written and
-// announces the change; the Ref carries the round the task is now in.
+// announces the change, also to the direct parent whose view of its subtasks
+// may change with it; the Ref carries the round the task is now in.
 func finish(ctx context.Context, fl flow.Controller, events record.EventWriter, t task.Task) (api.Ref, error) {
 	pos, e := fl.Refresh(ctx, t)
 	if e != nil {
 		return api.Ref{}, e
 	}
-	if e = events.AppendEvent(ctx, record.Event{Tenant: t.Tenant, Resource: t.ID, Kind: record.EventTaskChanged}); e != nil {
+	parent, e := fl.Parent(ctx, t)
+	if e != nil {
 		return api.Ref{}, e
+	}
+	for _, id := range []string{t.ID, parent} {
+		if id == "" {
+			continue
+		}
+		if e = events.AppendEvent(ctx, record.Event{Tenant: t.Tenant, Resource: id, Kind: record.EventTaskChanged}); e != nil {
+			return api.Ref{}, e
+		}
 	}
 	return api.Ref{TaskID: t.ID, RoundID: pos.RoundID}, nil
 }

@@ -8,7 +8,7 @@ Taskloom 是人与 Agent 协作的任务系统，采用模块化单体：公共�
 | --- | --- | --- |
 | Task | 标题、目标、标准、负责人、项目归属及唯一版本 BasisVersion | 聊天上下文、模型运行 |
 | Commit | 不可变正文、作者及代理归属、类型、引用、对应依据版本、提交序号 | 可变状态、通用动作 |
-| 领域记录 | 分配、执行（写资格、凭据、进展时间）、交付登记、问题、成员、参与关系 | 正文副本、由自然语言猜测的决定 |
+| 领域记录 | 分配、执行（写资格、凭据、进展时间）、交付登记、问题、成员、参与关系、当前父子关系（是否必需） | 正文副本、由自然语言猜测的决定 |
 | 流程位置 | 阶段、轮次、创建时固定的验收方式 | 当前步骤与等待原因（每次推导） |
 
 正文只存于 commit，结构化记录只引用 CommitID；验收结论本身就是一条 commit。没有 Conversation/Message 层，也不从日志重放构建数据库。Taskloom 观察不到外部进程，因此不记录"在线""已停止"等无法核实的状态。
@@ -21,14 +21,15 @@ Taskloom 是人与 Agent 协作的任务系统，采用模块化单体：公共�
 | sql（storage/sql） | GORM 连接、迁移与全部仓储，不含业务判断 | 0 |
 | identity（identity/local）、access（access/default） | 凭据认证；按成员/负责人/参与关系授权 | 1、2 |
 | command-runtime（commands/runtime） | 命令事务、幂等回执、审计 | 5 |
-| flow（task/flow） | 阶段/轮次唯一写入者，步骤由事实推导 | 5 |
-| workspace（workspace/tasks） | 任务创建/依据修改/评论/参与者/项目归属/变化补拉 | 12 |
+| flow（task/flow） | 阶段/轮次唯一写入者，步骤由事实推导（含直接必需子任务） | 6 |
+| workspace（workspace/tasks） | 任务创建（含原子建为子任务）/依据修改/评论/参与者/项目归属/变化补拉 | 13 |
 | execution-commands、result-commands、question-commands、flow-commands | 分配与认领；提交与验收；提问与回答；取消与开新轮 | 8、7、8、5 |
-| workflow-query（query/workflow） | 只读快照、可用操作原因、收件箱 | 10 |
+| plan-commands（commands/plan） | 子任务放置：挂接、切换必需、重挂（不解除），同事务递增父依据；同一规则以 Placer 供任务创建在其事务内调用 | 7 |
+| workflow-query（query/workflow） | 只读快照（含可读父/子任务）、可用操作原因、收件箱 | 11 |
 | security（commands/security）、catalog（catalog/projects） | 身份/成员/凭据/密码管理；空间与项目 | 9、6 |
-| workspace-api、workflow-api、mcp-api、audit-api、health | HTTP 与 MCP 协议适配、管理员审计查询、存活检查；Origin/CSRF 由 http 对所有路由统一检查 | 6、5、6、4、0 |
+| workspace-api、workflow-api、plan-api、mcp-api、audit-api、health | HTTP 与 MCP 协议适配、管理员审计查询、存活检查；Origin/CSRF 由 http 对所有路由统一检查 | 6、5、1、6、4、0 |
 
-超过 5 个 Deps 的模块都是同一命令事务内的协调边界：每个字段是一个独立能力接口（命令生命周期、各领域事实、事件），不是服务定位器；拆开只会把同一事务协调挪到别处。workspace 的 12 项是工作台纵向切片的历史边界，新增执行/验收能力已放入独立命令模块，不再向它堆积。
+超过 5 个 Deps 的模块都是同一命令事务内的协调边界：每个字段是一个独立能力接口（命令生命周期、各领域事实、事件），不是服务定位器；拆开只会把同一事务协调挪到别处。workspace 的 13 项是工作台纵向切片的历史边界（第 13 项 Placer 只为让创建与放置成为一个原子命令，放置规则仍只在 plan 模块），新增执行/验收/拆分能力都放入独立命令模块，不再向它堆积。flow 增加的关系读取是同一完成规则的事实输入，提交检查和父任务事件也复用它，命令模块因此无需各自读取关系。
 
 命令模块不依赖查询模块：各模块持有自己声明的 Deps，共享步骤是只接收窄接口的包级函数，不存在跨模块共用的依赖并集。
 

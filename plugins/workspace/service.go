@@ -19,6 +19,7 @@ import (
 	"github.com/lengzhao/taskloom/cap/fault"
 	"github.com/lengzhao/taskloom/cap/flow"
 	"github.com/lengzhao/taskloom/cap/identity"
+	"github.com/lengzhao/taskloom/cap/plan"
 	"github.com/lengzhao/taskloom/cap/record"
 	"github.com/lengzhao/taskloom/cap/task"
 	"github.com/lengzhao/taskloom/cap/unitofwork"
@@ -40,6 +41,10 @@ type Deps struct {
 	Events        record.EventLog        `json:"events"`
 	// Progress lets an Agent's comment count as progress on its own execution.
 	Progress execution.Progress `json:"progress"`
+	// Placer places a task created under a parent in the same transaction.
+	// Thirteen fields, reviewed: the placement rule stays in the plan module;
+	// this field only lets creation and placement be one atomic command.
+	Placer plan.Placer `json:"placer"`
 }
 type Service struct {
 	d Deps
@@ -49,7 +54,7 @@ func init() {
 	pluginkit.Register("workspace/tasks", func(_ struct{}, d Deps) (*Service, error) { return New(d) })
 }
 func New(d Deps) (*Service, error) {
-	if d.Catalog == nil || d.Transactions == nil || d.Tasks == nil || d.Commits == nil || d.Flow == nil || d.Members == nil || d.Participants == nil || d.Identity == nil || d.Authorization == nil || d.Events == nil || d.Progress == nil {
+	if d.Catalog == nil || d.Transactions == nil || d.Tasks == nil || d.Commits == nil || d.Flow == nil || d.Members == nil || d.Participants == nil || d.Identity == nil || d.Authorization == nil || d.Events == nil || d.Progress == nil || d.Placer == nil {
 		return nil, errors.New("task capabilities required")
 	}
 	if d.Commands == nil {
@@ -83,11 +88,25 @@ func (s *Service) event(ctx context.Context, t task.Task) error {
 }
 func (s *Service) Create(ctx context.Context, token, key string, in api.Create) (api.Ref, error) {
 	var out api.Ref
+	if in.Required && in.ParentID == "" {
+		return out, fault.ErrInput // Required describes a relation that would not exist
+	}
 	p, e := s.actor(ctx, token)
 	if e != nil {
 		return out, e
 	}
-	b, e := command.Run(ctx, s.d.Commands, capcommand.Request{Token: token, Key: key, Operation: "task.create", Resource: p.Tenant}, in, func(tx context.Context, p identity.Principal) ([]byte, error) {
+	req := capcommand.Request{Token: token, Key: key, Operation: "task.create", Resource: p.Tenant}
+	if in.ParentID != "" {
+		// Creating under a parent changes the parent's plan, so it also needs
+		// planning rights there; checked again before any replay.
+		req.Authorize = func(tx context.Context, actor identity.Principal) error {
+			if e := s.d.Authorization.Check(tx, actor, "task.create", actor.Tenant); e != nil {
+				return e
+			}
+			return s.d.Authorization.Check(tx, actor, "task.plan", in.ParentID)
+		}
+	}
+	b, e := command.Run(ctx, s.d.Commands, req, in, func(tx context.Context, p identity.Principal) ([]byte, error) {
 		if p.Kind != "human" || !valid(in.Title, in.Goal, in.Criteria) {
 			return nil, fault.ErrInput
 		}
@@ -104,7 +123,12 @@ func (s *Service) Create(ctx context.Context, token, key string, in api.Create) 
 		if _, e := s.append(tx, p, t, "task.created", in.Title, ""); e != nil {
 			return nil, e
 		}
-		if e := s.event(tx, t); e != nil {
+		if in.ParentID != "" {
+			// The placement announces the new task and its parent itself.
+			if e := s.d.Placer.Apply(tx, p, plan.Placement{ChildID: t.ID, ParentID: in.ParentID, Required: in.Required}); e != nil {
+				return nil, e
+			}
+		} else if e := s.event(tx, t); e != nil {
 			return nil, e
 		}
 		return json.Marshal(api.Ref{TaskID: t.ID})
@@ -389,6 +413,7 @@ func (s *Service) projectOpen(ctx context.Context, tenant, id string) error {
 	}
 	return nil
 }
+
 func (s *Service) SetProject(ctx context.Context, token, key string, in api.ProjectMove) error {
 	_, e := command.Run(ctx, s.d.Commands, capcommand.Request{Token: token, Key: key, Operation: "task.project", Resource: in.TaskID}, in, func(tx context.Context, p identity.Principal) ([]byte, error) {
 		if e := s.projectOpen(tx, p.Tenant, in.ProjectID); e != nil {

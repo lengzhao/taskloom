@@ -42,13 +42,17 @@ const (
 )
 
 // Position is a task's place in its lifecycle. Status, RoundID and Acceptance
-// are stored; State and Waiting are derived on read.
+// are stored; State, Waiting and WaitingOnSubtasks are derived on read.
 type Position struct {
 	Status                  Phase
 	Tenant, TaskID, RoundID string
 	Acceptance              Acceptance
 	State                   Step
 	Waiting                 string
+	// WaitingOnSubtasks: the active task cannot deliver because a direct required
+	// subtask is not completed. It is a wait cause, not a step: work may still
+	// be claimed, discussed and prepared; Waiting says why.
+	WaitingOnSubtasks bool `json:",omitempty"`
 }
 
 type PositionStore interface {
@@ -69,6 +73,12 @@ type Controller interface {
 	Refresh(ctx context.Context, value task.Task) (Position, error)
 	// CheckOpen allows assignment and claims on an active task with a complete basis.
 	CheckOpen(ctx context.Context, value task.Task) (Position, error)
+	// CheckSubmit allows a result once every direct required subtask is
+	// completed; otherwise it returns fault.ErrConflict.
+	CheckSubmit(ctx context.Context, value task.Task) error
+	// Parent names the direct parent whose derived view changes with this
+	// task, or "" for a root task. Commands use it to announce the change.
+	Parent(ctx context.Context, value task.Task) (string, error)
 	Cancel(ctx context.Context, value task.Task) (Position, error)
 	// Restart starts a new active round on an active or cancelled task;
 	// a completed task is final and rejects it.

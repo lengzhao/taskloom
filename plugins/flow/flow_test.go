@@ -32,7 +32,7 @@ func open(t *testing.T) *store.Store {
 
 func controller(t *testing.T, s *store.Store, mode capflow.Acceptance) *flow.Controller {
 	t.Helper()
-	c, e := flow.New(flow.Config{Acceptance: mode}, flow.Deps{Positions: s, Results: s, Reviews: s, Questions: s, Commits: s})
+	c, e := flow.New(flow.Config{Acceptance: mode}, flow.Deps{Positions: s, Results: s, Reviews: s, Questions: s, Commits: s, Plan: s})
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -150,7 +150,7 @@ func TestAcceptanceIsFixedPerTask(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	if _, e = flow.New(flow.Config{Acceptance: "maybe"}, flow.Deps{Positions: s, Results: s, Reviews: s, Questions: s, Commits: s}); e == nil {
+	if _, e = flow.New(flow.Config{Acceptance: "maybe"}, flow.Deps{Positions: s, Results: s, Reviews: s, Questions: s, Commits: s, Plan: s}); e == nil {
 		t.Fatal("unknown acceptance mode accepted")
 	}
 }

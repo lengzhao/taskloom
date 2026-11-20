@@ -2,6 +2,7 @@ package workspace_test
 
 import (
 	"encoding/json"
+	"github.com/lengzhao/taskloom/cap/plan"
 
 	"context"
 	"errors"
@@ -30,6 +31,13 @@ type noProgress struct{}
 
 func (noProgress) RecordProgress(context.Context, identity.Principal, string, string) error {
 	return nil
+}
+
+// noPlacer stands in for the plan module; these tests create no subtasks.
+type noPlacer struct{}
+
+func (noPlacer) Apply(context.Context, identity.Principal, plan.Placement) error {
+	return fault.ErrInput
 }
 
 // readBack answers Create and Edit with current facts, as the HTTP API does:
@@ -76,11 +84,11 @@ func fixtureWithStore(t *testing.T) (readBack, *security.Service, string, *store
 	if e != nil {
 		t.Fatal(e)
 	}
-	f, e := flow.New(flow.Config{}, flow.Deps{Positions: s, Results: s, Reviews: s, Questions: s, Commits: s})
+	f, e := flow.New(flow.Config{}, flow.Deps{Positions: s, Results: s, Reviews: s, Questions: s, Commits: s, Plan: s})
 	if e != nil {
 		t.Fatal(e)
 	}
-	inner, e := workspace.New(workspace.Deps{Catalog: s, Transactions: s, Tasks: s, Commits: s, Flow: f, Identity: id, Authorization: az, Commands: r, Events: s, Members: s, Participants: s, Progress: noProgress{}})
+	inner, e := workspace.New(workspace.Deps{Catalog: s, Transactions: s, Tasks: s, Commits: s, Flow: f, Identity: id, Authorization: az, Commands: r, Events: s, Members: s, Participants: s, Progress: noProgress{}, Placer: noPlacer{}})
 	if e != nil {
 		t.Fatal(e)
 	}

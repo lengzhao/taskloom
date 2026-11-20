@@ -1,7 +1,8 @@
 // Package flow implements the task lifecycle as a function of task facts.
 // It stores only phase, round and the acceptance mode fixed at creation; the
 // step and what it waits on are recomputed from the basis, the current
-// result, its review and open questions every time they are read.
+// result, its review, open questions and required subtasks every time they
+// are read.
 package flow
 
 import (
@@ -17,6 +18,7 @@ import (
 	"github.com/lengzhao/taskloom/cap/delivery"
 	"github.com/lengzhao/taskloom/cap/fault"
 	capflow "github.com/lengzhao/taskloom/cap/flow"
+	"github.com/lengzhao/taskloom/cap/plan"
 	"github.com/lengzhao/taskloom/cap/question"
 	"github.com/lengzhao/taskloom/cap/task"
 )
@@ -39,6 +41,9 @@ func (c *Config) Validate() error {
 }
 
 // Deps are the facts completion depends on, plus the stored position.
+// Six fields, reviewed: Plan is one more real input to the same completion
+// rule; a separate plugin would only move that rule, and the submit check and
+// parent lookup reuse it so commands need not read relations themselves.
 type Deps struct {
 	Positions capflow.PositionStore `json:"positions"`
 	Results   delivery.Reader       `json:"results"`
@@ -46,6 +51,8 @@ type Deps struct {
 	Commits   commit.Lookup     `json:"commits"`
 	Reviews   acceptance.Reader `json:"reviews"`
 	Questions question.Reader   `json:"questions"`
+	// Plan reads the direct required subtasks a delivery waits for.
+	Plan plan.Reader `json:"plan"`
 }
 type Controller struct {
 	c Config
@@ -59,8 +66,8 @@ func New(c Config, d Deps) (*Controller, error) {
 	if err := c.Validate(); err != nil {
 		return nil, err
 	}
-	if d.Positions == nil || d.Results == nil || d.Commits == nil || d.Reviews == nil || d.Questions == nil {
-		return nil, errors.New("flow requires positions, results, commits, reviews and questions")
+	if d.Positions == nil || d.Results == nil || d.Commits == nil || d.Reviews == nil || d.Questions == nil || d.Plan == nil {
+		return nil, errors.New("flow requires positions, results, commits, reviews, questions and plan")
 	}
 	return &Controller{c, d}, nil
 }
@@ -96,13 +103,18 @@ func (c *Controller) load(ctx context.Context, t task.Task) (capflow.Position, e
 	if !knownAcceptance(p.Acceptance) {
 		return p, fault.ErrConflict
 	}
-	p.State, p.Waiting = "", ""
+	p.State, p.Waiting, p.WaitingOnSubtasks = "", "", false
 	return p, nil
 }
 
+// waitingChildren is the waiting text while a direct required subtask is not
+// completed; children are not refreshed, each is complete only by its own rule.
+const waitingChildren = "等待必需子任务完成"
+
 // derive fills State and Waiting from facts. done reports that an active task
 // satisfies completion: a valid result for the current basis, the owner's
-// approval when acceptance is manual, and no open question in the round.
+// approval when acceptance is manual, no open question in the round and every
+// direct required subtask completed.
 func (c *Controller) derive(ctx context.Context, t task.Task, p capflow.Position) (capflow.Position, bool, error) {
 	if p.Status == capflow.PhaseCompleted {
 		p.State = capflow.StepCompleted
@@ -113,7 +125,16 @@ func (c *Controller) derive(ctx context.Context, t task.Task, p capflow.Position
 		return p, false, e
 	}
 	p.State, p.Waiting = state, waiting
-	if waiting == "" {
+	if p.Status == capflow.PhaseActive && state != capflow.StepReady && (state == capflow.StepExecuting || waiting == "") {
+		pending, e := c.childrenPending(ctx, t)
+		if e != nil {
+			return p, false, e
+		}
+		if pending {
+			p.Waiting, p.WaitingOnSubtasks = waitingChildren, true
+		}
+	}
+	if p.Waiting == "" {
 		open, e := c.d.Questions.OpenQuestions(ctx, t.Tenant, t.ID, p.RoundID)
 		if e != nil {
 			return p, false, e
@@ -170,6 +191,49 @@ func (c *Controller) result(ctx context.Context, t task.Task, p capflow.Position
 	return capflow.StepAccepting, "", nil
 }
 
+// childrenPending reports whether a direct required subtask is not completed.
+// A cancelled subtask does not satisfy the parent either.
+func (c *Controller) childrenPending(ctx context.Context, t task.Task) (bool, error) {
+	links, e := c.d.Plan.Children(ctx, t.Tenant, t.ID)
+	if e != nil {
+		return false, e
+	}
+	for _, l := range links {
+		if !l.Required {
+			continue
+		}
+		child, e := c.d.Positions.GetPosition(ctx, l.Tenant, l.ChildID)
+		if e != nil {
+			return false, e
+		}
+		if child.Status != capflow.PhaseCompleted {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// CheckSubmit allows a result only once every direct required subtask is completed.
+func (c *Controller) CheckSubmit(ctx context.Context, t task.Task) error {
+	pending, e := c.childrenPending(ctx, t)
+	if e != nil {
+		return e
+	}
+	if pending {
+		return fault.ErrConflict
+	}
+	return nil
+}
+
+// Parent names the task whose derived view changes with this one, or "".
+func (c *Controller) Parent(ctx context.Context, t task.Task) (string, error) {
+	l, e := c.d.Plan.Parent(ctx, t.Tenant, t.ID)
+	if errors.Is(e, fault.ErrNotFound) {
+		return "", nil
+	}
+	return l.ParentID, e
+}
+
 func (c *Controller) Read(ctx context.Context, t task.Task) (capflow.Position, error) {
 	p, e := c.load(ctx, t)
 	if e != nil {
@@ -198,7 +262,7 @@ func (c *Controller) Refresh(ctx context.Context, t task.Task) (capflow.Position
 // save writes the stored fields of p.
 func (c *Controller) save(ctx context.Context, p capflow.Position) (capflow.Position, error) {
 	stored := p
-	stored.State, stored.Waiting = "", ""
+	stored.State, stored.Waiting, stored.WaitingOnSubtasks = "", "", false
 	return p, c.d.Positions.SavePosition(ctx, stored)
 }
 

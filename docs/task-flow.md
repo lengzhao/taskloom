@@ -23,7 +23,10 @@
 | 当前交付的结果 commit 依据版本 ≠ 任务依据版本 | executing | 结果依据已失效 |
 | manual 且当前交付没有负责人结论 | accepting | 等待负责人验收 |
 | manual 且结论为退回 | accepting | 验收未通过，等待重新提交 |
+| 存在未完成的直接必需子任务（步骤为 executing，或其余条件都已满足） | 保持上一行步骤 | 等待必需子任务完成 |
 | 本轮有未回答问题 | 保持上一行步骤 | 等待被提问人回答问题 |
+
+等待必需子任务时另推导 `WaitingOnSubtasks=true`：它是等待原因，不是步骤，步骤保持 executing，认领、留言、提问和准备都照常，只有提交被拦住。它不落库，子任务完成后自然消失，不跨任务改写父任务。
 
 全部满足即达成完成条件。终态 completed 的 State 为 completed；cancelled 保留推导出的步骤，Waiting 为"任务已取消"。
 
@@ -37,6 +40,8 @@
 | Read | 读存储字段并推导步骤 |
 | Refresh | 每个改变事实的命令在同事务末尾调用；达成完成条件即写 completed |
 | CheckOpen | 分配和认领的前提：任务 active 且依据完整（非 ready） |
+| CheckSubmit | 提交结果的前提：直接必需子任务全部 completed，否则冲突；只读直接子任务的存储阶段，不递归 Refresh |
+| Parent | 直接父任务 ID；命令据此同事务给父任务写变化事件 |
 | Cancel | active → cancelled |
 | Restart | active/cancelled → 新轮 active，然后 Refresh；活跃任务即退回，取消即重开；completed 冲突，返工新建任务 |
 
@@ -51,10 +56,11 @@
 | 命令 | 客户端固定 | 服务端校验 |
 | --- | --- | --- |
 | Open | BasisVersion | 依据完整、已分配、凭据；同一凭据同依据已有执行时冲突（人在分配时即开始） |
-| Submit | ExecutionID | 执行可写、轮次与依据版本仍为当前 |
+| Submit | ExecutionID | 执行可写、轮次与依据版本仍为当前、必需子任务已完成 |
 | Review | 结果 CommitID | 仍为当前交付且依据未变 |
 | Restart / Ask | RoundID | 仍为当前轮 |
 | Assign / Cancel | 无 | 阶段与授权 |
+| Place（子任务放置） | 所见原父任务与 Required | 父任务 active、无环、授权；不要求同项目 |
 
 ## 分配、认领与转交
 

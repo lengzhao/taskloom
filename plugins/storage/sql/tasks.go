@@ -63,6 +63,10 @@ func (s *Store) UpdateBasis(ctx context.Context, change task.BasisChange) (task.
 	})
 }
 
+func (s *Store) AdvanceBasis(ctx context.Context, tenant, taskID string) (task.Task, error) {
+	return s.updateTask(ctx, tenant, taskID, func(t *task.Task) { t.BasisVersion++ })
+}
+
 func (s *Store) SetProject(ctx context.Context, tenant, taskID, projectID string) (task.Task, error) {
 	return s.updateTask(ctx, tenant, taskID, func(t *task.Task) { t.ProjectID = projectID })
 }

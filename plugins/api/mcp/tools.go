@@ -108,6 +108,7 @@ var reasonText = map[string]string{
 	work.ReasonRoundChanged:        "任务已进入新一轮，需要重新 read_task",
 	work.ReasonBasisChanged:        "任务约定已更新，需要重新认领",
 	work.ReasonNotReviewer:         "你不是验收人",
+	work.ReasonChildrenPending:     "必需子任务尚未全部完成",
 }
 
 type tool struct {
@@ -167,9 +168,16 @@ func (m *Module) call(ctx context.Context, c call, name string, rawArgs json.Raw
 	}
 	switch name {
 	case "inbox":
-		items, err := m.d.Workflow.Inbox(ctx, c.token)
+		all, err := m.d.Workflow.Inbox(ctx, c.token)
 		if err != nil {
 			return "", err
+		}
+		// An Agent's inbox is work it can do now; blocked tasks are read when it wants them.
+		items := []work.Pending{}
+		for _, x := range all {
+			if !x.WaitingOnSubtasks {
+				items = append(items, x)
+			}
 		}
 		if len(items) == 0 {
 			return "当前没有等你处理的任务。", nil
@@ -297,21 +305,22 @@ func (m *Module) readTask(ctx context.Context, c call, taskID string) (string, e
 		timeline = append(timeline, entry)
 	}
 	out := map[string]any{
-		"task_id":        d.Task.ID,
-		"title":          d.Task.Title,
-		"goal":           d.Task.Goal,
-		"criteria":       d.Task.Criteria,
-		"owner":          d.Task.Owner,
-		"status":         w.Position.Status,
-		"step":           w.Position.State,
-		"waiting":        w.Position.Waiting,
-		"next_actor":     w.NextActor,
-		"assignee":       w.Assignee,
-		"can":            map[string]bool{"start_work": w.CanOpen, "submit_result": w.CanSubmit},
-		"blocked":        blocked,
-		"open_questions": questions,
-		"timeline":       timeline,
-		"basis":          b.token(),
+		"task_id":             d.Task.ID,
+		"title":               d.Task.Title,
+		"goal":                d.Task.Goal,
+		"criteria":            d.Task.Criteria,
+		"owner":               d.Task.Owner,
+		"status":              w.Position.Status,
+		"step":                w.Position.State,
+		"waiting":             w.Position.Waiting,
+		"waiting_on_subtasks": w.Position.WaitingOnSubtasks,
+		"next_actor":          w.NextActor,
+		"assignee":            w.Assignee,
+		"can":                 map[string]bool{"start_work": w.CanOpen, "submit_result": w.CanSubmit},
+		"blocked":             blocked,
+		"open_questions":      questions,
+		"timeline":            timeline,
+		"basis":               b.token(),
 	}
 	if e := w.Execution; e != nil {
 		x := map[string]any{"writable": e.Writable, "execution_id": e.ID, "agent": e.Subject}
@@ -319,6 +328,19 @@ func (m *Module) readTask(ctx context.Context, c call, taskID string) (string, e
 			x["last_progress_at"] = e.ProgressAt.Format(time.RFC3339)
 		}
 		out["execution"] = x
+	}
+	if w.Parent != nil {
+		out["parent"] = map[string]any{"task_id": w.Parent.TaskID, "title": w.Parent.Title, "required_by_parent": w.Parent.Required, "status": w.Parent.Status}
+	}
+	if len(w.Children) > 0 || w.HiddenRequired {
+		subtasks := []map[string]any{}
+		for _, c := range w.Children {
+			subtasks = append(subtasks, map[string]any{"task_id": c.TaskID, "title": c.Title, "required": c.Required, "status": c.Status, "step": c.State})
+		}
+		out["subtasks"] = subtasks
+		if w.HiddenRequired {
+			out["hidden_required_subtasks"] = true
+		}
 	}
 	if w.ResultCommit != nil {
 		r := map[string]any{"text": w.ResultCommit.Body}

@@ -19,6 +19,12 @@ type Commit struct {
 type Lookup interface {
 	Get(ctx context.Context, tenant, taskID, commitID string) (Commit, error)
 }
+// Reader adds the newest commit to lookups: a task list shows when a task's
+// timeline last changed. Last returns fault.ErrNotFound for an empty timeline.
+type Reader interface {
+	Lookup
+	Last(ctx context.Context, tenant, taskID string) (Commit, error)
+}
 type Log interface {
 	Lookup
 	Append(ctx context.Context, value Commit) error

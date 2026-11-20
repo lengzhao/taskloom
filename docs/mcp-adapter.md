@@ -24,6 +24,7 @@ claude mcp add --transport http taskloom http://localhost:8899/v1/mcp \
 | list_members | workspace.People | 空间内有效成员（subject、kind），可按 ID 片段与 kind 过滤，按 subject 分页（next/after，每页 50）；供 ask_owner 的 `to` 选人 |
 | ask_owner | QuestionCommands.Ask | 提问或请求协助：默认问负责人，`to` 可填任一有效成员（不在任务中时自动加为参与者）；未答前任务不能完成 |
 | answer_question | QuestionCommands.Answer | 回答别人向自己提的问题（open_questions 中 for_you 为 true） |
+| close_question | QuestionCommands.Close | 撤回自己提的、已不需要回答的问题（须写理由），撤回后不再阻止完成 |
 | submit_result | ResultCommands.Submit | 明确提交结果 |
 
 分配、验收、取消与重开不对模型开放：插件以局部窄接口注入，只拿到上表能力，这些都属于人。

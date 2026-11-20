@@ -162,15 +162,16 @@ details[open] > summary { margin-bottom: 4px }
     <div class="toolbar">
      <input id="task-search" aria-label="搜索任务" placeholder="搜索标题、目标或任务编号">
      <select id="project-filter" aria-label="筛选项目"></select>
-     <select id="status-filter" aria-label="筛选阶段"><option value="">全部阶段</option><option value="ready">待处理</option><option value="executing">处理中</option><option value="blocked">已阻塞</option><option value="accepting">待验收</option><option value="completed">已完成</option><option value="cancelled">已取消</option></select>
+     <select id="status-filter" aria-label="筛选状态"><option value="">全部状态</option><option value="unassigned">待分配</option><option value="handling">处理中</option><option value="blocked">已阻塞</option><option value="accepting">验收中</option><option value="completed">已完成</option><option value="cancelled">已取消</option></select>
      <select id="task-layout" aria-label="任务视图"><option value="list">列表</option><option value="board">看板</option></select>
     </div>
     <details id="create-box"><summary>+ 新建任务</summary>
      <form id="create">
       <label>标题<input name="Title" required maxlength="200"></label>
       <label>所属项目<select name="ProjectID" id="create-project"></select></label>
-      <label>目标<textarea name="Goal" placeholder="要达成什么"></textarea></label>
-      <label>验收标准<textarea name="Criteria" placeholder="怎样算完成"></textarea></label>
+      <label>目标（分配前必填）<textarea name="Goal" placeholder="要达成什么"></textarea></label>
+      <label>验收标准（分配前必填）<textarea name="Criteria" placeholder="怎样算完成"></textarea></label>
+      <p class="muted small">可以先只写标题记下来，分配处理人前再补全目标和验收标准。</p>
       <div class="actions"><button class="primary">创建</button></div>
      </form>
     </details>
@@ -208,7 +209,8 @@ details[open] > summary { margin-bottom: 4px }
 </dialog>
 <script>
 // ---------- Labels (display only; flow rules stay on the server) ----------
-const STATE_LABEL = { ready: '准备', executing: '执行中', accepting: '验收中' };
+// One vocabulary everywhere: list, board, filter and detail. "Blocked" is a tag, not a state.
+const STATES = [['unassigned', '待分配'], ['handling', '处理中'], ['accepting', '验收中'], ['completed', '已完成'], ['cancelled', '已取消']];
 const ACTOR_LABEL = { owner: '负责人', assignee: '处理人', reviewer: '验收人', addressee: '被提问人' };
 const REASON_LABEL = {
   task_not_active: '任务已结束或已取消',
@@ -227,7 +229,7 @@ const REASON_LABEL = {
 };
 const execLabel = (ex, pos) => pos && pos.Status !== 'active' ? '任务已结束' : ex.Writable ? '进行中' : '已失效（不能再写入）';
 const OUTCOME_LABEL = { pending: '待验收', approved: '已通过', rejected: '未通过' };
-const KIND_LABEL = { comment: '留言', result: '结果', question: '提问', answer: '回答', 'review.approved': '验收通过', 'review.rejected': '验收退回', 'task.created': '创建任务', 'task.basis': '修改约定', 'plan.changed': '调整子任务' };
+const KIND_LABEL = { comment: '留言', result: '结果', question: '提问', answer: '回答', 'review.approved': '验收通过', 'review.rejected': '验收退回', 'task.created': '创建任务', 'task.basis': '修改约定', 'plan.changed': '调整子任务', 'question.closed': '关闭问题' };
 
 // ---------- State ----------
 const $ = id => document.getElementById(id);
@@ -236,6 +238,7 @@ const retryKeys = new Map();
 let selected = '', cursor = '', busy = false, pendingRefresh = false, view = 'mine';
 let inboxIDs = new Set(); // tasks currently waiting on the signed-in user
 let blockedMine = new Set(); // the user's own tasks waiting on required subtasks
+let expandBasis = ''; // a task created incomplete keeps its agreement editor open
 
 // ---------- Helpers ----------
 function el(tag, text, cls) {
@@ -302,10 +305,14 @@ async function api(path, method = 'GET', data, headers = {}) {
 }
 
 // ---------- Status presentation ----------
-function stateOf(position) {
-  if (position.Status === 'completed') return { text: '已完成', cls: 'done' };
-  if (position.Status === 'cancelled') return { text: '已取消', cls: 'stopped' };
-  return { text: STATE_LABEL[position.State] || position.State, cls: 'active' };
+// stateOf names a task's state for display only; flow rules stay on the server.
+// An active task is 验收中 when a result awaits acceptance, else 处理中 once
+// someone handles it, else 待分配.
+function stateOf(position, assignee) {
+  const key = position.Status !== 'active' ? position.Status
+    : position.State === 'accepting' ? 'accepting' : assignee ? 'handling' : 'unassigned';
+  const cls = { completed: 'done', cancelled: 'stopped' }[key] || 'active';
+  return { key, text: Object.fromEntries(STATES)[key], cls };
 }
 function pill(s) { return el('span', s.text, 'pill ' + s.cls) }
 
@@ -336,11 +343,11 @@ async function start() {
   $('work').hidden = false; $('login').hidden = true; $('logout').hidden = false;
 }
 
-let spaceInfo=null, projects=[], projectID='', taskCache=[], inboxMap=new Map(), editingProject=null;
+let spaceInfo=null, projects=[], projectID='', taskCache=[], inboxMap=new Map(), overview=new Map(), editingProject=null;
 // ---------- Task list ----------
 async function list() {
- const [tasks,inbox,ps,sp]=await Promise.all([api('/tasks'),api('/inbox'),api('/projects'),api('/space')]);
- taskCache=tasks;projects=ps;spaceInfo=sp;inboxMap=new Map(inbox.filter(x=>!x.WaitingOnSubtasks).map(x=>[x.TaskID,x.NextActor]));inboxIDs=new Set(inboxMap.keys());blockedMine=new Set(inbox.filter(x=>x.WaitingOnSubtasks).map(x=>x.TaskID));
+ const [tasks,inbox,ps,sp,ov]=await Promise.all([api('/tasks'),api('/inbox'),api('/projects'),api('/space'),api('/overview')]);
+ taskCache=tasks;overview=new Map(ov.map(x=>[x.TaskID,x]));projects=ps;spaceInfo=sp;inboxMap=new Map(inbox.filter(x=>!x.WaitingOnSubtasks).map(x=>[x.TaskID,x.NextActor]));inboxIDs=new Set(inboxMap.keys());blockedMine=new Set(inbox.filter(x=>x.WaitingOnSubtasks).map(x=>x.TaskID));
  $('space-name').textContent=sp.Name;$('mine-count').hidden=!inboxMap.size;$('mine-count').textContent=inboxMap.size;
  for(const name of ['mine','all','projects','space'])$('tab-'+name).classList.toggle('on',view===name);
  const prev=$('project-filter').value;projectOptions($('project-filter'),true);$('project-filter').value=prev;
@@ -397,16 +404,26 @@ function renderBrowse(){
 let showArchived=false;
 function renderTasks(){
  const search=$('task-search').value.trim().toLowerCase(),filter=$('project-filter').value,status=$('status-filter').value;
- const shown=taskCache.filter(d=>(view!=='mine'||inboxIDs.has(d.Task.ID)||blockedMine.has(d.Task.ID))&&(view!=='project'||d.Task.ProjectID===projectID)&&(!filter||view==='project'||(filter==='none'?!d.Task.ProjectID:d.Task.ProjectID===filter))&&(!status||(status==='blocked'?!!d.Position.WaitingOnSubtasks:(d.Position.Status==='active'?d.Position.State: d.Position.Status)===status))&&(!search||[d.Task.Title,d.Task.Goal,d.Task.ID].some(x=>(x||'').toLowerCase().includes(search))));
+ const shown=taskCache.filter(d=>(view!=='mine'||inboxIDs.has(d.Task.ID)||blockedMine.has(d.Task.ID))&&(view!=='project'||d.Task.ProjectID===projectID)&&(!filter||view==='project'||(filter==='none'?!d.Task.ProjectID:d.Task.ProjectID===filter))&&(!status||(status==='blocked'?!!d.Position.WaitingOnSubtasks:stateOf(d.Position,overview.get(d.Task.ID)?.Assignee).key===status))&&(!search||[d.Task.Title,d.Task.Goal,d.Task.ID].some(x=>(x||'').toLowerCase().includes(search))));
  const nav=$('tasks');nav.replaceChildren();const board=$('task-layout').value==='board';nav.classList.toggle('board',board);
  if(!shown.length){nav.append(el('p','没有符合条件的任务','empty'));return}
- const lanes=new Map();
+ // Board lanes follow the work's order; empty lanes are not drawn. Newest activity first.
+ const lanes=new Map(STATES.map(([key,text])=>[key,h('section','lane',el('h3',text))]));
+ const titles=new Map(taskCache.map(x=>[x.Task.ID,x.Task.Title]));
+ const updated=d=>overview.get(d.Task.ID)?.UpdatedAt||'';
+ shown.sort((a,b)=>updated(b).localeCompare(updated(a)));
  for(const d of shown){
+  const o=overview.get(d.Task.ID)||{};
   const b=button('',async()=>{selected=d.Task.ID;await list();await show()},'task');
   const project=projects.find(p=>p.ID===d.Task.ProjectID);
-  b.append(el('strong',d.Task.Title),h('span','meta',pill(stateOf(d.Position)),d.Position.WaitingOnSubtasks?el('span','阻塞：等待子任务','pill blocked'):null,inboxIDs.has(d.Task.ID)?el('span','等你：'+ACTOR_LABEL[inboxMap.get(d.Task.ID)],'pill mine'):null),el('p',(project?.Name||'未归属项目')+' · 负责人 '+d.Task.Owner,'muted small'));
-  if(board){const state=stateOf(d.Position);if(!lanes.has(state.text)){const lane=h('section','lane',el('h3',state.text));lanes.set(state.text,lane);nav.append(lane)}lanes.get(state.text).append(b)}else nav.append(b);
+  const state=stateOf(d.Position,o.Assignee);
+  const facts=[project?.Name||'未归属项目','处理人 '+(o.Assignee||'—'),o.UpdatedAt?'最近动态 '+ago(o.UpdatedAt):null].filter(Boolean).join(' · ');
+  b.append(el('strong',d.Task.Title),h('span','meta',pill(state),d.Position.WaitingOnSubtasks?el('span','阻塞：等待子任务','pill blocked'):null,inboxIDs.has(d.Task.ID)?el('span','等你：'+ACTOR_LABEL[inboxMap.get(d.Task.ID)],'pill mine'):null),
+   el('p',facts,'muted small'));
+  if(titles.has(o.ParentID))b.append(el('p','属于「'+titles.get(o.ParentID)+'」','muted small'));
+  if(board)lanes.get(state.key).append(b);else nav.append(b);
  }
+ if(board)for(const lane of lanes.values())if(lane.children.length>1)nav.append(lane);
 }
 async function openProject(p=null){
  editingProject=p;const people=await directory();$('project-form').reset();$('project-notice').textContent='';$('project-title').textContent=p?'编辑项目':'新建项目';$('project-name').value=p?.Name||'';$('project-description').value=p?.Description||'';
@@ -436,7 +453,6 @@ async function show() {
   ctx.commits = new Map(commits.map(c => [c.ID, c]));
   $('detail').replaceChildren(
     renderHead(ctx),
-    renderProject(ctx),
     renderNext(ctx),
     h('div', 'cols',
       h('div', null, renderResult(ctx), renderTimeline(ctx, commits)),
@@ -457,26 +473,24 @@ function makeContext(d, w, path) {
   };
 }
 
-function renderHead({ d }) {
-  return h('div', 'panel',
-    h('div', 'head',
-      h('div', null,
-        el('h2', d.Task.Title),
-        h('div', 'meta muted small', el('span', '负责人 ' + d.Task.Owner), el('span', '依据 v' + d.Task.BasisVersion)))));
-}
-
-function renderProject(ctx){
- const box=h('div','panel');const p=projects.find(p=>p.ID===ctx.d.Task.ProjectID);
- box.append(el('h3','所属项目'));
- if(!ctx.d.CanEdit){box.append(el('p',p?.Name||'未归属项目'));return box}
- const select=el('select');projectOptions(select,false,ctx.d.Task.ProjectID);select.value=ctx.d.Task.ProjectID||'';
- box.append(field('移动到项目',select),h('div','actions',button('保存项目归属',async()=>{await api(ctx.path+'/project','POST',{ProjectID:select.value});await list();await show()})));
- return box;
+// The head names the task, its owner and project; moving the project is a
+// secondary action folded under the project name.
+function renderHead(ctx) {
+  const { d } = ctx;
+  const p = projects.find(p => p.ID === d.Task.ProjectID);
+  const meta = h('div', 'meta muted small', el('span', '负责人 ' + d.Task.Owner), el('span', '项目 ' + (p?.Name || '未归属')));
+  const panel = h('div', 'panel', h('div', 'head', h('div', null, el('h2', d.Task.Title), meta)));
+  if (d.CanEdit) {
+    const select = el('select'); projectOptions(select, false, d.Task.ProjectID); select.value = d.Task.ProjectID || '';
+    panel.append(h('details', null, el('summary', '移动到其他项目'),
+      h('div', 'actions', select, button('移动', async () => { await api(ctx.path + '/project', 'POST', { ProjectID: select.value }); await list(); await show() }))));
+  }
+  return panel;
 }
 function renderNext(ctx) {
   const { d, w, active, claim, round } = ctx;
   const panel = h('div', 'panel next' + (inboxIDs.has(d.Task.ID) ? ' mine' : ''));
-  const s = stateOf(w.Position);
+  const s = stateOf(w.Position, w.Assignee);
   let title;
   if (w.Position.Status === 'completed') title = '已完成：结果与验收已满足，需要返工请新建任务';
   else if (w.Position.WaitingOnSubtasks && !w.NextActor) {
@@ -485,6 +499,8 @@ function renderNext(ctx) {
     const done = kids.filter(c => c.Status === 'completed').length;
     title = '阻塞：等待必需子任务完成' + (kids.length ? `（可见 ${done}/${kids.length}）` : '');
   }
+  // Approval is recorded but completion still waits on open questions; say both.
+  else if (w.Review?.Outcome === 'approved' && w.Questions?.length) title = '已通过，等待问题回答后完成';
   else if (w.NextActor) title = '下一步等待：' + ACTOR_LABEL[w.NextActor];
   else title = '暂无需要处理的事项';
   panel.append(h('div', 'head', el('h3', title), pill(s)));
@@ -516,8 +532,10 @@ function renderNext(ctx) {
       if (outcome === 'rejected' && !reason.value.trim()) { reason.focus(); throw Error('验收不通过时请写明需要修改的地方') }
       return ctx.send('/review', { CommitID: res.CommitID, Outcome: outcome, Reason: reason.value });
     };
-    panel.append(h('div', null, el('label', '验收当前结果'), reason));
-    actions.append(button('验收通过', () => verdict('approved'), 'primary'), button('不通过，退回修改', () => verdict('rejected'), 'danger'));
+    // When the owner handled the task themself there is no second person checking: it is a confirmation.
+    const own = w.Assignee === d.Task.Owner;
+    panel.append(h('div', null, el('label', own ? '确认自己的结果' : '验收当前结果'), reason));
+    actions.append(button(own ? '确认完成' : '验收通过', () => verdict('approved'), 'primary'), button(own ? '还要修改' : '不通过，退回修改', () => verdict('rejected'), 'danger'));
   }
   // Assigning an executor is the owner's next step when nobody is assigned yet.
   // Assigning stays open while blocked on subtasks: only delivery waits, the work may start.
@@ -548,6 +566,14 @@ function renderQuestions(ctx, panel) {
       const body = textarea('Body', true, '回答后处理人可在任务中查看');
       const f = h('form', null, body, h('div', 'actions', el('button', '回答', 'primary')));
       f.onsubmit = handle(() => ctx.send('/questions/' + encodeURIComponent(q.ID) + '/answer', { Body: body.value }));
+      box.append(f);
+    }
+    // The asker may withdraw a question and the owner may release the task from it.
+    if (!canAnswer && (asked?.Author === viewer.Subject || ctx.d.Task.Owner === viewer.Subject)) {
+      const reason = el('input'); reason.required = true; reason.placeholder = '关闭理由，例如：已从其他渠道确认';
+      reason.setAttribute('aria-label', '关闭理由');
+      const f = h('form', null, h('details', null, el('summary', '不再需要回答？关闭问题'), reason, h('div', 'actions', el('button', '关闭问题'))));
+      f.onsubmit = handle(() => ctx.send('/questions/' + encodeURIComponent(q.ID) + '/close', { Reason: reason.value }));
       box.append(f);
     }
     panel.append(box);
@@ -595,6 +621,14 @@ function renderResult({ w, active, send, ...ctx }) {
   return panel;
 }
 
+// folded shows a long result in the timeline as its first lines; the full text
+// is one click away and lives in the 当前结果 panel for the current result.
+function folded(body) {
+  const lines = body.split('\n');
+  if (lines.length <= 4 && body.length <= 240) return el('p', body);
+  return h('details', null, el('summary', lines.slice(0, 3).join('\n').slice(0, 200) + ' …（展开全文）'), el('p', body));
+}
+
 // basisText shows a task.basis body (the saved Edit) as the agreement it set.
 function basisText(c) {
   let v;
@@ -634,8 +668,8 @@ function renderTimeline({ d, w, path }, commits) {
   for (const c of commits) {
     const li = h('li', c.Kind === 'result' ? 'result' : '',
       el('div', (KIND_LABEL[c.Kind] || c.Kind) + ' · ' + c.Author + ' · ' + time(c.CreatedAt), 'who'),
-      c.Kind === 'answer' && byID.has(c.RefID) ? el('div', '回答：' + byID.get(c.RefID).Body, 'muted small') : null,
-      el('p', c.Kind === 'plan.changed' ? planText(c, d, w) : c.Kind === 'task.basis' ? basisText(c) : c.Body),
+      (c.Kind === 'answer' || c.Kind === 'question.closed') && byID.has(c.RefID) ? el('div', (c.Kind === 'answer' ? '回答：' : '关闭的问题：') + byID.get(c.RefID).Body, 'muted small') : null,
+      c.Kind === 'result' ? folded(c.Body) : el('p', c.Kind === 'plan.changed' ? planText(c, d, w) : c.Kind === 'task.basis' ? basisText(c) : c.Body),
       c.RefID && c.Kind === 'comment' ? el('code', '更正引用 ' + c.RefID, 'muted') : null);
     if (d.CanComment && c.Kind === 'comment' && c.Author === viewer?.Subject) {
       li.append(button('追加更正', () => {
@@ -653,7 +687,7 @@ function renderTimeline({ d, w, path }, commits) {
 }
 
 function renderBasis({ d, w, ex, active, path }) {
-  const panel = h('div', 'panel', el('h3', '任务约定'),
+  const panel = h('div', 'panel', h('div', 'head', el('h3', '任务约定'), el('span', '第 ' + d.Task.BasisVersion + ' 版', 'muted small')),
     el('label', '目标'), el('p', d.Task.Goal || '待补充'),
     el('label', '验收标准'), el('p', d.Task.Criteria || '待补充'));
   // The basis can change while work runs: a claim or result on the old basis must be redone.
@@ -667,9 +701,12 @@ function renderBasis({ d, w, ex, active, path }) {
       f.append(field(text, input));
     }
     if (ex && ex.Writable && ex.RoundID === w.Position.RoundID) f.append(el('p', '执行已开始：保存后当前执行和结果需要按新约定重新认领和提交。', 'muted small'));
-    f.append(h('div', 'actions', el('button', '保存新依据', 'primary')));
+    f.append(h('div', 'actions', el('button', '保存约定', 'primary')));
     f.onsubmit = handle(async () => { await api(path, 'PATCH', { ...formdata(f), BasisVersion: d.Task.BasisVersion }); await list(); await show() });
-    panel.append(h('details', null, el('summary', '修改约定'), f));
+    const box = h('details', null, el('summary', '修改约定'), f);
+    // Stays open across refreshes until the agreement is complete.
+    box.open = expandBasis === d.Task.ID && !(d.Task.Goal.trim() && d.Task.Criteria.trim());
+    panel.append(box);
   }
   return panel;
 }
@@ -683,7 +720,7 @@ function renderPlan(ctx) {
   const panel = h('div', 'panel', el('h3', '任务拆分'));
   const open = id => async () => { selected = id; await list(); await show() };
   const place = (child, input) => async () => { await api('/tasks/' + encodeURIComponent(child) + '/parent', 'POST', input); await list(); await show() };
-  const status = t => pill(stateOf({ Status: t.Status, State: t.State }));
+  const status = t => pill(stateOf({ Status: t.Status, State: t.State }, overview.get(t.TaskID)?.Assignee));
   if (w.Parent) panel.append(h('p', null, el('span', w.Parent.Required ? '必需子任务，属于 ' : '子任务，属于 ', 'muted'), button(w.Parent.Title, open(w.Parent.TaskID), 'link'), ' ', status(w.Parent)));
   const ul = el('ul', undefined, 'timeline');
   for (const c of w.Children || []) {
@@ -702,14 +739,16 @@ function renderPlan(ctx) {
     const title = el('input'); title.name = 'Title'; title.required = true;
     const required = el('input'); required.type = 'checkbox'; required.style.width = 'auto'; required.checked = true;
     const requiredLabel = el('label', ' 必需：完成后本任务才能提交结果'); requiredLabel.prepend(required);
-    f.append(field('标题', title), field('目标', textarea('Goal', false)), field('验收标准', textarea('Criteria', false)), requiredLabel,
+    f.append(field('标题', title), field('目标（分配前必填）', textarea('Goal', false)), field('验收标准（分配前必填）', textarea('Criteria', false)), requiredLabel,
       el('p', '已完成的任务不能重开；需要返工时在这里新建子任务。', 'muted small'),
       h('div', 'actions', el('button', '创建子任务', 'primary')));
     // One command creates the subtask and places it under this task atomically.
     f.onsubmit = handle(async () => {
       const v = formdata(f);
-      await api('/tasks', 'POST', { Title: v.Title, Goal: v.Goal, Criteria: v.Criteria, ProjectID: d.Task.ProjectID || '', ParentID: d.Task.ID, Required: required.checked });
-      await list(); await show();
+      const created = await api('/tasks', 'POST', { Title: v.Title, Goal: v.Goal, Criteria: v.Criteria, ProjectID: d.Task.ProjectID || '', ParentID: d.Task.ID, Required: required.checked });
+      // An incomplete subtask is opened at once so its agreement gets filled in.
+      if (!created.Task.Goal.trim() || !created.Task.Criteria.trim()) selected = created.Task.ID;
+      await list(); await show(); openBasisIfIncomplete(created.Task);
     });
     panel.append(h('details', null, el('summary', '新建子任务'), f));
   }
@@ -754,7 +793,8 @@ function renderAsk(ctx) {
 
 // Participants may be asked questions besides the owner; the snapshot lists them.
 function renderParticipants({ d, w, path, candidates }) {
-  const current = w.Participants || [];
+  // The owner holds every right on the task, so it is never listed or offered as a participant.
+  const current = (w.Participants || []).filter(s => s !== d.Task.Owner);
   if (!d.CanEdit && !current.length) return null;
   const panel = h('div', 'panel', el('h3', '参与者'));
   const set = (subject, present) => async () => {
@@ -769,7 +809,7 @@ function renderParticipants({ d, w, path, candidates }) {
   }
   panel.append(current.length ? ul : el('p', '暂无参与者；被提问或被分配的人会自动加入。', 'muted small'));
   if (d.CanEdit) {
-    const input = memberSelect(candidates.filter(m => !current.includes(m.Subject)), '请选择用户或 Agent');
+    const input = memberSelect(candidates.filter(m => !current.includes(m.Subject) && m.Subject !== d.Task.Owner), '请选择用户或 Agent');
     const f = h('form', null, field('加入参与者', input), h('div', 'actions', el('button', '加入任务')));
     f.onsubmit = handle(() => set(input.value, true)());
     panel.append(f);
@@ -912,7 +952,16 @@ $('create').onsubmit = handle(async () => {
   if(view!=='project') view = 'all';
   await list();
   await show();
+  openBasisIfIncomplete(d.Task);
 });
+
+// A task saved with only a title opens its agreement editor right away, so it gets completed before assignment.
+function openBasisIfIncomplete(t) {
+  if (t.Goal.trim() && t.Criteria.trim()) return;
+  expandBasis = t.ID;
+  const d = [...document.querySelectorAll('#detail details')].find(x => x.querySelector('summary')?.textContent === '修改约定');
+  if (d) { d.open = true; d.scrollIntoView({ block: 'center' }); }
+}
 $('logout').onclick = handle(async () => {
   await api('/session', 'DELETE');
   showLogin();

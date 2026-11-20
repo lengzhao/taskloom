@@ -147,3 +147,39 @@ func TestHumanDelegationRevokedWithParticipation(t *testing.T) {
 		t.Fatal("inactive human assigned", e)
 	}
 }
+
+// The overview shows, for each readable task, who handles it, its parent and
+// when its timeline last changed; a task the caller cannot read is left out.
+// Assigning the owner records no participation: the owner already holds every right.
+func TestOverviewAndOwnerSelfAssignment(t *testing.T) {
+	f := setup(t, nil)
+	outsider := f.human(t, "outsider")
+	parent := f.create(t)
+	child, e := f.tasks.Create(f.ctx, f.owner, "child", workspace.Create{Title: "child", Goal: "g", Criteria: "c", ParentID: parent.Task.ID, Required: true})
+	if e != nil {
+		t.Fatal(e)
+	}
+	if _, e = f.ex.Assign(f.ctx, f.owner, "self", api.Assignment{TaskID: child.Task.ID, Subject: "owner"}); e != nil {
+		t.Fatal(e)
+	}
+	if s := f.read(t, child.Task.ID); s.Assignee != "owner" || len(s.Participants) != 0 {
+		t.Fatal("owner self-assignment", s.Assignee, s.Participants)
+	}
+	items, e := f.query.Overview(f.ctx, f.owner)
+	if e != nil {
+		t.Fatal(e)
+	}
+	byID := map[string]api.Overview{}
+	for _, x := range items {
+		byID[x.TaskID] = x
+	}
+	if c := byID[child.Task.ID]; c.Assignee != "owner" || c.ParentID != parent.Task.ID || c.UpdatedAt.IsZero() {
+		t.Fatal("child overview", c)
+	}
+	if p := byID[parent.Task.ID]; p.Assignee != "" || p.ParentID != "" || p.UpdatedAt.IsZero() {
+		t.Fatal("parent overview", p)
+	}
+	if mine, e := f.query.Overview(f.ctx, outsider); e != nil || len(mine) != 0 {
+		t.Fatal("overview leaked unreadable tasks", mine, e)
+	}
+}

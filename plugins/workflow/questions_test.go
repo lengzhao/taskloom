@@ -177,3 +177,38 @@ func TestQuestionToMemberWaitsOnThem(t *testing.T) {
 		t.Fatal("helper answer did not release completion", e, s.Position)
 	}
 }
+
+// A question nobody will answer can be closed with a reason by its asker or
+// the owner; it then stops holding completion. The addressee answers instead.
+func TestCloseQuestionReleasesCompletion(t *testing.T) {
+	f := setup(t, nil)
+	qs := f.questions()
+	helper := f.human(t, "helper")
+	d := f.create(t)
+	s := f.open(t, d)
+	round := s.Position.RoundID
+	asked, e := qs.Ask(f.ctx, f.agent, "ask", api.Ask{TaskID: d.Task.ID, RoundID: round, Body: "哪个环境？", Addressee: "helper"})
+	if e != nil {
+		t.Fatal(e)
+	}
+	q := asked.Questions[0]
+	if _, e = qs.Close(f.ctx, helper, "addressee-close", api.CloseQuestion{TaskID: d.Task.ID, QuestionID: q.ID, Reason: "不想答"}); !errors.Is(e, az.ErrForbidden) {
+		t.Fatal("addressee closed the question", e)
+	}
+	if _, e = qs.Close(f.ctx, f.agent, "no-reason", api.CloseQuestion{TaskID: d.Task.ID, QuestionID: q.ID}); !errors.Is(e, fault.ErrInput) {
+		t.Fatal("closed without a reason", e)
+	}
+	s = f.read(t, d.Task.ID)
+	if s, e = f.results.Submit(f.ctx, f.agent, "submit", api.Submit{TaskID: d.Task.ID, ExecutionID: s.Execution.ID, Body: "result"}); e != nil {
+		t.Fatal(e)
+	}
+	if s, e = f.results.Review(f.ctx, f.owner, "approve", api.Review{TaskID: d.Task.ID, Verdict: acceptance.Verdict{CommitID: s.Result.CommitID, Outcome: "approved"}}); e != nil || s.Position.Status == "completed" {
+		t.Fatal("completed with an open question", e, s.Position)
+	}
+	if s, e = qs.Close(f.ctx, f.owner, "owner-close", api.CloseQuestion{TaskID: d.Task.ID, QuestionID: q.ID, Reason: "已从文档确认"}); e != nil || s.Position.Status != "completed" {
+		t.Fatal("closing did not release completion", e, s.Position)
+	}
+	if _, e = qs.Close(f.ctx, f.owner, "again", api.CloseQuestion{TaskID: d.Task.ID, QuestionID: q.ID, Reason: "again"}); !errors.Is(e, fault.ErrConflict) {
+		t.Fatal("closed twice", e)
+	}
+}

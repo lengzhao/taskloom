@@ -114,8 +114,11 @@ func (m *ExecutionModule) Assign(ctx context.Context, token, key string, in api.
 		if e = fence(tx, m.d.Executions, t); e != nil {
 			return api.Ref{}, e
 		}
-		if e = m.d.Participants.SetParticipant(tx, az.Participant{Tenant: t.Tenant, TaskID: t.ID, Subject: in.Subject}, true); e != nil {
-			return api.Ref{}, e
+		// The owner already holds every task right; a participation row would add nothing.
+		if in.Subject != t.Owner {
+			if e = m.d.Participants.SetParticipant(tx, az.Participant{Tenant: t.Tenant, TaskID: t.ID, Subject: in.Subject}, true); e != nil {
+				return api.Ref{}, e
+			}
 		}
 		if e = m.d.Executions.AssignSubject(tx, t.Tenant, t.ID, in.Subject); e != nil {
 			return api.Ref{}, e

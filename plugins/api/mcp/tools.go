@@ -147,6 +147,7 @@ func toolList() []tool {
 		{"post_message", "在任务时间线留言：汇报进度、回复人的引导。留言会更新你的最近进展时间，但不算交付结果。", schema([]string{"task_id", "text"}, map[string]string{"task_id": descTask, "text": "留言内容"})},
 		{"ask_owner", "提问或请求协助（说明问题、为何卡住、可选方案和建议）。默认问任务负责人；需要别人协助时用 to 指定空间内任一有效成员（用 list_members 查找）；对方不在任务中时会自动加为参与者。问题未回答前任务不能完成；回答会出现在 read_task 的时间线中。", schema([]string{"task_id", "basis", "question"}, map[string]string{"task_id": descTask, "basis": descBasis, "question": "问题内容", "to": "可选：被提问人的 ID（list_members 返回的 subject）；留空为负责人"})},
 		{"answer_question", "回答别人向你提的问题（read_task 的 open_questions 中 for_you 为 true 的那条）。", schema([]string{"task_id", "question_id", "text"}, map[string]string{"task_id": descTask, "question_id": "问题 ID（open_questions 中的 id）", "text": "回答内容"})},
+		{"close_question", "撤回你提的、已不再需要回答的问题（open_questions 中 asked_by 为你的那条），须写明理由；撤回后它不再阻止任务完成。", schema([]string{"task_id", "question_id", "reason"}, map[string]string{"task_id": descTask, "question_id": "问题 ID（open_questions 中的 id）", "reason": "为什么不再需要回答"})},
 		{"submit_result", "明确提交本轮的正式结果（交付物）。需要已认领执行；再次提交会替换当前结果。", schema([]string{"task_id", "basis", "result"}, map[string]string{"task_id": descTask, "basis": descBasis, "result": "结果正文"})},
 	}
 }
@@ -225,6 +226,14 @@ func (m *Module) call(ctx context.Context, c call, name string, rawArgs json.Raw
 			return "", err
 		}
 		return "已回答。", nil
+	case "close_question":
+		if err := required(args, "task_id", "question_id", "reason"); err != nil {
+			return "", err
+		}
+		if _, err := m.d.Questions.Close(ctx, c.token, c.key(name, args), work.CloseQuestion{TaskID: args["task_id"], QuestionID: args["question_id"], Reason: args["reason"]}); err != nil {
+			return "", err
+		}
+		return "已撤回问题。", nil
 	case "start_work", "ask_owner", "submit_result":
 	default:
 		return "", invalid("未知工具 " + name)
@@ -331,7 +340,7 @@ func (m *Module) readTask(ctx context.Context, c call, taskID string) (string, e
 	timeline := []map[string]any{}
 	for _, cm := range commits {
 		entry := map[string]any{"kind": cm.Kind, "author": cm.Author, "at": cm.CreatedAt.Format(time.RFC3339), "text": cm.Body}
-		if cm.Kind == "answer" {
+		if cm.Kind == "answer" || cm.Kind == work.KindQuestionClosed {
 			entry["answers"] = byID[cm.RefID].Body
 		}
 		timeline = append(timeline, entry)

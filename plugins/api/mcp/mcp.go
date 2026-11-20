@@ -43,6 +43,7 @@ type directory interface {
 type asker interface {
 	Ask(ctx context.Context, token, key string, in work.Ask) (work.Ref, error)
 	Answer(ctx context.Context, token, key string, in work.Answer) (work.Ref, error)
+	Close(ctx context.Context, token, key string, in work.CloseQuestion) (work.Ref, error)
 }
 
 // Deps has seven fields, one per Agent-facing capability. Like api/workflow it

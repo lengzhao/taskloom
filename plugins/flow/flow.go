@@ -228,11 +228,16 @@ func (c *Controller) Cancel(ctx context.Context, t task.Task) (capflow.Position,
 	return c.Read(ctx, t)
 }
 
-// Restart starts a new active round; work and results of the old round stay in history.
+// Restart starts a new active round on an active or cancelled task; work and
+// results of the old round stay in history. Completed is final: rework is a
+// new task, so a completion never has to be taken back.
 func (c *Controller) Restart(ctx context.Context, t task.Task) (capflow.Position, error) {
 	p, e := c.load(ctx, t)
 	if e != nil {
 		return p, e
+	}
+	if p.Status == capflow.PhaseCompleted {
+		return p, fault.ErrConflict
 	}
 	p.RoundID = id()
 	p.Status = capflow.PhaseActive

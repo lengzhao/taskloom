@@ -68,7 +68,7 @@
 | POST /results | ExecutionID、Body |
 | POST /review | CommitID（当前结果 commit）、Outcome（approved/rejected）、Reason（退回必填） |
 | POST /cancel | 无字段 |
-| POST /restart | RoundID；活跃任务即退回，终态即重开 |
+| POST /restart | RoundID；活跃任务即退回，已取消即重开，已完成返回冲突 |
 | POST /questions | RoundID、Body、可选 Addressee |
 | POST /questions/{qid}/answer | Body；仅被提问人回答当前轮问题 |
 

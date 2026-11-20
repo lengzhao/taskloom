@@ -70,6 +70,7 @@ type Controller interface {
 	// CheckOpen allows assignment and claims on an active task with a complete basis.
 	CheckOpen(ctx context.Context, value task.Task) (Position, error)
 	Cancel(ctx context.Context, value task.Task) (Position, error)
-	// Restart starts a new active round from any phase.
+	// Restart starts a new active round on an active or cancelled task;
+	// a completed task is final and rejects it.
 	Restart(ctx context.Context, value task.Task) (Position, error)
 }

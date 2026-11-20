@@ -28,7 +28,8 @@ type Review struct {
 type Cancel struct{ TaskID string }
 
 // Restart starts a new round from the round the caller saw: on an active task
-// it sends work back, on a terminal one it reopens the task.
+// it sends work back, on a cancelled one it reopens the task. A completed task
+// is final; rework is a new task.
 type Restart struct{ TaskID, RoundID string }
 
 // Actor names who must act next for the task to move. Empty means nothing is

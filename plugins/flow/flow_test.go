@@ -99,8 +99,13 @@ func TestStepIsDerivedFromFacts(t *testing.T) {
 		}
 		p, e = c.Refresh(ctx, tk)
 		expect(t, p, e, capflow.PhaseCompleted, capflow.StepCompleted, "")
-		p, e = c.Restart(ctx, tk)
-		expect(t, p, e, capflow.PhaseActive, capflow.StepExecuting, "等待有效结果提交")
+		// Completed is final: rework is a new task.
+		if _, e = c.Restart(ctx, tk); !errors.Is(e, fault.ErrConflict) {
+			t.Fatal("completed task restarted", e)
+		}
+		if p, e = c.Read(ctx, tk); e != nil || p.Status != capflow.PhaseCompleted {
+			t.Fatal("rejected restart changed the task", p, e)
+		}
 		return nil
 	})
 	if e != nil {

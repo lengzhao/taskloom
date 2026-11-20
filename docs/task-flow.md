@@ -38,7 +38,7 @@
 | Refresh | 每个改变事实的命令在同事务末尾调用；达成完成条件即写 completed |
 | CheckOpen | 分配和认领的前提：任务 active 且依据完整（非 ready） |
 | Cancel | active → cancelled |
-| Restart | 任何阶段 → 新轮 active，然后 Refresh；活跃任务即退回，终态即重开 |
+| Restart | active/cancelled → 新轮 active，然后 Refresh；活跃任务即退回，取消即重开；completed 冲突，返工新建任务 |
 
 取消、退回、重开和转交由命令模块同事务失效执行写资格（Writable），控制器不观察外部进程。完成不等待执行者停下。
 

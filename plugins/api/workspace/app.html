@@ -474,7 +474,7 @@ function renderNext(ctx) {
   const panel = h('div', 'panel next' + (inboxIDs.has(d.Task.ID) ? ' mine' : ''));
   const s = stateOf(w.Position);
   let title;
-  if (w.Position.Status === 'completed') title = '已完成：结果与验收已满足';
+  if (w.Position.Status === 'completed') title = '已完成：结果与验收已满足，需要返工请新建任务';
   else if (w.NextActor) title = '下一步等待：' + ACTOR_LABEL[w.NextActor];
   else title = '暂无需要处理的事项';
   panel.append(h('div', 'head', el('h3', title), pill(s)));
@@ -511,7 +511,8 @@ function renderNext(ctx) {
     panel.classList.add('mine');
     panel.append(assignForm(ctx, '选择处理人'));
   }
-  if (!active && w.CanManage) actions.append(button('重开任务', () => confirmThen('重开会开始新一轮，旧结果保留在历史中。继续？', () => ctx.send('/restart', round))));
+  // Only a cancelled task can be reopened; completed is final and rework is a new task.
+  if (w.Position.Status === 'cancelled' && w.CanManage) actions.append(button('重开任务', () => confirmThen('重开会开始新一轮，旧结果保留在历史中。继续？', () => ctx.send('/restart', round))));
   if (actions.children.length) panel.append(actions);
   return panel;
 }

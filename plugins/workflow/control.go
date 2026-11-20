@@ -49,7 +49,8 @@ func (m *ControlModule) Cancel(ctx context.Context, token, key string, in api.Ca
 }
 
 // Restart fences the current execution and starts a new round from the round
-// the caller saw: sending active work back, or reopening a terminal task.
+// the caller saw: sending active work back, or reopening a cancelled task.
+// Completed tasks reject it; flow enforces that.
 func (m *ControlModule) Restart(ctx context.Context, token, key string, in api.Restart) (api.Ref, error) {
 	return run(ctx, m.d.Commands, token, key, "task.restart", in.TaskID, in, func(tx context.Context, p identity.Principal) (api.Ref, error) {
 		t, pos, e := load(tx, m.d.Tasks, m.d.Flow, p, in.TaskID)

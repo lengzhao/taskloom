@@ -176,16 +176,12 @@ func TestApprovalCompletesTheTask(t *testing.T) {
 	if e != nil || c.Body != "immutable result" {
 		t.Fatal("result content drift", c, e)
 	}
-	reopened, e := f.controls.Restart(f.ctx, f.owner, "reopen", api.Restart{TaskID: d.Task.ID, RoundID: s.Position.RoundID})
-	if e != nil {
-		t.Fatal(e)
+	// Completed is final: rework is a new task, so the completion stands.
+	if _, e = f.controls.Restart(f.ctx, f.owner, "reopen", api.Restart{TaskID: d.Task.ID, RoundID: s.Position.RoundID}); !errors.Is(e, fault.ErrConflict) {
+		t.Fatal("completed task reopened", e)
 	}
-	if reopened.Position.RoundID == round || reopened.Result != nil || reopened.Review != nil || reopened.Execution.Writable {
-		t.Fatal("old result or execution inherited")
-	}
-	old, e := f.deliveries.CurrentResult(f.ctx, "t", d.Task.ID, round)
-	if e != nil || old.CommitID != submitted.CommitID {
-		t.Fatal("history lost", e)
+	if now := f.read(t, d.Task.ID); now.Position.Status != "completed" || now.Position.RoundID != round || now.Result == nil || now.Result.CommitID != submitted.CommitID {
+		t.Fatal("rejected reopen changed the task", now.Position, now.Result)
 	}
 }
 

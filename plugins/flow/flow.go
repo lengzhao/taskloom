@@ -13,8 +13,8 @@ import (
 
 	"github.com/lengzhao/pluginkit"
 	"github.com/lengzhao/taskloom/cap/acceptance"
+	"github.com/lengzhao/taskloom/cap/commit"
 	"github.com/lengzhao/taskloom/cap/delivery"
-	"github.com/lengzhao/taskloom/cap/execution"
 	"github.com/lengzhao/taskloom/cap/fault"
 	capflow "github.com/lengzhao/taskloom/cap/flow"
 	"github.com/lengzhao/taskloom/cap/question"
@@ -40,11 +40,12 @@ func (c *Config) Validate() error {
 
 // Deps are the facts completion depends on, plus the stored position.
 type Deps struct {
-	Positions  capflow.PositionStore `json:"positions"`
-	Results    delivery.Reader       `json:"results"`
-	Reviews    acceptance.Reader     `json:"reviews"`
-	Questions  question.Reader       `json:"questions"`
-	Executions execution.Reader      `json:"executions"`
+	Positions capflow.PositionStore `json:"positions"`
+	Results   delivery.Reader       `json:"results"`
+	// Commits reads the result commit, whose basis version decides validity.
+	Commits   commit.Lookup     `json:"commits"`
+	Reviews   acceptance.Reader `json:"reviews"`
+	Questions question.Reader   `json:"questions"`
 }
 type Controller struct {
 	c Config
@@ -58,8 +59,8 @@ func New(c Config, d Deps) (*Controller, error) {
 	if err := c.Validate(); err != nil {
 		return nil, err
 	}
-	if d.Positions == nil || d.Results == nil || d.Reviews == nil || d.Questions == nil || d.Executions == nil {
-		return nil, errors.New("flow requires positions, results, reviews, questions and executions")
+	if d.Positions == nil || d.Results == nil || d.Commits == nil || d.Reviews == nil || d.Questions == nil {
+		return nil, errors.New("flow requires positions, results, commits, reviews and questions")
 	}
 	return &Controller{c, d}, nil
 }
@@ -136,14 +137,18 @@ func (c *Controller) result(ctx context.Context, t task.Task, p capflow.Position
 	if strings.TrimSpace(t.Criteria) == "" {
 		return capflow.StepReady, "请补充验收标准", nil
 	}
-	v, e := c.d.Results.CurrentSubmission(ctx, t.Tenant, t.ID, p.RoundID)
+	v, e := c.d.Results.CurrentResult(ctx, t.Tenant, t.ID, p.RoundID)
 	if errors.Is(e, fault.ErrNotFound) {
 		return capflow.StepExecuting, "等待有效结果提交", nil
 	}
 	if e != nil {
 		return "", "", e
 	}
-	if v.BasisVersion != t.BasisVersion {
+	result, e := c.d.Commits.Get(ctx, t.Tenant, t.ID, v.CommitID)
+	if e != nil {
+		return "", "", e
+	}
+	if result.BasisVersion != t.BasisVersion {
 		return capflow.StepExecuting, "结果依据已失效", nil
 	}
 	if p.Acceptance == capflow.AcceptanceNone {
@@ -159,7 +164,7 @@ func (c *Controller) result(ctx context.Context, t task.Task, p capflow.Position
 	if r.Outcome == acceptance.OutcomeRejected {
 		return capflow.StepAccepting, "验收未通过，等待重新提交", nil
 	}
-	if r.Outcome != acceptance.OutcomeApproved || r.CommitID != v.CommitID || r.BasisVersion != t.BasisVersion || r.Reviewer != t.Owner {
+	if r.Outcome != acceptance.OutcomeApproved || r.BasisVersion != t.BasisVersion || r.Reviewer != t.Owner {
 		return capflow.StepAccepting, "等待负责人验收", nil
 	}
 	return capflow.StepAccepting, "", nil

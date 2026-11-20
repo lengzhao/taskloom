@@ -42,7 +42,7 @@ flow:
     results: sql
     reviews: sql
     questions: sql
-    executions: sql
+    commits: sql
 command-runtime:
   use: commands/runtime
   deps:

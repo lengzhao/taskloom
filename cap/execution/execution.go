@@ -11,6 +11,7 @@ type Execution struct {
 	Tenant, TaskID, ID, RoundID, Subject string
 	// CredentialID binds an Agent execution to the credential that claimed it;
 	// a different credential of the same Agent is a different instance.
+	// CredentialID is empty exactly for human work, which binds no instance.
 	CredentialID string
 	BasisVersion int64
 	// ProgressAt is when the executor last recorded progress (open, comment,
@@ -20,8 +21,6 @@ type Execution struct {
 	// claim, return, reopen or cancel fence it at once. Whether an external
 	// process still runs is unobservable here and is the Agent layer's concern.
 	Writable bool
-	// Manual means human work, without an Agent instance binding.
-	Manual bool
 }
 type Reader interface {
 	Assignee(ctx context.Context, tenant, taskID string) (string, error)
@@ -35,7 +34,7 @@ type Store interface {
 	SaveExecution(ctx context.Context, value Execution) error
 }
 
-// ResultAccess lets submission record progress on its execution in the same transaction.
+// ResultAccess lets result submission record progress on its execution in the same transaction.
 type ResultAccess interface {
 	Reader
 	SaveExecution(ctx context.Context, value Execution) error

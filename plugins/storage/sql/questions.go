@@ -9,6 +9,7 @@ import (
 )
 
 // questionRow keeps the queried fields as columns; Data holds the full record.
+// Status is a storage-only index column derived from AnswerCommitID.
 type questionRow struct {
 	Key     string `gorm:"primaryKey;size:64;column:row_key"`
 	Tenant  string `gorm:"size:128;index:idx_question_round,priority:1"`
@@ -19,15 +20,25 @@ type questionRow struct {
 	Data    []byte
 }
 
+const (
+	questionOpen     = "open"
+	questionAnswered = "answered"
+)
+
 func questionKey(tenant, taskID, id string) string { return key(tenant, taskID, id) }
 
 func (s *Store) CreateQuestion(ctx context.Context, v question.Question) error {
 	return s.use(ctx, true, func(db *gorm.DB) error {
+		// Seq orders questions like their commits on the task timeline.
+		var c commitRow
+		if e := db.Select("sequence").First(&c, "row_key = ?", key(v.Tenant, v.TaskID, v.CommitID)).Error; e != nil {
+			return e
+		}
 		b, e := json.Marshal(v)
 		if e != nil {
 			return e
 		}
-		return db.Create(&questionRow{Key: questionKey(v.Tenant, v.TaskID, v.ID), Tenant: v.Tenant, TaskID: v.TaskID, RoundID: v.RoundID, Status: v.Status, Seq: v.CreatedAt.UnixNano(), Data: b}).Error
+		return db.Create(&questionRow{Key: questionKey(v.Tenant, v.TaskID, v.ID), Tenant: v.Tenant, TaskID: v.TaskID, RoundID: v.RoundID, Status: questionOpen, Seq: c.Sequence, Data: b}).Error
 	})
 }
 
@@ -47,7 +58,7 @@ func (s *Store) OpenQuestions(ctx context.Context, tenant, taskID, roundID strin
 	out := []question.Question{}
 	e := s.use(ctx, false, func(db *gorm.DB) error {
 		var rows []questionRow
-		if e := db.Where("tenant = ? AND task_id = ? AND round_id = ? AND status = ?", tenant, taskID, roundID, question.StatusOpen).Order("seq").Find(&rows).Error; e != nil {
+		if e := db.Where("tenant = ? AND task_id = ? AND round_id = ? AND status = ?", tenant, taskID, roundID, questionOpen).Order("seq").Find(&rows).Error; e != nil {
 			return e
 		}
 		for _, r := range rows {
@@ -66,11 +77,14 @@ func (s *Store) OpenQuestions(ctx context.Context, tenant, taskID, roundID strin
 // both win and an answered question is never reopened.
 func (s *Store) AnswerQuestion(ctx context.Context, v question.Question) error {
 	return s.use(ctx, true, func(db *gorm.DB) error {
+		if v.AnswerCommitID == "" {
+			return fault.ErrInput
+		}
 		b, e := json.Marshal(v)
 		if e != nil {
 			return e
 		}
-		r := db.Model(&questionRow{}).Where("row_key = ? AND status = ?", questionKey(v.Tenant, v.TaskID, v.ID), question.StatusOpen).Updates(map[string]any{"status": v.Status, "data": b})
+		r := db.Model(&questionRow{}).Where("row_key = ? AND status = ?", questionKey(v.Tenant, v.TaskID, v.ID), questionOpen).Updates(map[string]any{"status": questionAnswered, "data": b})
 		if r.Error != nil {
 			return r.Error
 		}

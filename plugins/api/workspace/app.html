@@ -406,7 +406,7 @@ function renderTasks(){
  }
 }
 async function openProject(p=null){
- editingProject=p;const people=await api('/project-members');$('project-form').reset();$('project-notice').textContent='';$('project-title').textContent=p?'编辑项目':'新建项目';$('project-name').value=p?.Name||'';$('project-description').value=p?.Description||'';
+ editingProject=p;const people=await api('/people');$('project-form').reset();$('project-notice').textContent='';$('project-title').textContent=p?'编辑项目':'新建项目';$('project-name').value=p?.Name||'';$('project-description').value=p?.Description||'';
  const owner=$('project-owner');owner.replaceChildren();for(const m of people.filter(m=>m.Kind==='human')){const o=el('option',m.Subject);o.value=m.Subject;owner.append(o)}owner.value=p?.Owner||viewer.Subject;
  $('project-dialog').showModal();
 }
@@ -428,7 +428,7 @@ async function show() {
     if (page.Commits.length < 100) break;
   }
   const ctx = makeContext(d, w, path);
-  ctx.candidates = (d.CanEdit || w.CanAssign) ? await api(path + "/candidates") : [];
+  ctx.candidates = (d.CanEdit || w.CanAssign) ? await api('/people') : [];
   ctx.commits = new Map(commits.map(c => [c.ID, c]));
   $('detail').replaceChildren(
     renderHead(ctx),
@@ -493,15 +493,15 @@ function renderNext(ctx) {
   }
   const actions = h('div', 'actions');
   // Review is the main human decision; it lives here, next to the result summary.
-  if (w.CanReview && w.Submission && w.Review?.Outcome === 'pending') {
+  if (w.CanReview && w.Result && w.Review?.Outcome === 'pending') {
     panel.classList.add('mine');
     const reason = el('input');
     reason.placeholder = '验收意见（不通过时必填）';
     reason.setAttribute('aria-label', '验收意见');
-    const sub = w.Submission;
+    const res = w.Result;
     const verdict = outcome => {
       if (outcome === 'rejected' && !reason.value.trim()) { reason.focus(); throw Error('验收不通过时请写明需要修改的地方') }
-      return ctx.send('/review', { SubmissionID: sub.ID, CommitID: sub.CommitID, Outcome: outcome, Reason: reason.value });
+      return ctx.send('/review', { CommitID: res.CommitID, Outcome: outcome, Reason: reason.value });
     };
     panel.append(h('div', null, el('label', '验收当前结果'), reason));
     actions.append(button('验收通过', () => verdict('approved'), 'primary'), button('不通过，退回修改', () => verdict('rejected'), 'danger'));
@@ -527,7 +527,7 @@ function renderQuestions(ctx, panel) {
     const canAnswer = q.Addressee === viewer.Subject;
     mine = mine || canAnswer;
     const box = h('div', 'result',
-      el('div', q.Asker + ' 问 ' + (q.Addressee === ctx.d.Task.Owner ? '负责人 ' : '') + q.Addressee + ' · ' + time(q.CreatedAt), 'muted small'),
+      el('div', (asked ? asked.Author + ' 问 ' : '问 ') + (q.Addressee === ctx.d.Task.Owner ? '负责人 ' : '') + q.Addressee + (asked ? ' · ' + time(asked.CreatedAt) : ''), 'muted small'),
       el('p', asked ? asked.Body : '（问题正文见时间线）'));
     if (canAnswer) {
       const body = textarea('Body', true, '回答后处理人可在任务中查看');
@@ -566,7 +566,7 @@ function confirmThen(message, fn) { if (confirm(message)) return fn() }
 
 function renderResult({ w, active, send, ...ctx }) {
   const panel = h('div', 'panel', el('h3', '当前结果'));
-  if (!w.Submission) {
+  if (!w.Result) {
     panel.append(el('p', '还没有提交结果。处理人明确提交后会显示在这里；普通评论不算交付。', 'muted'));
     return panel;
   }
@@ -641,12 +641,12 @@ function renderExecution(ctx) {
   const add = (k, v) => dl.append(el('dt', k), el('dd', v));
   add('处理人', w.Assignee || '待分配');
   if (ex) {
-    add('状态', execLabel(ex, w.Position) + (ex.Manual ? ' · 人工处理' : ''));
+    add('状态', execLabel(ex, w.Position) + (ex.CredentialID ? '' : ' · 人工处理'));
     if (ex.ProgressAt && !ex.ProgressAt.startsWith('0001')) add('最近进展', ago(ex.ProgressAt) + '（' + time(ex.ProgressAt) + '）');
   }
   const live = el('div', undefined, 'muted small'); live.id = 'execution-live-status';
   const panel = h('div', 'panel', el('h3', '执行'), dl, live);
-  if (w.CanAssign && ctx.active && w.Assignee && !w.Submission) panel.append(h('details', null, el('summary', '转交处理（用户或 Agent）'), assignForm(ctx, '选择新的处理人')));
+  if (w.CanAssign && ctx.active && w.Assignee && !w.Result) panel.append(h('details', null, el('summary', '转交处理（用户或 Agent）'), assignForm(ctx, '选择新的处理人')));
   return panel;
 }
 

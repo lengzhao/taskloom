@@ -51,11 +51,8 @@ type Position struct {
 	Waiting                 string
 }
 
-type PositionReader interface {
-	GetPosition(ctx context.Context, tenant, taskID string) (Position, error)
-}
 type PositionStore interface {
-	PositionReader
+	GetPosition(ctx context.Context, tenant, taskID string) (Position, error)
 	CreatePosition(ctx context.Context, value Position) error
 	// SavePosition replaces the stored position; writes are serialized by the
 	// global write lock, so no compare-and-swap is needed.

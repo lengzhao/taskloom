@@ -283,7 +283,7 @@ func (m *Module) readTask(ctx context.Context, c call, taskID string) (string, e
 	}
 	questions := []map[string]any{}
 	for _, q := range w.Questions {
-		questions = append(questions, map[string]any{"id": q.ID, "question": byID[q.CommitID].Body, "asked_by": q.Asker, "asked_of": q.Addressee, "asked_at": q.CreatedAt.Format(time.RFC3339)})
+		questions = append(questions, map[string]any{"id": q.ID, "question": byID[q.CommitID].Body, "asked_by": byID[q.CommitID].Author, "asked_of": q.Addressee, "asked_at": byID[q.CommitID].CreatedAt.Format(time.RFC3339)})
 	}
 	if len(commits) > timelineLimit {
 		commits = commits[len(commits)-timelineLimit:]

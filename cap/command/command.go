@@ -8,7 +8,7 @@ import (
 )
 
 type Request struct {
-	Token, Operation, Key, Resource, ReadOperation string
+	Token, Operation, Key, Resource string
 	// Authorize is a server-supplied named-use-case check, never parsed from HTTP.
 	// It is run before both new writes and receipt replay. Nil uses fixed rules.
 	Authorize func(context.Context, identity.Principal) error

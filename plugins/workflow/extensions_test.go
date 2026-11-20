@@ -51,7 +51,7 @@ func TestIdenticalResultDifferentKeyDoesNotDuplicateCandidate(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	if second.Submission.ID != first.Submission.ID {
+	if second.Result.CommitID != first.Result.CommitID {
 		t.Fatal("duplicate candidate")
 	}
 	cs, e := f.commits.List(f.ctx, "t", d.Task.ID, 0, 100)
@@ -111,7 +111,7 @@ func init() {
 		return &observedFailure{events: d.Events, facts: d.Facts, tasks: d.Tasks}, nil
 	})
 }
-func TestPostReviewFailureRollsBackEverySubmissionFact(t *testing.T) {
+func TestPostReviewFailureRollsBackEveryResultFact(t *testing.T) {
 	f := setup(t, map[string]any{"observed": map[string]any{"use": "test/observed-outbox-failure", "deps": map[string]any{"events": "sql", "facts": "workflow-query", "tasks": "sql"}}, "result-commands": map[string]any{"deps": map[string]any{"events": "observed"}}})
 	d := f.create(t)
 	s := f.open(t, d)
@@ -122,16 +122,16 @@ func TestPostReviewFailureRollsBackEverySubmissionFact(t *testing.T) {
 	}
 	observer, _ := build.GetByID[*observedFailure](f.graph, "observed")
 	captured := observer.captured
-	if captured.Submission == nil || captured.Review == nil || captured.Position.State != "accepting" {
+	if captured.Result == nil || captured.Review == nil || captured.Position.State != "accepting" {
 		t.Fatal("failure not injected after review creation")
 	}
-	if _, e = f.commits.Get(f.ctx, "t", d.Task.ID, captured.Submission.CommitID); !errors.Is(e, fault.ErrNotFound) {
+	if _, e = f.commits.Get(f.ctx, "t", d.Task.ID, captured.Result.CommitID); !errors.Is(e, fault.ErrNotFound) {
 		t.Fatal("commit survived", e)
 	}
-	if _, e = f.deliveries.GetSubmission(f.ctx, "t", captured.Submission.ID); !errors.Is(e, fault.ErrNotFound) {
-		t.Fatal("submission survived", e)
+	if cur, e := f.deliveries.CurrentResult(f.ctx, "t", d.Task.ID, captured.Position.RoundID); e == nil && cur.CommitID == captured.Result.CommitID {
+		t.Fatal("result registration survived")
 	}
-	if _, e = f.reviews.LatestReview(f.ctx, "t", d.Task.ID, captured.Submission.CommitID); !errors.Is(e, fault.ErrNotFound) {
+	if _, e = f.reviews.LatestReview(f.ctx, "t", d.Task.ID, captured.Result.CommitID); !errors.Is(e, fault.ErrNotFound) {
 		t.Fatal("review survived", e)
 	}
 	receipts, _ := build.GetByID[record.Receipts](f.graph, "sql")

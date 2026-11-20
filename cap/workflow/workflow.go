@@ -11,7 +11,7 @@ import (
 )
 
 // Command inputs carry only what each command must pin. Executions,
-// submissions and commits already identify what a write applies to, so most
+// results and commits already identify what a write applies to, so most
 // commands need no client-side version; a fenced or superseded target is a conflict.
 type Assignment struct{ TaskID, Subject string }
 
@@ -69,10 +69,9 @@ type Snapshot struct {
 	// Blocked holds, for actions relevant to this viewer, why each is not allowed now.
 	Blocked                                             map[string]string `json:",omitempty"`
 	CanOpen, CanSubmit, CanReview, CanManage, CanAssign bool
-	ViewerKind                                          string
 	Position                                            flow.Position
 	Execution                                           *execution.Execution
-	Submission                                          *delivery.Submission
+	Result                                              *delivery.Result
 	Review                                              *acceptance.Review
 	// Questions are the open requests for input of the current active round.
 	Questions []question.Question `json:",omitempty"`

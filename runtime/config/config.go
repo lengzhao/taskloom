@@ -18,12 +18,12 @@ import (
 
 // BuildFiles constructs the reachable server graph. Constructors must not perform IO.
 // An empty overlay path means no L1; an explicitly named missing file is an error.
-func BuildFiles(ctx context.Context, basePath, configPath string) (lifecycle.App, *build.Result, error) {
+func BuildFiles(ctx context.Context, basePath, configPath string) (lifecycle.Component, *build.Result, error) {
 	graph, err := LoadFiles(basePath, configPath)
 	if err != nil {
 		return nil, nil, err
 	}
-	app, result, err := build.Build[lifecycle.App](ctx, graph, "server")
+	app, result, err := build.Build[lifecycle.Component](ctx, graph, "server")
 	if err != nil {
 		return nil, nil, safeBuildError(err)
 	}

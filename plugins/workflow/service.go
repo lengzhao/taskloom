@@ -33,7 +33,7 @@ func id() string {
 // Ref; current facts are read separately, so a replay never returns stale facts.
 func run[T any](ctx context.Context, h capcommand.Handler, token, key, operation, taskID string, in T, apply func(context.Context, identity.Principal) (api.Ref, error)) (api.Ref, error) {
 	var out api.Ref
-	b, e := command.Run(ctx, h, capcommand.Request{Token: token, Key: key, Operation: operation, Resource: taskID, ReadOperation: "task.read"}, in, func(tx context.Context, p identity.Principal) ([]byte, error) {
+	b, e := command.Run(ctx, h, capcommand.Request{Token: token, Key: key, Operation: operation, Resource: taskID}, in, func(tx context.Context, p identity.Principal) ([]byte, error) {
 		ref, e := apply(tx, p)
 		if e != nil {
 			return nil, e

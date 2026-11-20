@@ -76,7 +76,7 @@ func fixtureWithStore(t *testing.T) (readBack, *security.Service, string, *store
 	if e != nil {
 		t.Fatal(e)
 	}
-	f, e := flow.New(flow.Config{}, flow.Deps{Positions: s, Results: s, Reviews: s, Questions: s, Executions: s})
+	f, e := flow.New(flow.Config{}, flow.Deps{Positions: s, Results: s, Reviews: s, Questions: s, Commits: s})
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -341,7 +341,7 @@ func TestMembershipOwnerParticipantsAndImmediateRemoval(t *testing.T) {
 	}
 }
 
-func TestCandidatesRequireTaskManagementAndFilterInactiveMembers(t *testing.T) {
+func TestPeopleListsActiveMembersToActiveHumans(t *testing.T) {
 	s, sec, admin, db := fixtureWithStore(t)
 	ctx := context.Background()
 	for _, name := range []string{"owner", "guest"} {
@@ -368,10 +368,11 @@ func TestCandidatesRequireTaskManagementAndFilterInactiveMembers(t *testing.T) {
 	if e = s.SetParticipant(ctx, owner, "join", api.Participation{TaskID: d.Task.ID, Subject: "guest", Present: true}); e != nil {
 		t.Fatal(e)
 	}
-	for _, token := range []string{admin, owner} {
-		list, e := s.Candidates(ctx, token, d.Task.ID)
+	// Any active human member reads the directory; it is not task-scoped.
+	for _, token := range []string{admin, owner, guest} {
+		list, e := s.People(ctx, token)
 		if e != nil || len(list) != 4 {
-			t.Fatalf("candidates: %+v %v", list, e)
+			t.Fatalf("people: %+v %v", list, e)
 		}
 		found := false
 		for _, m := range list {
@@ -383,16 +384,10 @@ func TestCandidatesRequireTaskManagementAndFilterInactiveMembers(t *testing.T) {
 			t.Fatal("missing agent metadata")
 		}
 	}
-	if _, e = s.Candidates(ctx, guest, d.Task.ID); !errors.Is(e, az.ErrForbidden) {
-		t.Fatal("participant sees directory", e)
-	}
-	if _, e = s.Candidates(ctx, owner, "missing"); !errors.Is(e, az.ErrForbidden) {
-		t.Fatal("missing task", e)
-	}
 	if e = sec.SetMember(ctx, admin, "disable-agent", az.Member{Tenant: "t", Subject: "agent", Role: "member", Active: false}); e != nil {
 		t.Fatal(e)
 	}
-	list, e := s.Candidates(ctx, owner, d.Task.ID)
+	list, e := s.People(ctx, owner)
 	if e != nil || len(list) != 3 {
 		t.Fatalf("inactive candidate: %+v %v", list, e)
 	}
@@ -408,17 +403,18 @@ func TestCandidatesRequireTaskManagementAndFilterInactiveMembers(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	if _, e = s.Candidates(ctx, foreign.Secret, d.Task.ID); !errors.Is(e, az.ErrForbidden) {
-		t.Fatal("cross-tenant access", e)
+	// A foreign tenant's member reads only its own tenant's directory.
+	if other, e := s.People(ctx, foreign.Secret); e != nil || len(other) != 1 || other[0].Subject != "foreign" {
+		t.Fatal("cross-tenant directory", other, e)
 	}
-	list, e = s.Candidates(ctx, owner, d.Task.ID)
+	list, e = s.People(ctx, owner)
 	if e != nil || len(list) != 3 {
 		t.Fatalf("cross-tenant member leaked: %+v %v", list, e)
 	}
 	if e = sec.SetMember(ctx, admin, "disable-owner", az.Member{Tenant: "t", Subject: "owner", Role: "member", Active: false}); e != nil {
 		t.Fatal(e)
 	}
-	if _, e = s.Candidates(ctx, owner, d.Task.ID); !errors.Is(e, az.ErrForbidden) {
+	if _, e = s.People(ctx, owner); !errors.Is(e, az.ErrForbidden) {
 		t.Fatal("revoked owner", e)
 	}
 }

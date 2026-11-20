@@ -57,7 +57,8 @@ type Viewer struct {
 type Queries interface {
 	Viewer(ctx context.Context, credential string) (Viewer, error)
 	Members(ctx context.Context, credential string) ([]authorization.DirectoryMember, error)
-	Candidates(ctx context.Context, credential, taskID string) ([]authorization.MemberOption, error)
+	// People is the active member directory, readable by active human members.
+	People(ctx context.Context, credential string) ([]authorization.MemberOption, error)
 	List(ctx context.Context, credential string) ([]Detail, error)
 	Get(ctx context.Context, credential, taskID string, after int64) (Detail, error)
 }

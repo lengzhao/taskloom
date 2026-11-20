@@ -148,13 +148,13 @@ func TestApprovalCompletesTheTask(t *testing.T) {
 	if s.Position.State != "accepting" || s.Position.RoundID != round || s.Review == nil {
 		t.Fatalf("submission %+v", s)
 	}
-	submitted := *s.Submission
+	submitted := *s.Result
 	events, _ := build.GetByID[record.EventLog](f.graph, "sql")
 	before, e := events.ReadEvents(f.ctx, "t", 0, 1000)
 	if e != nil {
 		t.Fatal(e)
 	}
-	s, e = f.results.Review(f.ctx, f.owner, "approve", api.Review{TaskID: d.Task.ID, Verdict: acceptance.Verdict{SubmissionID: submitted.ID, CommitID: submitted.CommitID, Outcome: "approved", Reason: "符合标准"}})
+	s, e = f.results.Review(f.ctx, f.owner, "approve", api.Review{TaskID: d.Task.ID, Verdict: acceptance.Verdict{CommitID: submitted.CommitID, Outcome: "approved", Reason: "符合标准"}})
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -180,10 +180,10 @@ func TestApprovalCompletesTheTask(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	if reopened.Position.RoundID == round || reopened.Submission != nil || reopened.Review != nil || reopened.Execution.Writable {
+	if reopened.Position.RoundID == round || reopened.Result != nil || reopened.Review != nil || reopened.Execution.Writable {
 		t.Fatal("old result or execution inherited")
 	}
-	old, e := f.deliveries.GetSubmission(f.ctx, "t", submitted.ID)
+	old, e := f.deliveries.CurrentResult(f.ctx, "t", d.Task.ID, round)
 	if e != nil || old.CommitID != submitted.CommitID {
 		t.Fatal("history lost", e)
 	}
@@ -312,19 +312,19 @@ func TestNewCandidateReplacesPendingReview(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	old := *s.Submission
+	old := *s.Result
 	s, e = f.results.Submit(f.ctx, f.agent, "second", api.Submit{TaskID: d.Task.ID, ExecutionID: s.Execution.ID, Body: "second"})
 	if e != nil {
 		t.Fatal(e)
 	}
-	if s.Review == nil || s.Review.Outcome != "pending" || s.Review.SubmissionID == old.ID {
+	if s.Review == nil || s.Review.Outcome != "pending" || s.Review.CommitID == old.CommitID {
 		t.Fatal("old review inherited")
 	}
-	if _, e = f.results.Review(f.ctx, f.owner, "stale-review", api.Review{TaskID: d.Task.ID, Verdict: acceptance.Verdict{SubmissionID: old.ID, CommitID: old.CommitID, Outcome: "approved"}}); !errors.Is(e, fault.ErrConflict) {
+	if _, e = f.results.Review(f.ctx, f.owner, "stale-review", api.Review{TaskID: d.Task.ID, Verdict: acceptance.Verdict{CommitID: old.CommitID, Outcome: "approved"}}); !errors.Is(e, fault.ErrConflict) {
 		t.Fatal("old review click", e)
 	}
 }
-func TestFlowWithoutAcceptanceCompletesOnSubmission(t *testing.T) {
+func TestFlowWithoutAcceptanceCompletesOnResult(t *testing.T) {
 	f := setup(t, map[string]any{"flow": map[string]any{"config": map[string]any{"acceptance": "none"}}})
 	d := f.create(t)
 	s := f.open(t, d)
@@ -365,7 +365,7 @@ func TestSameRoundRetryFencesOldExecutionAndReturnAdoptsBasis(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	if s.Position.RoundID == oldRound || s.Submission != nil {
+	if s.Position.RoundID == oldRound || s.Result != nil {
 		t.Fatal("return did not isolate round")
 	}
 	edited, e := f.tasks.Edit(f.ctx, f.owner, "adopt-basis", workspace.Edit{TaskID: d.Task.ID, Title: "new goal", Goal: "new", Criteria: "new", BasisVersion: d.Task.BasisVersion})
@@ -392,8 +392,8 @@ func TestReplayReturnsSameRefAndCurrentFacts(t *testing.T) {
 	if first.TaskID != d.Task.ID || first.RoundID != s.Position.RoundID {
 		t.Fatal("ref does not name the task and round", first)
 	}
-	submitted := f.read(t, d.Task.ID).Submission
-	if _, e = f.results.Review(f.ctx, f.owner, "approve", api.Review{TaskID: d.Task.ID, Verdict: acceptance.Verdict{SubmissionID: submitted.ID, CommitID: submitted.CommitID, Outcome: "approved"}}); e != nil {
+	submitted := f.read(t, d.Task.ID).Result
+	if _, e = f.results.Review(f.ctx, f.owner, "approve", api.Review{TaskID: d.Task.ID, Verdict: acceptance.Verdict{CommitID: submitted.CommitID, Outcome: "approved"}}); e != nil {
 		t.Fatal(e)
 	}
 	replayed, e := results.Submit(f.ctx, f.agent, "submit", in)

@@ -38,17 +38,17 @@ func TestHumanProcessesAndSubmitsWithoutRuntimeProof(t *testing.T) {
 	}
 	// Assigning a person starts their manual work; there is no separate claim.
 	s, e = f.query.Read(f.ctx, worker, d.Task.ID)
-	if e != nil || s.CanOpen || !s.CanSubmit || !s.CanAssign || s.CanManage || s.ViewerKind != "human" {
+	if e != nil || s.CanOpen || !s.CanSubmit || !s.CanAssign || s.CanManage {
 		t.Fatalf("human flags %+v %v", s, e)
 	}
 	items, e := f.query.Inbox(f.ctx, worker)
 	if e != nil || len(items) != 1 || items[0].NextActor != api.ActorAssignee {
 		t.Fatal(items, e)
 	}
-	if _, e = f.taskQueries.Candidates(f.ctx, worker, d.Task.ID); e != nil {
-		t.Fatal("human delegate cannot list candidates", e)
+	if _, e = f.taskQueries.People(f.ctx, worker); e != nil {
+		t.Fatal("human delegate cannot list people", e)
 	}
-	if !s.Execution.Manual || !s.Execution.Writable || s.Execution.CredentialID != "" || s.Execution.Subject != "worker" {
+	if !s.Execution.Writable || s.Execution.CredentialID != "" || s.Execution.Subject != "worker" {
 		t.Fatal("human requires no runtime", s.Execution)
 	}
 	if _, e = f.ex.Open(f.ctx, worker, "duplicate-start", api.Open{TaskID: d.Task.ID, BasisVersion: d.Task.BasisVersion}); !errors.Is(e, fault.ErrConflict) {
@@ -62,7 +62,7 @@ func TestHumanProcessesAndSubmitsWithoutRuntimeProof(t *testing.T) {
 	if s.Review == nil || s.Review.Reviewer != "owner" {
 		t.Fatal("human submission", s)
 	}
-	s, e = f.results.Review(f.ctx, f.owner, "approve", api.Review{TaskID: d.Task.ID, Verdict: acceptance.Verdict{SubmissionID: s.Submission.ID, CommitID: s.Submission.CommitID, Outcome: "approved"}})
+	s, e = f.results.Review(f.ctx, f.owner, "approve", api.Review{TaskID: d.Task.ID, Verdict: acceptance.Verdict{CommitID: s.Result.CommitID, Outcome: "approved"}})
 	if e != nil || s.Position.Status != "completed" {
 		t.Fatal("human completion must not wait on runtime proof", s, e)
 	}
@@ -85,7 +85,7 @@ func TestHumanCanDelegateButOldWorkCannotSubmit(t *testing.T) {
 		t.Fatal("participant can delegate", e)
 	}
 	old := *s.Execution
-	if !old.Manual || old.Subject != "worker" || !old.Writable {
+	if old.CredentialID != "" || old.Subject != "worker" || !old.Writable {
 		t.Fatal("assignment did not start manual work", old)
 	}
 	s, e = f.ex.Assign(f.ctx, worker, "delegate", api.Assignment{TaskID: d.Task.ID, Subject: "agent"})
@@ -105,12 +105,12 @@ func TestHumanCanDelegateButOldWorkCannotSubmit(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	if s.Execution.Manual || s.Execution.ID == old.ID {
+	if s.Execution.CredentialID == "" || s.Execution.ID == old.ID {
 		t.Fatal("agent claim", s)
 	}
 	// Reassigning a running agent fences it at once; nothing waits for it to stop.
 	agentRun := *s.Execution
-	if s, e = f.ex.Assign(f.ctx, f.owner, "reassign", api.Assignment{TaskID: d.Task.ID, Subject: "worker"}); e != nil || s.Execution.ID == agentRun.ID || !s.Execution.Manual {
+	if s, e = f.ex.Assign(f.ctx, f.owner, "reassign", api.Assignment{TaskID: d.Task.ID, Subject: "worker"}); e != nil || s.Execution.ID == agentRun.ID || s.Execution.CredentialID != "" {
 		t.Fatal("reassign over a running agent", e)
 	}
 	if _, e = f.results.Submit(f.ctx, f.agent, "stale-agent-result", api.Submit{TaskID: d.Task.ID, ExecutionID: agentRun.ID, Body: "too late"}); e == nil {
@@ -137,7 +137,7 @@ func TestHumanDelegationRevokedWithParticipation(t *testing.T) {
 		t.Fatal("removed handler can delegate", e)
 	}
 	// A disabled target is not eligible even if the caller is the administrator.
-	members, _ := build.GetByID[az.MemberWriter](f.graph, "sql")
+	members, _ := build.GetByID[az.MemberStore](f.graph, "sql")
 	if e = f.tx.Do(f.ctx, func(ctx context.Context) error {
 		return members.SetMember(ctx, az.Member{Tenant: "t", Subject: "worker", Role: "member", Active: false})
 	}); e != nil {

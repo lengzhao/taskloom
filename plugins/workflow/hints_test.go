@@ -126,7 +126,7 @@ func TestRejectionRequiresReason(t *testing.T) {
 	verdict := func(key, reason string) error {
 		s = f.read(t, d.Task.ID)
 		in := api.Review{TaskID: d.Task.ID}
-		in.SubmissionID, in.CommitID, in.Outcome, in.Reason = s.Submission.ID, s.Submission.CommitID, "rejected", reason
+		in.CommitID, in.Outcome, in.Reason = s.Result.CommitID, "rejected", reason
 		_, e := f.results.Review(f.ctx, f.owner, key, in)
 		return e
 	}
@@ -153,7 +153,7 @@ func TestApprovedTaskLeavesTheAgentInbox(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	if _, e = f.results.Review(f.ctx, f.owner, "approve", api.Review{TaskID: d.Task.ID, Verdict: acceptance.Verdict{SubmissionID: s.Submission.ID, CommitID: s.Submission.CommitID, Outcome: "approved"}}); e != nil {
+	if _, e = f.results.Review(f.ctx, f.owner, "approve", api.Review{TaskID: d.Task.ID, Verdict: acceptance.Verdict{CommitID: s.Result.CommitID, Outcome: "approved"}}); e != nil {
 		t.Fatal(e)
 	}
 	if s = f.read(t, d.Task.ID); s.Position.Status != "completed" || s.NextActor != "" {

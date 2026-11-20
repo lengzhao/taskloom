@@ -11,12 +11,18 @@ import (
 
 	"github.com/lengzhao/pluginkit"
 	"github.com/lengzhao/taskloom/cap/fault"
-	"github.com/lengzhao/taskloom/cap/unitofwork"
 	"gorm.io/driver/mysql"
 	"gorm.io/driver/postgres"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
+)
+
+// Transaction misuse errors belong to this store's Do implementation; no
+// consumer outside it distinguishes them.
+var (
+	ErrRollback    = errors.New("transaction is rollback-only")
+	ErrTransaction = errors.New("active owning transaction required")
 )
 
 type Config struct {
@@ -151,7 +157,7 @@ func (s *Store) Do(ctx context.Context, fn func(context.Context) error) error {
 	if t, ok := ctx.Value(transactionKey{}).(*transaction); ok {
 		if !t.active || t.owner != s {
 			t.failed = true
-			return unitofwork.ErrTransaction
+			return ErrTransaction
 		}
 		defer func() {
 			if p := recover(); p != nil {
@@ -183,7 +189,7 @@ func (s *Store) Do(ctx context.Context, fn func(context.Context) error) error {
 			return callbackErr
 		}
 		if t.failed {
-			callbackErr = unitofwork.ErrRollback
+			callbackErr = ErrRollback
 			return callbackErr
 		}
 		return nil
@@ -197,7 +203,7 @@ func (s *Store) use(ctx context.Context, write bool, fn func(*gorm.DB) error) er
 	if t, ok := ctx.Value(transactionKey{}).(*transaction); ok {
 		if !t.active || t.owner != s {
 			t.failed = true
-			return unitofwork.ErrTransaction
+			return ErrTransaction
 		}
 		err := normalize(ctx, fn(t.db.WithContext(ctx)))
 		if err != nil && write {
@@ -206,7 +212,7 @@ func (s *Store) use(ctx context.Context, write bool, fn func(*gorm.DB) error) er
 		return err
 	}
 	if write {
-		return unitofwork.ErrTransaction
+		return ErrTransaction
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -228,7 +234,7 @@ func normalize(ctx context.Context, err error) error {
 	if errors.Is(err, gorm.ErrDuplicatedKey) {
 		return fault.ErrConflict
 	}
-	for _, known := range []error{fault.ErrNotFound, fault.ErrConflict, unitofwork.ErrTransaction, unitofwork.ErrRollback} {
+	for _, known := range []error{fault.ErrNotFound, fault.ErrConflict, ErrTransaction, ErrRollback} {
 		if errors.Is(err, known) {
 			return known
 		}

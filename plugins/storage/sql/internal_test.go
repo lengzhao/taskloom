@@ -12,7 +12,6 @@ import (
 
 	"github.com/lengzhao/taskloom/cap/fault"
 	"github.com/lengzhao/taskloom/cap/identity"
-	"github.com/lengzhao/taskloom/cap/unitofwork"
 	local "github.com/lengzhao/taskloom/plugins/identity/local"
 	"github.com/lengzhao/taskloom/plugins/security"
 )
@@ -52,7 +51,7 @@ func TestForeignKeysAndCapturedWriteFailurePoisonTransaction(t *testing.T) {
 		_ = s.SaveCredential(tx, identity.Credential{ID: "invalid", Digest: "digest", Principal: identity.Principal{Tenant: "missing", ID: "missing"}})
 		return s.CreatePrincipal(tx, identity.Principal{Tenant: "t", ID: "u", Kind: "human"})
 	})
-	if !errors.Is(err, unitofwork.ErrRollback) {
+	if !errors.Is(err, ErrRollback) {
 		t.Fatalf("captured FK failure committed: %v", err)
 	}
 	if _, err = s.Resolve(ctx, "t", "u"); !errors.Is(err, fault.ErrNotFound) {
@@ -70,7 +69,7 @@ func TestCancelledAndEscapedTransactions(t *testing.T) {
 	if err := s.Do(ctx, func(tx context.Context) error { escaped = tx; return nil }); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Resolve(escaped, "t", "u"); !errors.Is(err, unitofwork.ErrTransaction) {
+	if _, err := s.Resolve(escaped, "t", "u"); !errors.Is(err, ErrTransaction) {
 		t.Fatalf("escaped transaction: %v", err)
 	}
 	cancelled, cancel := context.WithCancel(ctx)
@@ -94,7 +93,7 @@ func TestCaughtNestedPanicPoisonsTransaction(t *testing.T) {
 		}()
 		return s.CreatePrincipal(tx, identity.Principal{Tenant: "t", ID: "u", Kind: "human"})
 	})
-	if !errors.Is(err, unitofwork.ErrRollback) {
+	if !errors.Is(err, ErrRollback) {
 		t.Fatalf("caught panic committed: %v", err)
 	}
 }

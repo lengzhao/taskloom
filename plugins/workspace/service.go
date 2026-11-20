@@ -116,7 +116,7 @@ func (s *Service) Create(ctx context.Context, token, key string, in api.Create) 
 }
 func (s *Service) Edit(ctx context.Context, token, key string, in api.Edit) (api.Ref, error) {
 	var out api.Ref
-	b, e := command.Run(ctx, s.d.Commands, capcommand.Request{Token: token, Key: key, Operation: "task.edit", ReadOperation: "task.read", Resource: in.TaskID}, in, func(tx context.Context, p identity.Principal) ([]byte, error) {
+	b, e := command.Run(ctx, s.d.Commands, capcommand.Request{Token: token, Key: key, Operation: "task.edit", Resource: in.TaskID}, in, func(tx context.Context, p identity.Principal) ([]byte, error) {
 		t, e := s.d.Tasks.GetTask(tx, p.Tenant, in.TaskID)
 		if e != nil {
 			return nil, e
@@ -157,7 +157,7 @@ func (s *Service) Edit(ctx context.Context, token, key string, in api.Edit) (api
 }
 func (s *Service) Comment(ctx context.Context, token, key string, in api.Comment) (api.Ref, error) {
 	var out api.Ref
-	b, e := command.Run(ctx, s.d.Commands, capcommand.Request{Token: token, Key: key, Operation: "commit.append", ReadOperation: "task.read", Resource: in.TaskID}, in, func(tx context.Context, p identity.Principal) ([]byte, error) {
+	b, e := command.Run(ctx, s.d.Commands, capcommand.Request{Token: token, Key: key, Operation: "commit.append", Resource: in.TaskID}, in, func(tx context.Context, p identity.Principal) ([]byte, error) {
 		if strings.TrimSpace(in.Body) == "" || len(in.Body) > 20000 {
 			return nil, fault.ErrInput
 		}
@@ -304,7 +304,7 @@ func (s *Service) actor(ctx context.Context, token string) (identity.Principal, 
 	return p, nil
 }
 func (s *Service) SetParticipant(ctx context.Context, token, key string, in api.Participation) error {
-	_, e := command.Run(ctx, s.d.Commands, capcommand.Request{Token: token, Key: key, Operation: "participant.set", Resource: in.TaskID, ReadOperation: "task.read"}, in, func(tx context.Context, p identity.Principal) ([]byte, error) {
+	_, e := command.Run(ctx, s.d.Commands, capcommand.Request{Token: token, Key: key, Operation: "participant.set", Resource: in.TaskID}, in, func(tx context.Context, p identity.Principal) ([]byte, error) {
 		t, e := s.d.Tasks.GetTask(tx, p.Tenant, in.TaskID)
 		if e != nil {
 			return nil, e
@@ -324,16 +324,19 @@ func (s *Service) SetParticipant(ctx context.Context, token, key string, in api.
 	return e
 }
 
-// Candidates exposes directory metadata only to people allowed to manage this task.
-func (s *Service) Candidates(ctx context.Context, token, taskID string) ([]az.MemberOption, error) {
+// People lists the tenant's active members (subject, kind, owner) to any
+// active human member: it is the one selector for assignees, participants
+// and project owners. Agents and inactive members never read the directory.
+func (s *Service) People(ctx context.Context, token string) ([]az.MemberOption, error) {
 	out := []az.MemberOption{}
 	e := s.d.Transactions.Do(ctx, func(tx context.Context) error {
 		p, e := s.d.Identity.Authenticate(tx, token)
 		if e != nil {
 			return e
 		}
-		if e = s.d.Authorization.Check(tx, p, "execution.assign", taskID); e != nil {
-			return e
+		member, e := s.d.Members.GetMember(tx, p.Tenant, p.ID)
+		if e != nil || !member.Active || p.Kind != "human" {
+			return az.ErrForbidden
 		}
 		out, e = s.d.Members.ListActiveMembers(tx, p.Tenant)
 		return e
@@ -387,7 +390,7 @@ func (s *Service) projectOpen(ctx context.Context, tenant, id string) error {
 	return nil
 }
 func (s *Service) SetProject(ctx context.Context, token, key string, in api.ProjectMove) error {
-	_, e := command.Run(ctx, s.d.Commands, capcommand.Request{Token: token, Key: key, Operation: "task.project", ReadOperation: "task.read", Resource: in.TaskID}, in, func(tx context.Context, p identity.Principal) ([]byte, error) {
+	_, e := command.Run(ctx, s.d.Commands, capcommand.Request{Token: token, Key: key, Operation: "task.project", Resource: in.TaskID}, in, func(tx context.Context, p identity.Principal) ([]byte, error) {
 		if e := s.projectOpen(tx, p.Tenant, in.ProjectID); e != nil {
 			return nil, e
 		}

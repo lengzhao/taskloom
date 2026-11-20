@@ -22,7 +22,7 @@ import (
 )
 
 // ResultDeps has seven fields: a result is a commit (commits) registered as
-// the round's submission (results) by a live execution (executions), besides
+// the round's result (results) by a live execution (executions), besides
 // the command lifecycle, the task, its flow position and the change event.
 type ResultDeps struct {
 	Commands   command.Handler        `json:"commands"`
@@ -64,13 +64,13 @@ func (m *ResultModule) Submit(ctx context.Context, token, key string, in api.Sub
 		if e = m.d.Executions.SaveExecution(tx, v); e != nil {
 			return api.Ref{}, e
 		}
-		current, currentErr := m.d.Results.CurrentSubmission(tx, t.Tenant, t.ID, v.RoundID)
-		if currentErr == nil && current.ExecutionID == v.ID && current.BasisVersion == t.BasisVersion {
+		current, currentErr := m.d.Results.CurrentResult(tx, t.Tenant, t.ID, v.RoundID)
+		if currentErr == nil && current.ExecutionID == v.ID {
 			old, e := m.d.Commits.Get(tx, t.Tenant, t.ID, current.CommitID)
 			if e != nil {
 				return api.Ref{}, e
 			}
-			if old.Body == in.Body {
+			if old.BasisVersion == t.BasisVersion && old.Body == in.Body {
 				return api.Ref{TaskID: t.ID, RoundID: pos.RoundID}, nil
 			}
 		} else if currentErr != nil && !errors.Is(currentErr, fault.ErrNotFound) {
@@ -80,7 +80,7 @@ func (m *ResultModule) Submit(ctx context.Context, token, key string, in api.Sub
 		if e = m.d.Commits.Append(tx, c); e != nil {
 			return api.Ref{}, e
 		}
-		if e = m.d.Results.RegisterSubmission(tx, delivery.Submission{Tenant: t.Tenant, TaskID: t.ID, ID: id(), RoundID: v.RoundID, ExecutionID: v.ID, CommitID: c.ID, Author: p.ID, BasisVersion: t.BasisVersion}); e != nil {
+		if e = m.d.Results.RegisterResult(tx, delivery.Result{Tenant: t.Tenant, TaskID: t.ID, RoundID: v.RoundID, ExecutionID: v.ID, CommitID: c.ID}); e != nil {
 			return api.Ref{}, e
 		}
 		return finish(tx, m.d.Flow, m.d.Events, t)
@@ -106,11 +106,18 @@ func (m *ResultModule) Review(ctx context.Context, token, key string, in api.Rev
 		if in.Outcome == acceptance.OutcomeRejected && strings.TrimSpace(in.Reason) == "" {
 			return api.Ref{}, fault.ErrInput
 		}
-		v, e := m.d.Results.CurrentSubmission(tx, t.Tenant, t.ID, pos.RoundID)
+		v, e := m.d.Results.CurrentResult(tx, t.Tenant, t.ID, pos.RoundID)
 		if e != nil {
 			return api.Ref{}, e
 		}
-		if v.ID != in.SubmissionID || v.CommitID != in.CommitID || v.BasisVersion != t.BasisVersion {
+		if v.CommitID != in.CommitID {
+			return api.Ref{}, fault.ErrConflict
+		}
+		result, e := m.d.Commits.Get(tx, t.Tenant, t.ID, v.CommitID)
+		if e != nil {
+			return api.Ref{}, e
+		}
+		if result.BasisVersion != t.BasisVersion {
 			return api.Ref{}, fault.ErrConflict
 		}
 		// The verdict is stored once, as an immutable commit referring to the result.

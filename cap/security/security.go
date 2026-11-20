@@ -8,10 +8,6 @@ import (
 	"github.com/lengzhao/taskloom/cap/authorization"
 )
 
-type MemberCommands interface {
-	SetMember(ctx context.Context, credential, idempotencyKey string, value authorization.Member) error
-}
-
 // Administration exposes ordinary authenticated administration, never bootstrap/recovery.
 type Administration interface {
 	CreateUser(ctx context.Context, credential, key string, value UserInput) error
@@ -20,7 +16,7 @@ type Administration interface {
 	Login(ctx context.Context, value LoginInput) (Issued, error)
 	// Logout revokes the credential it is called with, ending that session only.
 	Logout(ctx context.Context, credential string) error
-	MemberCommands
+	SetMember(ctx context.Context, credential, idempotencyKey string, value authorization.Member) error
 	Create(ctx context.Context, credential, idempotencyKey string, value identity.Principal) error
 	Issue(ctx context.Context, credential, idempotencyKey string, value IssueInput) (Issued, error)
 	Revoke(ctx context.Context, credential, idempotencyKey string, value RevokeInput) error

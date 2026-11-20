@@ -60,9 +60,9 @@ func (s *Query) ReadFacts(ctx context.Context, t task.Task) (api.Snapshot, error
 	} else if !errors.Is(e, fault.ErrNotFound) {
 		return out, e
 	}
-	v, e := s.d.Results.CurrentSubmission(ctx, t.Tenant, t.ID, pos.RoundID)
+	v, e := s.d.Results.CurrentResult(ctx, t.Tenant, t.ID, pos.RoundID)
 	if e == nil {
-		out.Submission = &v
+		out.Result = &v
 		c, e := s.d.Commits.Get(ctx, t.Tenant, t.ID, v.CommitID)
 		if e != nil {
 			return out, e
@@ -70,13 +70,12 @@ func (s *Query) ReadFacts(ctx context.Context, t task.Task) (api.Snapshot, error
 		out.ResultCommit = &c
 		r, e := s.d.Reviews.LatestReview(ctx, t.Tenant, t.ID, v.CommitID)
 		if e == nil {
-			r.RoundID, r.SubmissionID = pos.RoundID, v.ID
 			out.Review = &r
 		} else if !errors.Is(e, fault.ErrNotFound) {
 			return out, e
 		} else if pos.State == flow.StepAccepting {
 			// A result awaiting acceptance with no verdict yet is pending; nothing is stored for it.
-			out.Review = &acceptance.Review{Tenant: t.Tenant, TaskID: t.ID, RoundID: pos.RoundID, SubmissionID: v.ID, CommitID: v.CommitID, Reviewer: t.Owner, Outcome: acceptance.OutcomePending, BasisVersion: v.BasisVersion}
+			out.Review = &acceptance.Review{CommitID: v.CommitID, Reviewer: t.Owner, Outcome: acceptance.OutcomePending, BasisVersion: c.BasisVersion}
 		}
 	} else if !errors.Is(e, fault.ErrNotFound) {
 		return out, e
@@ -109,7 +108,6 @@ func (s *Query) Read(ctx context.Context, token, taskID string) (api.Snapshot, e
 		}
 		out, e = s.ReadFacts(tx, t)
 		if e == nil {
-			out.ViewerKind = p.Kind
 			out.CanAssign = s.d.Authorization.Check(tx, p, "execution.assign", taskID) == nil
 			out.CanManage = s.d.Authorization.Check(tx, p, "task.cancel", taskID) == nil
 			blocked := map[string]string{}
@@ -216,11 +214,17 @@ func (s *Query) openBlock(ctx context.Context, p identity.Principal, t task.Task
 	return ""
 }
 
-func ownExecution(p identity.Principal, v execution.Execution) bool {
-	if v.Manual {
-		return p.Kind == "human" && v.Subject == p.ID
+// agentCredential is the credential an execution by p is bound to: an Agent's
+// own credential, or none for a person.
+func agentCredential(p identity.Principal) string {
+	if p.Kind == "agent" {
+		return p.CredentialID
 	}
-	return p.Kind == "agent" && v.Subject == p.ID && v.CredentialID == p.CredentialID
+	return ""
+}
+
+func ownExecution(p identity.Principal, v execution.Execution) bool {
+	return v.Subject == p.ID && v.CredentialID == agentCredential(p)
 }
 
 func submitBlock(p identity.Principal, t task.Task, pos flow.Position, v execution.Execution) string {

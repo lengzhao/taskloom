@@ -165,3 +165,41 @@ func (m *QuestionModule) Answer(ctx context.Context, token, key string, in api.A
 		return finish(tx, m.d.Flow, m.d.Events, t)
 	})
 }
+
+// Close settles an open question of the current round without an answer.
+// The asker may withdraw it and the owner may release the task from it; the
+// addressee answers instead. The reason is the closing commit.
+func (m *QuestionModule) Close(ctx context.Context, token, key string, in api.CloseQuestion) (api.Ref, error) {
+	return run(ctx, m.d.Commands, token, key, "commit.append", in.TaskID, in, func(tx context.Context, p identity.Principal) (api.Ref, error) {
+		if !validText(in.Reason) {
+			return api.Ref{}, fault.ErrInput
+		}
+		t, pos, e := m.activeRound(tx, p, in.TaskID)
+		if e != nil {
+			return api.Ref{}, e
+		}
+		q, e := m.d.Questions.GetQuestion(tx, t.Tenant, t.ID, in.QuestionID)
+		if e != nil {
+			return api.Ref{}, e
+		}
+		asked, e := m.d.Commits.Get(tx, t.Tenant, t.ID, q.CommitID)
+		if e != nil {
+			return api.Ref{}, e
+		}
+		if p.ID != asked.Author && p.ID != t.Owner {
+			return api.Ref{}, az.ErrForbidden
+		}
+		if q.AnswerCommitID != "" || q.RoundID != pos.RoundID {
+			return api.Ref{}, fault.ErrConflict
+		}
+		c, e := m.appendCommit(tx, p, t, api.KindQuestionClosed, in.Reason, q.CommitID)
+		if e != nil {
+			return api.Ref{}, e
+		}
+		q.AnswerCommitID = c.ID
+		if e = m.d.Questions.AnswerQuestion(tx, q); e != nil {
+			return api.Ref{}, e
+		}
+		return finish(tx, m.d.Flow, m.d.Events, t)
+	})
+}

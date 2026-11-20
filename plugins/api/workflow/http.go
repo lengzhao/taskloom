@@ -31,6 +31,7 @@ func init() {
 func (m *Module) Routes() []httpapi.Route {
 	return []httpapi.Route{
 		{Method: "GET", Path: "/inbox", Operation: "workflow.inbox", Handler: http.HandlerFunc(m.serve)},
+		{Method: "GET", Path: "/overview", Operation: "workflow.overview", Handler: http.HandlerFunc(m.serve)},
 		{Method: "GET", Path: "/tasks/{id}/workflow", Operation: "workflow.read", Handler: http.HandlerFunc(m.serve)},
 		{Method: "POST", Path: "/tasks/{id}/execution/assign", Operation: "execution.assign", Handler: http.HandlerFunc(m.serve)},
 		{Method: "POST", Path: "/tasks/{id}/execution/open", Operation: "execution.open", Handler: http.HandlerFunc(m.serve)},
@@ -38,6 +39,7 @@ func (m *Module) Routes() []httpapi.Route {
 		{Method: "POST", Path: "/tasks/{id}/review", Operation: "result.review", Handler: http.HandlerFunc(m.serve)},
 		{Method: "POST", Path: "/tasks/{id}/questions", Operation: "question.ask", Handler: http.HandlerFunc(m.serve)},
 		{Method: "POST", Path: "/tasks/{id}/questions/{qid}/answer", Operation: "question.answer", Handler: http.HandlerFunc(m.serve)},
+		{Method: "POST", Path: "/tasks/{id}/questions/{qid}/close", Operation: "question.close", Handler: http.HandlerFunc(m.serve)},
 		{Method: "POST", Path: "/tasks/{id}/cancel", Operation: "task.cancel", Handler: http.HandlerFunc(m.serve)},
 		{Method: "POST", Path: "/tasks/{id}/restart", Operation: "task.restart", Handler: http.HandlerFunc(m.serve)},
 	}
@@ -76,6 +78,15 @@ func (m *Module) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		in.TaskID, in.QuestionID = taskID, r.PathValue("qid")
 		result, err = m.after(ctx, token, taskID)(m.d.Questions.Answer(ctx, token, key, in))
+	case strings.HasSuffix(path, "/close"):
+		var in work.CloseQuestion
+		if !httpx.Decode(w, r, &in) {
+			return
+		}
+		in.TaskID, in.QuestionID = taskID, r.PathValue("qid")
+		result, err = m.after(ctx, token, taskID)(m.d.Questions.Close(ctx, token, key, in))
+	case strings.HasSuffix(path, "/overview"):
+		result, err = m.d.Workflow.Overview(ctx, token)
 	case strings.HasSuffix(path, "/inbox"):
 		result, err = m.d.Workflow.Inbox(ctx, token)
 	case strings.HasSuffix(path, "/workflow"):

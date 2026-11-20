@@ -20,7 +20,7 @@ import (
 )
 
 type QueryDeps struct {
-	Commits       commit.Lookup          `json:"commits"`
+	Commits       commit.Reader          `json:"commits"`
 	Transactions  unitofwork.Manager     `json:"transactions"`
 	Tasks         task.Lister            `json:"tasks"`
 	Flow          flow.Controller        `json:"flow"`
@@ -224,6 +224,46 @@ func (s *Query) Inbox(ctx context.Context, token string) ([]api.Pending, error) 
 			}
 		}
 		out = append(out, blocked...)
+		return nil
+	})
+	return out, e
+}
+
+// Overview reads, for every task the caller may read, the facts a list shows
+// beside the task. Nothing is stored for it.
+func (s *Query) Overview(ctx context.Context, token string) ([]api.Overview, error) {
+	out := []api.Overview{}
+	e := s.d.Transactions.Do(ctx, func(tx context.Context) error {
+		p, e := s.d.Identity.Authenticate(tx, token)
+		if e != nil {
+			return e
+		}
+		ts, e := s.d.Tasks.ListTasks(tx, p.Tenant)
+		if e != nil {
+			return e
+		}
+		for _, t := range ts {
+			if s.d.Authorization.Check(tx, p, "task.read", t.ID) != nil {
+				continue
+			}
+			v := api.Overview{TaskID: t.ID}
+			if v.Assignee, e = s.d.Executions.Assignee(tx, t.Tenant, t.ID); e != nil && !errors.Is(e, fault.ErrNotFound) {
+				return e
+			}
+			l, e := s.d.Plan.Parent(tx, t.Tenant, t.ID)
+			if e == nil {
+				v.ParentID = l.ParentID
+			} else if !errors.Is(e, fault.ErrNotFound) {
+				return e
+			}
+			c, e := s.d.Commits.Last(tx, t.Tenant, t.ID)
+			if e == nil {
+				v.UpdatedAt = c.CreatedAt
+			} else if !errors.Is(e, fault.ErrNotFound) {
+				return e
+			}
+			out = append(out, v)
+		}
 		return nil
 	})
 	return out, e

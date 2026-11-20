@@ -72,17 +72,20 @@
 | POST /restart | RoundID；重开已取消的任务为新一轮；活跃与已完成任务返回冲突（活跃任务用验收退回、转交或修改约定） |
 | POST /questions | RoundID、Body、可选 Addressee（空为负责人；可为任一有效成员，不在任务中时同事务加为参与者，使其可读任务并回答） |
 | POST /questions/{qid}/answer | Body；仅被提问人回答当前轮问题 |
+| POST /questions/{qid}/close | Reason（必填）；提问人撤回或负责人关闭当前轮未答问题，写 `question.closed` commit 并视同已结，不再阻止完成；被提问人用回答，不能关闭 |
 
 以上写命令成功（含幂等重放）后，响应是调用者此刻的受权快照，与 `GET /workflow` 相同；命令本身只返回并回执 `Ref`（TaskID、命令后的 RoundID、新开的 ExecutionID），因此重放看到的是当前事实，不是写入当时的旧状态。
 
 快照包含流程位置（Status、RoundID、Acceptance、推导的 State 与 Waiting）、处理人、当前执行、当前交付及正文、当前结论（CommitID、Reviewer、Outcome、Reason、BasisVersion；待验收时合成 pending）、未答问题，以及：
 
 - `NextActor`：owner / assignee / reviewer / addressee；空表示没有固定角色需要行动。`Position.WaitingOnSubtasks`（等待必需子任务）时为空，除非本轮有未答问题（仍为 addressee）：下一步在子任务上，由子任务各自的 NextActor 承接。
-- `Viewer` 与 `Participants`：当前查看者的 subject，以及任务当前参与者（负责人加入、被分配或被提问的成员）。
+- `Viewer` 与 `Participants`：当前查看者的 subject，以及任务当前参与者（负责人加入、被分配或被提问的成员；负责人本人已有全部权限，分配给自己时不记参与）。
 - `Can*` 与 `Blocked`：当前查看者能否认领/提交/验收及不能的原因码（如 `not_assigned`、`execution_in_progress`、`basis_changed`、`not_reviewer`、`required_children_pending`，完整列表见 `cap/workflow`）。
 - `Parent`、`Children`、`HiddenRequired`：调用者可读的直接父任务（含本任务是否被它必需）与直接子任务（标题、是否必需、阶段与步骤）；不可读的必需子任务只置 `HiddenRequired`，列表不含其标题或状态（ID 不是秘密，时间线可见，见[任务拆分](core-contracts.md#任务拆分)）。二者出自同一判断函数；它们只是提示，命令写入时重新检查。
 
-`GET /v1/inbox` 列出当前调用者可读且 NextActor 指向自己的任务，其后列出调用者负责或处理、正在阻塞的任务（`WaitingOnSubtasks: true`，无 NextActor）：仍属于调用者，但暂时无事可做；最后一个必需子任务完成后自动回到前一类。与快照共用同一推导，不保存收件箱记录。工作台"等我处理"计数只算前一类，阻塞任务带"阻塞"标记，阶段筛选可选"已阻塞"。
+`GET /v1/inbox` 列出当前调用者可读且 NextActor 指向自己的任务，其后列出调用者负责或处理、正在阻塞的任务（`WaitingOnSubtasks: true`，无 NextActor）：仍属于调用者，但暂时无事可做；最后一个必需子任务完成后自动回到前一类。与快照共用同一推导，不保存收件箱记录。工作台"等我处理"计数只算前一类，阻塞任务带"阻塞"标记，状态筛选可选"已阻塞"。
+
+`GET /v1/overview` 为调用者可读的每个任务给出列表所需的推导事实：`Assignee`（当前处理人）、`ParentID`（直接父任务；ID 不是秘密，标题只在可读时由调用者自己的列表得到）、`UpdatedAt`（时间线最后一条 commit 的时间）。不保存，每次读取时推导。
 
 ## 变化补拉
 

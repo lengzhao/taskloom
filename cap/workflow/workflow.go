@@ -2,6 +2,7 @@ package workflow
 
 import (
 	"context"
+	"time"
 	"github.com/lengzhao/taskloom/cap/acceptance"
 	"github.com/lengzhao/taskloom/cap/commit"
 	"github.com/lengzhao/taskloom/cap/delivery"
@@ -112,6 +113,16 @@ type Answer struct {
 	TaskID, QuestionID, Body string
 }
 
+// CloseQuestion ends an open question without its answer, so it no longer
+// holds completion. Only the asker or the task owner may close it, with a
+// reason; the closing commit settles the question as an answer would.
+type CloseQuestion struct {
+	TaskID, QuestionID, Reason string
+}
+
+// KindQuestionClosed is the commit kind of a question closed without an answer.
+const KindQuestionClosed = "question.closed"
+
 // Ref is what a command fixed: the task, the round it left the task in and,
 // when it opened one, the execution. Its receipt stores only this, so a replay
 // returns the same Ref; callers read current facts through Queries.
@@ -123,6 +134,7 @@ type Ref struct {
 type QuestionCommands interface {
 	Ask(ctx context.Context, token, key string, in Ask) (Ref, error)
 	Answer(ctx context.Context, token, key string, in Answer) (Ref, error)
+	Close(ctx context.Context, token, key string, in CloseQuestion) (Ref, error)
 }
 type ExecutionCommands interface {
 	Assign(ctx context.Context, token, key string, in Assignment) (Ref, error)
@@ -145,9 +157,19 @@ type Pending struct {
 	NextActor         Actor
 	WaitingOnSubtasks bool `json:",omitempty"`
 }
+// Overview is what a task list shows beside the task itself, all derived
+// from facts: who handles it, its direct parent (an ID is not a secret; its
+// title shows only if readable) and when its timeline last changed.
+type Overview struct {
+	TaskID, Assignee, ParentID string `json:",omitempty"`
+	UpdatedAt                  time.Time
+}
+
 type Queries interface {
 	Read(ctx context.Context, token, taskID string) (Snapshot, error)
 	// Inbox lists readable active tasks currently waiting on the caller, then
 	// the caller's own tasks marked WaitingOnSubtasks with no NextActor.
 	Inbox(ctx context.Context, token string) ([]Pending, error)
+	// Overview lists every task the caller may read, for the task list.
+	Overview(ctx context.Context, token string) ([]Overview, error)
 }

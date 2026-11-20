@@ -75,6 +75,10 @@ func (x questionCommands) Answer(ctx context.Context, token, key string, in api.
 	ref, e := x.c.Answer(ctx, token, key, in)
 	return x.after(ctx, token, ref, e)
 }
+func (x questionCommands) Close(ctx context.Context, token, key string, in api.CloseQuestion) (api.Snapshot, error) {
+	ref, e := x.c.Close(ctx, token, key, in)
+	return x.after(ctx, token, ref, e)
+}
 
 func (f *fixture) questions() questionCommands {
 	c, _ := build.GetByID[api.QuestionCommands](f.graph, "question-commands")

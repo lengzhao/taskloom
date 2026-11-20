@@ -59,6 +59,17 @@ func (s *Store) Get(ctx context.Context, tenant, taskID, id string) (commit.Comm
 	})
 	return c, err
 }
+func (s *Store) Last(ctx context.Context, tenant, taskID string) (commit.Commit, error) {
+	var c commit.Commit
+	err := s.use(ctx, false, func(db *gorm.DB) error {
+		var row commitRow
+		if err := db.Where("task_key = ?", key(tenant, taskID)).Order("sequence DESC").First(&row).Error; err != nil {
+			return err
+		}
+		return json.Unmarshal(row.Data, &c)
+	})
+	return c, err
+}
 func (s *Store) List(ctx context.Context, tenant, taskID string, after int64, limit int) ([]commit.Commit, error) {
 	if limit < 1 || limit > 500 {
 		limit = 100

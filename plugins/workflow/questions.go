@@ -3,7 +3,6 @@ package workflow
 import (
 	"context"
 	"strings"
-	"time"
 
 	"github.com/lengzhao/pluginkit"
 	az "github.com/lengzhao/taskloom/cap/authorization"
@@ -112,7 +111,7 @@ func (m *QuestionModule) Ask(ctx context.Context, token, key string, in api.Ask)
 		if e != nil {
 			return api.Ref{}, e
 		}
-		if e = m.d.Questions.CreateQuestion(tx, question.Question{Tenant: t.Tenant, TaskID: t.ID, ID: id(), RoundID: pos.RoundID, CommitID: c.ID, Asker: p.ID, Addressee: to, Status: question.StatusOpen, CreatedAt: time.Now()}); e != nil {
+		if e = m.d.Questions.CreateQuestion(tx, question.Question{Tenant: t.Tenant, TaskID: t.ID, ID: id(), RoundID: pos.RoundID, CommitID: c.ID, Addressee: to}); e != nil {
 			return api.Ref{}, e
 		}
 		if e = m.d.Progress.RecordProgress(tx, p, t.Tenant, t.ID); e != nil {
@@ -140,14 +139,14 @@ func (m *QuestionModule) Answer(ctx context.Context, token, key string, in api.A
 		if p.ID != q.Addressee {
 			return api.Ref{}, az.ErrForbidden
 		}
-		if q.Status != question.StatusOpen || q.RoundID != pos.RoundID {
+		if q.AnswerCommitID != "" || q.RoundID != pos.RoundID {
 			return api.Ref{}, fault.ErrConflict
 		}
 		c, e := m.appendCommit(tx, p, t, "answer", in.Body, q.CommitID)
 		if e != nil {
 			return api.Ref{}, e
 		}
-		q.Status, q.AnswerCommitID, q.AnsweredBy = question.StatusAnswered, c.ID, p.ID
+		q.AnswerCommitID = c.ID
 		if e = m.d.Questions.AnswerQuestion(tx, q); e != nil {
 			return api.Ref{}, e
 		}

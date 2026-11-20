@@ -48,8 +48,8 @@ func TestOpenQuestionWaitsOnOwnerAndHoldsCompletion(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	sub := *s.Submission
-	if s, e = f.results.Review(f.ctx, f.owner, "approve", api.Review{TaskID: d.Task.ID, Verdict: acceptance.Verdict{SubmissionID: sub.ID, CommitID: sub.CommitID, Outcome: "approved"}}); e != nil {
+	sub := *s.Result
+	if s, e = f.results.Review(f.ctx, f.owner, "approve", api.Review{TaskID: d.Task.ID, Verdict: acceptance.Verdict{CommitID: sub.CommitID, Outcome: "approved"}}); e != nil {
 		t.Fatal(e)
 	}
 	s = f.read(t, d.Task.ID)
@@ -151,7 +151,7 @@ func TestQuestionToParticipantWaitsOnThem(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	if s, e = f.results.Review(f.ctx, f.owner, "approve", api.Review{TaskID: d.Task.ID, Verdict: acceptance.Verdict{SubmissionID: s.Submission.ID, CommitID: s.Submission.CommitID, Outcome: "approved"}}); e != nil || s.Position.Status == "completed" {
+	if s, e = f.results.Review(f.ctx, f.owner, "approve", api.Review{TaskID: d.Task.ID, Verdict: acceptance.Verdict{CommitID: s.Result.CommitID, Outcome: "approved"}}); e != nil || s.Position.Status == "completed" {
 		t.Fatal("completed before the helper answered", e, s.Position)
 	}
 	if s, e = qs.Answer(f.ctx, helper, "helper-answer", api.Answer{TaskID: d.Task.ID, QuestionID: q.ID, Body: "用 Bearer 令牌"}); e != nil || s.Position.Status != "completed" {

@@ -1,10 +1,7 @@
 // Package catalog describes tenant workspace metadata and lightweight projects.
 package catalog
 
-import (
-	"context"
-	az "github.com/lengzhao/taskloom/cap/authorization"
-)
+import "context"
 
 type Space struct {
 	Tenant, Name, Description string
@@ -27,13 +24,10 @@ type ProjectEdit struct {
 type ProjectReader interface {
 	GetProject(context.Context, string, string) (Project, error)
 }
-type Reader interface {
+type Store interface {
 	ProjectReader
 	GetSpace(context.Context, string) (Space, error)
 	ListProjects(context.Context, string) ([]Project, error)
-}
-type Store interface {
-	Reader
 	// SaveSpace and SaveProject create or replace; the catalog command checks
 	// the client's expected version under the global write lock first.
 	SaveSpace(context.Context, Space) error
@@ -44,7 +38,6 @@ type Store interface {
 // a space is identified by the tenant, a project by its ID. Callers read
 // current facts through Space and Project, so a replay never shows stale ones.
 type Service interface {
-	People(context.Context, string) ([]az.MemberOption, error)
 	Space(context.Context, string) (Space, error)
 	EditSpace(context.Context, string, string, SpaceEdit) error
 	Projects(context.Context, string) ([]Project, error)

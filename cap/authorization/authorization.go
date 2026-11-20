@@ -20,10 +20,6 @@ type MemberReader interface {
 }
 type MemberStore interface {
 	MemberReader
-	MemberWriter
-}
-
-type MemberWriter interface {
 	SetMember(ctx context.Context, value Member) error
 }
 

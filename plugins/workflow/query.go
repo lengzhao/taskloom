@@ -12,6 +12,7 @@ import (
 	"github.com/lengzhao/taskloom/cap/fault"
 	"github.com/lengzhao/taskloom/cap/flow"
 	"github.com/lengzhao/taskloom/cap/identity"
+	"github.com/lengzhao/taskloom/cap/plan"
 	"github.com/lengzhao/taskloom/cap/question"
 	"github.com/lengzhao/taskloom/cap/task"
 	"github.com/lengzhao/taskloom/cap/unitofwork"
@@ -29,14 +30,16 @@ type QueryDeps struct {
 	Identity      identity.Authenticator `json:"identity"`
 	Authorization az.Authorizer          `json:"authorization"`
 	// Questions keeps the snapshot and "waiting on" in step with open requests
-	// for input; the query stays a read-only aggregation of ten readers.
+	// for input; the query stays a read-only aggregation of eleven readers.
 	Questions question.Reader `json:"questions"`
+	// Plan shows the direct parent and subtasks, filtered by what the viewer may read.
+	Plan plan.Reader `json:"plan"`
 }
 type Query struct{ d QueryDeps }
 
 func init() {
 	pluginkit.Register("query/workflow", func(_ struct{}, d QueryDeps) (*Query, error) {
-		if d.Commits == nil || d.Transactions == nil || d.Tasks == nil || d.Flow == nil || d.Executions == nil || d.Results == nil || d.Reviews == nil || d.Identity == nil || d.Authorization == nil || d.Questions == nil {
+		if d.Commits == nil || d.Transactions == nil || d.Tasks == nil || d.Flow == nil || d.Executions == nil || d.Results == nil || d.Reviews == nil || d.Identity == nil || d.Authorization == nil || d.Questions == nil || d.Plan == nil {
 			return nil, fault.ErrInput
 		}
 		return &Query{d}, nil
@@ -60,9 +63,9 @@ func (s *Query) ReadFacts(ctx context.Context, t task.Task) (api.Snapshot, error
 	} else if !errors.Is(e, fault.ErrNotFound) {
 		return out, e
 	}
-	v, e := s.d.Results.CurrentSubmission(ctx, t.Tenant, t.ID, pos.RoundID)
+	v, e := s.d.Results.CurrentResult(ctx, t.Tenant, t.ID, pos.RoundID)
 	if e == nil {
-		out.Submission = &v
+		out.Result = &v
 		c, e := s.d.Commits.Get(ctx, t.Tenant, t.ID, v.CommitID)
 		if e != nil {
 			return out, e
@@ -70,13 +73,12 @@ func (s *Query) ReadFacts(ctx context.Context, t task.Task) (api.Snapshot, error
 		out.ResultCommit = &c
 		r, e := s.d.Reviews.LatestReview(ctx, t.Tenant, t.ID, v.CommitID)
 		if e == nil {
-			r.RoundID, r.SubmissionID = pos.RoundID, v.ID
 			out.Review = &r
 		} else if !errors.Is(e, fault.ErrNotFound) {
 			return out, e
 		} else if pos.State == flow.StepAccepting {
 			// A result awaiting acceptance with no verdict yet is pending; nothing is stored for it.
-			out.Review = &acceptance.Review{Tenant: t.Tenant, TaskID: t.ID, RoundID: pos.RoundID, SubmissionID: v.ID, CommitID: v.CommitID, Reviewer: t.Owner, Outcome: acceptance.OutcomePending, BasisVersion: v.BasisVersion}
+			out.Review = &acceptance.Review{CommitID: v.CommitID, Reviewer: t.Owner, Outcome: acceptance.OutcomePending, BasisVersion: c.BasisVersion}
 		}
 	} else if !errors.Is(e, fault.ErrNotFound) {
 		return out, e
@@ -109,7 +111,6 @@ func (s *Query) Read(ctx context.Context, token, taskID string) (api.Snapshot, e
 		}
 		out, e = s.ReadFacts(tx, t)
 		if e == nil {
-			out.ViewerKind = p.Kind
 			out.CanAssign = s.d.Authorization.Check(tx, p, "execution.assign", taskID) == nil
 			out.CanManage = s.d.Authorization.Check(tx, p, "task.cancel", taskID) == nil
 			blocked := map[string]string{}
@@ -123,7 +124,18 @@ func (s *Query) Read(ctx context.Context, token, taskID string) (api.Snapshot, e
 			out.CanReview = why(api.ActionReview, reviewBlock(p, t, out), out.Review != nil)
 			out.CanOpen = why(api.ActionOpen, s.openBlock(tx, p, t, out), worker)
 			if out.Execution != nil {
-				out.CanSubmit = why(api.ActionSubmit, submitBlock(p, t, out.Position, *out.Execution), worker)
+				code := submitBlock(p, t, out.Position, *out.Execution)
+				if code == "" {
+					if e := s.d.Flow.CheckSubmit(tx, t); errors.Is(e, fault.ErrConflict) {
+						code = api.ReasonChildrenPending
+					} else if e != nil {
+						return e
+					}
+				}
+				out.CanSubmit = why(api.ActionSubmit, code, worker)
+			}
+			if e = s.relations(tx, p, t, &out); e != nil {
+				return e
 			}
 			if len(blocked) > 0 {
 				out.Blocked = blocked
@@ -132,6 +144,48 @@ func (s *Query) Read(ctx context.Context, token, taskID string) (api.Snapshot, e
 		return e
 	})
 	return out, e
+}
+
+// relations fills the direct parent and subtasks the viewer may read.
+func (s *Query) relations(ctx context.Context, p identity.Principal, t task.Task, out *api.Snapshot) error {
+	view := func(id string, required bool) (*api.PlanTask, error) {
+		if s.d.Authorization.Check(ctx, p, "task.read", id) != nil {
+			return nil, nil
+		}
+		other, e := s.d.Tasks.GetTask(ctx, t.Tenant, id)
+		if e != nil {
+			return nil, e
+		}
+		pos, e := s.d.Flow.Read(ctx, other)
+		if e != nil {
+			return nil, e
+		}
+		return &api.PlanTask{TaskID: other.ID, Title: other.Title, Required: required, Status: pos.Status, State: pos.State}, nil
+	}
+	l, e := s.d.Plan.Parent(ctx, t.Tenant, t.ID)
+	if e == nil {
+		if out.Parent, e = view(l.ParentID, l.Required); e != nil {
+			return e
+		}
+	} else if !errors.Is(e, fault.ErrNotFound) {
+		return e
+	}
+	children, e := s.d.Plan.Children(ctx, t.Tenant, t.ID)
+	if e != nil {
+		return e
+	}
+	for _, c := range children {
+		v, e := view(c.ChildID, c.Required)
+		if e != nil {
+			return e
+		}
+		if v == nil {
+			out.HiddenRequired = out.HiddenRequired || c.Required
+			continue
+		}
+		out.Children = append(out.Children, *v)
+	}
+	return nil
 }
 
 // Inbox derives "waiting on me" from the same facts as Read; it keeps no
@@ -147,6 +201,7 @@ func (s *Query) Inbox(ctx context.Context, token string) ([]api.Pending, error) 
 		if e != nil {
 			return e
 		}
+		blocked := []api.Pending{}
 		for _, t := range ts {
 			if s.d.Authorization.Check(tx, p, "task.read", t.ID) != nil {
 				continue
@@ -157,8 +212,11 @@ func (s *Query) Inbox(ctx context.Context, token string) ([]api.Pending, error) 
 			}
 			if waitsOn(p, t, v) {
 				out = append(out, api.Pending{TaskID: t.ID, Title: t.Title, NextActor: v.NextActor})
+			} else if v.Position.WaitingOnSubtasks && (v.Assignee == p.ID || (p.Kind == "human" && p.ID == t.Owner)) {
+				blocked = append(blocked, api.Pending{TaskID: t.ID, Title: t.Title, WaitingOnSubtasks: true})
 			}
 		}
+		out = append(out, blocked...)
 		return nil
 	})
 	return out, e
@@ -216,11 +274,17 @@ func (s *Query) openBlock(ctx context.Context, p identity.Principal, t task.Task
 	return ""
 }
 
-func ownExecution(p identity.Principal, v execution.Execution) bool {
-	if v.Manual {
-		return p.Kind == "human" && v.Subject == p.ID
+// agentCredential is the credential an execution by p is bound to: an Agent's
+// own credential, or none for a person.
+func agentCredential(p identity.Principal) string {
+	if p.Kind == "agent" {
+		return p.CredentialID
 	}
-	return p.Kind == "agent" && v.Subject == p.ID && v.CredentialID == p.CredentialID
+	return ""
+}
+
+func ownExecution(p identity.Principal, v execution.Execution) bool {
+	return v.Subject == p.ID && v.CredentialID == agentCredential(p)
 }
 
 func submitBlock(p identity.Principal, t task.Task, pos flow.Position, v execution.Execution) string {
@@ -248,6 +312,10 @@ func nextActor(out api.Snapshot) api.Actor {
 	case len(out.Questions) > 0:
 		// Whoever was asked must answer before the task can complete.
 		return api.ActorAddressee
+	case pos.WaitingOnSubtasks:
+		// The next move is on the required subtasks, which reach their own
+		// actors; nobody on this task is waited on until they complete.
+		return ""
 	case pos.State == flow.StepReady:
 		return api.ActorOwner
 	case pos.State == flow.StepAccepting && out.Review != nil && out.Review.Outcome == acceptance.OutcomePending:

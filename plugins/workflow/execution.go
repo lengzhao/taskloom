@@ -78,7 +78,7 @@ func (m *ExecutionModule) Open(ctx context.Context, token, key string, in api.Op
 		} else if !errors.Is(e, fault.ErrNotFound) {
 			return api.Ref{}, e
 		}
-		v, e := m.start(tx, t, pos, p.ID, p.Kind == "human", p.CredentialID)
+		v, e := m.start(tx, t, pos, p.ID, agentCredential(p))
 		if e != nil {
 			return api.Ref{}, e
 		}
@@ -124,7 +124,7 @@ func (m *ExecutionModule) Assign(ctx context.Context, token, key string, in api.
 		// An Agent still claims, binding the execution to one credential.
 		var started execution.Execution
 		if subject.Kind == "human" {
-			if started, e = m.start(tx, t, pos, subject.ID, true, ""); e != nil {
+			if started, e = m.start(tx, t, pos, subject.ID, ""); e != nil {
 				return api.Ref{}, e
 			}
 		}
@@ -134,14 +134,10 @@ func (m *ExecutionModule) Assign(ctx context.Context, token, key string, in api.
 	})
 }
 
-// start opens a writable execution on the current round and basis. Human work
-// is manual and not bound to a credential; Agent work is bound to the
-// credential that claimed it.
-func (m *ExecutionModule) start(ctx context.Context, t task.Task, pos flow.Position, subject string, manual bool, credential string) (execution.Execution, error) {
-	v := execution.Execution{Tenant: t.Tenant, TaskID: t.ID, ID: id(), RoundID: pos.RoundID, Subject: subject, BasisVersion: t.BasisVersion, Writable: true, Manual: manual, ProgressAt: time.Now()}
-	if !manual {
-		v.CredentialID = credential
-	}
+// start opens a writable execution on the current round and basis. Agent work
+// is bound to the credential that claimed it; human work passes no credential.
+func (m *ExecutionModule) start(ctx context.Context, t task.Task, pos flow.Position, subject, credential string) (execution.Execution, error) {
+	v := execution.Execution{Tenant: t.Tenant, TaskID: t.ID, ID: id(), RoundID: pos.RoundID, Subject: subject, CredentialID: credential, BasisVersion: t.BasisVersion, Writable: true, ProgressAt: time.Now()}
 	return m.d.Executions.OpenExecution(ctx, v)
 }
 

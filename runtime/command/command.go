@@ -77,11 +77,6 @@ func (r *Runner) Do(ctx context.Context, req capcommand.Request, digest string, 
 		if err != nil {
 			return err
 		}
-		if req.ReadOperation != "" {
-			if err = r.d.Authorization.Check(tx, actor, req.ReadOperation, req.Resource); err != nil {
-				return err
-			}
-		}
 		key := record.RequestKey{Tenant: actor.Tenant, Subject: actor.ID, Operation: req.Operation, Key: req.Key}
 		old, err := r.d.Requests.FindReceipt(tx, key)
 		if err == nil {

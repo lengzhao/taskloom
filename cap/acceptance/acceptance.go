@@ -16,16 +16,18 @@ const (
 	OutcomeRejected = "rejected"
 )
 
+// Review carries only what readers decide on: which result it judges, who
+// judged it on which basis, and the outcome with its reason.
 type Review struct {
-	Tenant, TaskID, ID, RoundID, SubmissionID, CommitID, Reviewer, Outcome, Reason string
-	BasisVersion                                                                   int64
+	CommitID, Reviewer, Outcome, Reason string
+	BasisVersion                        int64
 }
 
 // Reader finds the latest verdict commit referring to a result commit.
 type Reader interface {
 	LatestReview(ctx context.Context, tenant, taskID, resultCommitID string) (Review, error)
 }
-type Verdict struct{ SubmissionID, CommitID, Outcome, Reason string }
+type Verdict struct{ CommitID, Outcome, Reason string }
 
 // Kind returns the commit kind recording an outcome.
 func Kind(outcome string) string {

@@ -200,19 +200,3 @@ func (s *Service) SaveProject(ctx context.Context, token, key string, in api.Pro
 	}
 	return id, e
 }
-
-func (s *Service) People(ctx context.Context, token string) ([]az.MemberOption, error) {
-	var out []az.MemberOption
-	e := s.d.Transactions.Do(ctx, func(tx context.Context) error {
-		p, e := s.actor(tx, token)
-		if e != nil {
-			return e
-		}
-		if p.Kind != "human" {
-			return az.ErrForbidden
-		}
-		out, e = s.d.Members.ListActiveMembers(tx, p.Tenant)
-		return e
-	})
-	return out, e
-}

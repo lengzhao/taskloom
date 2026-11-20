@@ -32,7 +32,7 @@ func open(t *testing.T) *store.Store {
 
 func controller(t *testing.T, s *store.Store, mode capflow.Acceptance) *flow.Controller {
 	t.Helper()
-	c, e := flow.New(flow.Config{Acceptance: mode}, flow.Deps{Positions: s, Results: s, Reviews: s, Questions: s, Executions: s})
+	c, e := flow.New(flow.Config{Acceptance: mode}, flow.Deps{Positions: s, Results: s, Reviews: s, Questions: s, Commits: s, Plan: s})
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -67,8 +67,8 @@ func TestStepIsDerivedFromFacts(t *testing.T) {
 		if e = s.Append(ctx, commit.Commit{Tenant: "t", TaskID: "a", ID: "c1", Kind: "result", Body: "r", Author: "x", BasisVersion: 1}); e != nil {
 			return e
 		}
-		sub := delivery.Submission{Tenant: "t", TaskID: "a", ID: "s1", RoundID: p.RoundID, CommitID: "c1", BasisVersion: 1}
-		if e = s.RegisterSubmission(ctx, sub); e != nil {
+		sub := delivery.Result{Tenant: "t", TaskID: "a", RoundID: p.RoundID, CommitID: "c1"}
+		if e = s.RegisterResult(ctx, sub); e != nil {
 			return e
 		}
 		p, e = c.Refresh(ctx, tk)
@@ -77,7 +77,10 @@ func TestStepIsDerivedFromFacts(t *testing.T) {
 		stale.BasisVersion = 2
 		p, e = c.Read(ctx, stale)
 		expect(t, p, e, capflow.PhaseActive, capflow.StepExecuting, "结果依据已失效")
-		if e = s.CreateQuestion(ctx, question.Question{Tenant: "t", TaskID: "a", ID: "q", RoundID: p.RoundID, Asker: "x", Addressee: "u", Status: question.StatusOpen}); e != nil {
+		if e = s.Append(ctx, commit.Commit{Tenant: "t", TaskID: "a", ID: "qc", Kind: "question", Body: "?", Author: "x", BasisVersion: 1}); e != nil {
+			return e
+		}
+		if e = s.CreateQuestion(ctx, question.Question{Tenant: "t", TaskID: "a", ID: "q", RoundID: p.RoundID, CommitID: "qc", Addressee: "u"}); e != nil {
 			return e
 		}
 		// A verdict is a commit referring to the result.
@@ -90,14 +93,19 @@ func TestStepIsDerivedFromFacts(t *testing.T) {
 		if e != nil {
 			return e
 		}
-		q.Status = question.StatusAnswered
+		q.AnswerCommitID = "answer"
 		if e = s.AnswerQuestion(ctx, q); e != nil {
 			return e
 		}
 		p, e = c.Refresh(ctx, tk)
 		expect(t, p, e, capflow.PhaseCompleted, capflow.StepCompleted, "")
-		p, e = c.Restart(ctx, tk)
-		expect(t, p, e, capflow.PhaseActive, capflow.StepExecuting, "等待有效结果提交")
+		// Completed is final: rework is a new task.
+		if _, e = c.Restart(ctx, tk); !errors.Is(e, fault.ErrConflict) {
+			t.Fatal("completed task restarted", e)
+		}
+		if p, e = c.Read(ctx, tk); e != nil || p.Status != capflow.PhaseCompleted {
+			t.Fatal("rejected restart changed the task", p, e)
+		}
 		return nil
 	})
 	if e != nil {
@@ -119,7 +127,10 @@ func TestAcceptanceIsFixedPerTask(t *testing.T) {
 		if e != nil {
 			return e
 		}
-		if e = s.RegisterSubmission(ctx, delivery.Submission{Tenant: "t", TaskID: "a", ID: "s1", RoundID: p.RoundID, CommitID: "c1", BasisVersion: 1}); e != nil {
+		if e = s.Append(ctx, commit.Commit{Tenant: "t", TaskID: "a", ID: "c1", Kind: "result", Body: "r", Author: "x", BasisVersion: 1}); e != nil {
+			return e
+		}
+		if e = s.RegisterResult(ctx, delivery.Result{Tenant: "t", TaskID: "a", RoundID: p.RoundID, CommitID: "c1"}); e != nil {
 			return e
 		}
 		// The deployment switched to no acceptance; this task still waits for review.
@@ -139,7 +150,7 @@ func TestAcceptanceIsFixedPerTask(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	if _, e = flow.New(flow.Config{Acceptance: "maybe"}, flow.Deps{Positions: s, Results: s, Reviews: s, Questions: s, Executions: s}); e == nil {
+	if _, e = flow.New(flow.Config{Acceptance: "maybe"}, flow.Deps{Positions: s, Results: s, Reviews: s, Questions: s, Commits: s, Plan: s}); e == nil {
 		t.Fatal("unknown acceptance mode accepted")
 	}
 }

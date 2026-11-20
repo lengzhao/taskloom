@@ -9,14 +9,9 @@ type Resource interface {
 	Close(ctx context.Context) error
 }
 
-// Component.Run blocks until stopped or failed. Both methods must honor cancellation.
+// Component.Run blocks until stopped or failed. The server root is also a Component. Both methods must honor cancellation.
 // Stop may race with Run starting, and must be idempotent.
 type Component interface {
-	Run(ctx context.Context) error
-	Stop(ctx context.Context) error
-}
-
-type App interface {
 	Run(ctx context.Context) error
 	Stop(ctx context.Context) error
 }

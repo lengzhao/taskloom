@@ -77,6 +77,7 @@ dialog::backdrop { background: #0006 }
 .pill.done { background: var(--ok-soft); color: var(--ok); border-color: transparent }
 .pill.stopped { background: var(--danger-soft); color: var(--danger); border-color: transparent }
 .pill.mine { background: var(--warn-soft); color: var(--warn); border-color: transparent }
+.pill.blocked { background: var(--bg); color: var(--warn); border-color: var(--warn) }
 
 /* Detail */
 .head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px }
@@ -161,7 +162,7 @@ details[open] > summary { margin-bottom: 4px }
     <div class="toolbar">
      <input id="task-search" aria-label="搜索任务" placeholder="搜索标题、目标或任务编号">
      <select id="project-filter" aria-label="筛选项目"></select>
-     <select id="status-filter" aria-label="筛选阶段"><option value="">全部阶段</option><option value="ready">待处理</option><option value="executing">处理中</option><option value="accepting">待验收</option><option value="completed">已完成</option><option value="cancelled">已取消</option></select>
+     <select id="status-filter" aria-label="筛选阶段"><option value="">全部阶段</option><option value="ready">待处理</option><option value="executing">处理中</option><option value="blocked">已阻塞</option><option value="accepting">待验收</option><option value="completed">已完成</option><option value="cancelled">已取消</option></select>
      <select id="task-layout" aria-label="任务视图"><option value="list">列表</option><option value="board">看板</option></select>
     </div>
     <details id="create-box"><summary>+ 新建任务</summary>
@@ -222,10 +223,11 @@ const REASON_LABEL = {
   round_changed: '任务已进入新一轮',
   basis_changed: '任务依据已更新，需要重新认领',
   not_reviewer: '你不是本任务验收人',
+  required_children_pending: '必需子任务尚未全部完成',
 };
 const execLabel = (ex, pos) => pos && pos.Status !== 'active' ? '任务已结束' : ex.Writable ? '进行中' : '已失效（不能再写入）';
 const OUTCOME_LABEL = { pending: '待验收', approved: '已通过', rejected: '未通过' };
-const KIND_LABEL = { comment: '留言', result: '结果', question: '提问', answer: '回答', 'review.approved': '验收通过', 'review.rejected': '验收退回', 'task.created': '创建任务', 'task.basis': '修改约定' };
+const KIND_LABEL = { comment: '留言', result: '结果', question: '提问', answer: '回答', 'review.approved': '验收通过', 'review.rejected': '验收退回', 'task.created': '创建任务', 'task.basis': '修改约定', 'plan.changed': '调整子任务' };
 
 // ---------- State ----------
 const $ = id => document.getElementById(id);
@@ -233,6 +235,7 @@ const prefix = location.pathname.replace(/\/app$/, '');
 const retryKeys = new Map();
 let selected = '', cursor = '', busy = false, pendingRefresh = false, view = 'mine';
 let inboxIDs = new Set(); // tasks currently waiting on the signed-in user
+let blockedMine = new Set(); // the user's own tasks waiting on required subtasks
 
 // ---------- Helpers ----------
 function el(tag, text, cls) {
@@ -316,7 +319,7 @@ function showLogin() {
   $('project-dialog').close();$('catalog-content').replaceChildren();projectID='';
   $('members-dialog').close();
   $('members-content').replaceChildren();
-  selected = ''; cursor = ''; inboxIDs = new Set();
+  selected = ''; cursor = ''; inboxIDs = new Set(); blockedMine = new Set();
   $('detail').replaceChildren(h('div', 'panel empty', '选择左侧任务，或新建一个任务。'));
   $('tasks').replaceChildren();
   $('work').hidden = true; $('login').hidden = false; $('logout').hidden = true;
@@ -337,7 +340,7 @@ let spaceInfo=null, projects=[], projectID='', taskCache=[], inboxMap=new Map(),
 // ---------- Task list ----------
 async function list() {
  const [tasks,inbox,ps,sp]=await Promise.all([api('/tasks'),api('/inbox'),api('/projects'),api('/space')]);
- taskCache=tasks;projects=ps;spaceInfo=sp;inboxMap=new Map(inbox.map(x=>[x.TaskID,x.NextActor]));inboxIDs=new Set(inboxMap.keys());
+ taskCache=tasks;projects=ps;spaceInfo=sp;inboxMap=new Map(inbox.filter(x=>!x.WaitingOnSubtasks).map(x=>[x.TaskID,x.NextActor]));inboxIDs=new Set(inboxMap.keys());blockedMine=new Set(inbox.filter(x=>x.WaitingOnSubtasks).map(x=>x.TaskID));
  $('space-name').textContent=sp.Name;$('mine-count').hidden=!inboxMap.size;$('mine-count').textContent=inboxMap.size;
  for(const name of ['mine','all','projects','space'])$('tab-'+name).classList.toggle('on',view===name);
  const prev=$('project-filter').value;projectOptions($('project-filter'),true);$('project-filter').value=prev;
@@ -394,19 +397,19 @@ function renderBrowse(){
 let showArchived=false;
 function renderTasks(){
  const search=$('task-search').value.trim().toLowerCase(),filter=$('project-filter').value,status=$('status-filter').value;
- const shown=taskCache.filter(d=>(view!=='mine'||inboxIDs.has(d.Task.ID))&&(view!=='project'||d.Task.ProjectID===projectID)&&(!filter||view==='project'||(filter==='none'?!d.Task.ProjectID:d.Task.ProjectID===filter))&&(!status||(d.Position.Status==='active'?d.Position.State: d.Position.Status)===status)&&(!search||[d.Task.Title,d.Task.Goal,d.Task.ID].some(x=>(x||'').toLowerCase().includes(search))));
+ const shown=taskCache.filter(d=>(view!=='mine'||inboxIDs.has(d.Task.ID)||blockedMine.has(d.Task.ID))&&(view!=='project'||d.Task.ProjectID===projectID)&&(!filter||view==='project'||(filter==='none'?!d.Task.ProjectID:d.Task.ProjectID===filter))&&(!status||(status==='blocked'?!!d.Position.WaitingOnSubtasks:(d.Position.Status==='active'?d.Position.State: d.Position.Status)===status))&&(!search||[d.Task.Title,d.Task.Goal,d.Task.ID].some(x=>(x||'').toLowerCase().includes(search))));
  const nav=$('tasks');nav.replaceChildren();const board=$('task-layout').value==='board';nav.classList.toggle('board',board);
  if(!shown.length){nav.append(el('p','没有符合条件的任务','empty'));return}
  const lanes=new Map();
  for(const d of shown){
   const b=button('',async()=>{selected=d.Task.ID;await list();await show()},'task');
   const project=projects.find(p=>p.ID===d.Task.ProjectID);
-  b.append(el('strong',d.Task.Title),h('span','meta',pill(stateOf(d.Position)),inboxIDs.has(d.Task.ID)?el('span','等你：'+ACTOR_LABEL[inboxMap.get(d.Task.ID)],'pill mine'):null),el('p',(project?.Name||'未归属项目')+' · 负责人 '+d.Task.Owner,'muted small'));
+  b.append(el('strong',d.Task.Title),h('span','meta',pill(stateOf(d.Position)),d.Position.WaitingOnSubtasks?el('span','阻塞：等待子任务','pill blocked'):null,inboxIDs.has(d.Task.ID)?el('span','等你：'+ACTOR_LABEL[inboxMap.get(d.Task.ID)],'pill mine'):null),el('p',(project?.Name||'未归属项目')+' · 负责人 '+d.Task.Owner,'muted small'));
   if(board){const state=stateOf(d.Position);if(!lanes.has(state.text)){const lane=h('section','lane',el('h3',state.text));lanes.set(state.text,lane);nav.append(lane)}lanes.get(state.text).append(b)}else nav.append(b);
  }
 }
 async function openProject(p=null){
- editingProject=p;const people=await api('/project-members');$('project-form').reset();$('project-notice').textContent='';$('project-title').textContent=p?'编辑项目':'新建项目';$('project-name').value=p?.Name||'';$('project-description').value=p?.Description||'';
+ editingProject=p;const people=await api('/people');$('project-form').reset();$('project-notice').textContent='';$('project-title').textContent=p?'编辑项目':'新建项目';$('project-name').value=p?.Name||'';$('project-description').value=p?.Description||'';
  const owner=$('project-owner');owner.replaceChildren();for(const m of people.filter(m=>m.Kind==='human')){const o=el('option',m.Subject);o.value=m.Subject;owner.append(o)}owner.value=p?.Owner||viewer.Subject;
  $('project-dialog').showModal();
 }
@@ -428,7 +431,7 @@ async function show() {
     if (page.Commits.length < 100) break;
   }
   const ctx = makeContext(d, w, path);
-  ctx.candidates = (d.CanEdit || w.CanAssign) ? await api(path + "/candidates") : [];
+  ctx.candidates = (d.CanEdit || w.CanAssign) ? await api('/people') : [];
   ctx.commits = new Map(commits.map(c => [c.ID, c]));
   $('detail').replaceChildren(
     renderHead(ctx),
@@ -436,7 +439,7 @@ async function show() {
     renderNext(ctx),
     h('div', 'cols',
       h('div', null, renderResult(ctx), renderTimeline(ctx, commits)),
-      h('div', null, renderBasis(ctx), renderExecution(ctx), renderAsk(ctx), renderParticipants(ctx), renderManage(ctx))));
+      h('div', null, renderBasis(ctx), renderPlan(ctx), renderExecution(ctx), renderAsk(ctx), renderParticipants(ctx), renderManage(ctx))));
 }
 
 function makeContext(d, w, path) {
@@ -474,7 +477,13 @@ function renderNext(ctx) {
   const panel = h('div', 'panel next' + (inboxIDs.has(d.Task.ID) ? ' mine' : ''));
   const s = stateOf(w.Position);
   let title;
-  if (w.Position.Status === 'completed') title = '已完成：结果与验收已满足';
+  if (w.Position.Status === 'completed') title = '已完成：结果与验收已满足，需要返工请新建任务';
+  else if (w.Position.WaitingOnSubtasks && !w.NextActor) {
+    // Blocked is a wait cause, not a step: the work is still this task's, only delivery waits.
+    const kids = (w.Children || []).filter(c => c.Required);
+    const done = kids.filter(c => c.Status === 'completed').length;
+    title = '阻塞：等待必需子任务完成' + (kids.length ? `（可见 ${done}/${kids.length}）` : '');
+  }
   else if (w.NextActor) title = '下一步等待：' + ACTOR_LABEL[w.NextActor];
   else title = '暂无需要处理的事项';
   panel.append(h('div', 'head', el('h3', title), pill(s)));
@@ -493,15 +502,15 @@ function renderNext(ctx) {
   }
   const actions = h('div', 'actions');
   // Review is the main human decision; it lives here, next to the result summary.
-  if (w.CanReview && w.Submission && w.Review?.Outcome === 'pending') {
+  if (w.CanReview && w.Result && w.Review?.Outcome === 'pending') {
     panel.classList.add('mine');
     const reason = el('input');
     reason.placeholder = '验收意见（不通过时必填）';
     reason.setAttribute('aria-label', '验收意见');
-    const sub = w.Submission;
+    const res = w.Result;
     const verdict = outcome => {
       if (outcome === 'rejected' && !reason.value.trim()) { reason.focus(); throw Error('验收不通过时请写明需要修改的地方') }
-      return ctx.send('/review', { SubmissionID: sub.ID, CommitID: sub.CommitID, Outcome: outcome, Reason: reason.value });
+      return ctx.send('/review', { CommitID: res.CommitID, Outcome: outcome, Reason: reason.value });
     };
     panel.append(h('div', null, el('label', '验收当前结果'), reason));
     actions.append(button('验收通过', () => verdict('approved'), 'primary'), button('不通过，退回修改', () => verdict('rejected'), 'danger'));
@@ -511,7 +520,8 @@ function renderNext(ctx) {
     panel.classList.add('mine');
     panel.append(assignForm(ctx, '选择处理人'));
   }
-  if (!active && w.CanManage) actions.append(button('重开任务', () => confirmThen('重开会开始新一轮，旧结果保留在历史中。继续？', () => ctx.send('/restart', round))));
+  // Only a cancelled task can be reopened; completed is final and rework is a new task.
+  if (w.Position.Status === 'cancelled' && w.CanManage) actions.append(button('重开任务', () => confirmThen('重开会开始新一轮，旧结果保留在历史中。继续？', () => ctx.send('/restart', round))));
   if (actions.children.length) panel.append(actions);
   return panel;
 }
@@ -527,7 +537,7 @@ function renderQuestions(ctx, panel) {
     const canAnswer = q.Addressee === viewer.Subject;
     mine = mine || canAnswer;
     const box = h('div', 'result',
-      el('div', q.Asker + ' 问 ' + (q.Addressee === ctx.d.Task.Owner ? '负责人 ' : '') + q.Addressee + ' · ' + time(q.CreatedAt), 'muted small'),
+      el('div', (asked ? asked.Author + ' 问 ' : '问 ') + (q.Addressee === ctx.d.Task.Owner ? '负责人 ' : '') + q.Addressee + (asked ? ' · ' + time(asked.CreatedAt) : ''), 'muted small'),
       el('p', asked ? asked.Body : '（问题正文见时间线）'));
     if (canAnswer) {
       const body = textarea('Body', true, '回答后处理人可在任务中查看');
@@ -566,7 +576,7 @@ function confirmThen(message, fn) { if (confirm(message)) return fn() }
 
 function renderResult({ w, active, send, ...ctx }) {
   const panel = h('div', 'panel', el('h3', '当前结果'));
-  if (!w.Submission) {
+  if (!w.Result) {
     panel.append(el('p', '还没有提交结果。处理人明确提交后会显示在这里；普通评论不算交付。', 'muted'));
     return panel;
   }
@@ -577,7 +587,21 @@ function renderResult({ w, active, send, ...ctx }) {
   return panel;
 }
 
-function renderTimeline({ d, path }, commits) {
+// planText turns a plan.changed body into words; titles come only from subtasks this viewer can read.
+function planText(c, d, w) {
+  let v;
+  try { v = JSON.parse(c.Body) } catch { return c.Body }
+  const child = (w.Children || []).find(x => x.TaskID === v.child);
+  const name = '子任务「' + (child ? child.Title : v.child.slice(0, 8)) + '」';
+  const kind = r => r ? '必需' : '非必需';
+  let text;
+  if (v.to.parent !== d.Task.ID) text = '移出' + kind(v.from.required) + name;
+  else if (v.from.parent === d.Task.ID) text = name + '改为' + kind(v.to.required);
+  else text = '加入' + kind(v.to.required) + name;
+  return text;
+}
+
+function renderTimeline({ d, w, path }, commits) {
   const panel = h('div', 'panel', el('h3', '时间线'));
   if (d.CanComment) {
     const ref = el('input'); ref.name = 'RefID'; ref.type = 'hidden';
@@ -596,7 +620,7 @@ function renderTimeline({ d, path }, commits) {
     const li = h('li', c.Kind === 'result' ? 'result' : '',
       el('div', (KIND_LABEL[c.Kind] || c.Kind) + ' · ' + c.Author + ' · ' + time(c.CreatedAt), 'who'),
       c.Kind === 'answer' && byID.has(c.RefID) ? el('div', '回答：' + byID.get(c.RefID).Body, 'muted small') : null,
-      el('p', c.Body),
+      el('p', c.Kind === 'plan.changed' ? planText(c, d, w) : c.Body),
       c.RefID && c.Kind === 'comment' ? el('code', '更正引用 ' + c.RefID, 'muted') : null);
     if (d.CanComment && c.Kind === 'comment' && c.Author === viewer?.Subject) {
       li.append(button('追加更正', () => {
@@ -635,18 +659,60 @@ function renderBasis({ d, w, ex, active, path }) {
   return panel;
 }
 
+// Work breakdown. Required subtasks must be completed before this task can
+// deliver; the server lists only related tasks this viewer may read.
+function renderPlan(ctx) {
+  const { d, w, active } = ctx;
+  const manage = d.CanEdit && active;
+  if (!w.Parent && !w.Children?.length && !w.HiddenRequired && !manage) return null;
+  const panel = h('div', 'panel', el('h3', '任务拆分'));
+  const open = id => async () => { selected = id; await list(); await show() };
+  const place = (child, input) => async () => { await api('/tasks/' + encodeURIComponent(child) + '/parent', 'POST', input); await list(); await show() };
+  const status = t => pill(stateOf({ Status: t.Status, State: t.State }));
+  if (w.Parent) panel.append(h('p', null, el('span', w.Parent.Required ? '必需子任务，属于 ' : '子任务，属于 ', 'muted'), button(w.Parent.Title, open(w.Parent.TaskID), 'link'), ' ', status(w.Parent)));
+  const ul = el('ul', undefined, 'timeline');
+  for (const c of w.Children || []) {
+    const li = h('li', null, h('div', null, button(c.Title, open(c.TaskID), 'link'), ' ', status(c), ' ', el('span', c.Required ? '必需' : '非必需', 'muted small')));
+    if (manage) {
+      const seen = { SeenParentID: d.Task.ID, SeenRequired: c.Required };
+      li.append(h('div', 'actions',
+        button(c.Required ? '改为非必需' : '改为必需', () => confirmThen('调整必需子任务会更新本任务依据，已有执行和结果需按新依据重做。继续？', place(c.TaskID, { ...seen, ParentID: d.Task.ID, Required: !c.Required })), 'link')));
+    }
+    ul.append(li);
+  }
+  if (ul.children.length) panel.append(ul);
+  if (w.HiddenRequired) panel.append(el('p', '另有你无权查看的必需子任务。', 'muted small'));
+  if (manage) {
+    const f = el('form');
+    const title = el('input'); title.name = 'Title'; title.required = true;
+    const required = el('input'); required.type = 'checkbox'; required.style.width = 'auto'; required.checked = true;
+    const requiredLabel = el('label', ' 必需：完成后本任务才能提交结果'); requiredLabel.prepend(required);
+    f.append(field('标题', title), field('目标', textarea('Goal', false)), field('验收标准', textarea('Criteria', false)), requiredLabel,
+      el('p', '已完成的任务不能重开；需要返工时在这里新建子任务。', 'muted small'),
+      h('div', 'actions', el('button', '创建子任务', 'primary')));
+    // One command creates the subtask and places it under this task atomically.
+    f.onsubmit = handle(async () => {
+      const v = formdata(f);
+      await api('/tasks', 'POST', { Title: v.Title, Goal: v.Goal, Criteria: v.Criteria, ProjectID: d.Task.ProjectID || '', ParentID: d.Task.ID, Required: required.checked });
+      await list(); await show();
+    });
+    panel.append(h('details', null, el('summary', '新建子任务'), f));
+  }
+  return panel;
+}
+
 function renderExecution(ctx) {
   const { w, ex } = ctx;
   const dl = el('dl', undefined, 'kv');
   const add = (k, v) => dl.append(el('dt', k), el('dd', v));
   add('处理人', w.Assignee || '待分配');
   if (ex) {
-    add('状态', execLabel(ex, w.Position) + (ex.Manual ? ' · 人工处理' : ''));
+    add('状态', execLabel(ex, w.Position) + (ex.CredentialID ? '' : ' · 人工处理'));
     if (ex.ProgressAt && !ex.ProgressAt.startsWith('0001')) add('最近进展', ago(ex.ProgressAt) + '（' + time(ex.ProgressAt) + '）');
   }
   const live = el('div', undefined, 'muted small'); live.id = 'execution-live-status';
   const panel = h('div', 'panel', el('h3', '执行'), dl, live);
-  if (w.CanAssign && ctx.active && w.Assignee && !w.Submission) panel.append(h('details', null, el('summary', '转交处理（用户或 Agent）'), assignForm(ctx, '选择新的处理人')));
+  if (w.CanAssign && ctx.active && w.Assignee && !w.Result) panel.append(h('details', null, el('summary', '转交处理（用户或 Agent）'), assignForm(ctx, '选择新的处理人')));
   return panel;
 }
 

@@ -8,7 +8,6 @@ import (
 	"github.com/lengzhao/taskloom/cap/fault"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
-	"time"
 )
 
 type executionRow struct {
@@ -19,6 +18,8 @@ type executionRow struct {
 	Sequence int64
 	Data     []byte
 }
+// submissionRow keeps its historical name (and table); it stores delivery.Result
+// keyed by the result commit.
 type submissionRow struct {
 	Key       string `gorm:"primaryKey;size:64;column:row_key"`
 	TaskRound string `gorm:"size:64;index"`
@@ -78,8 +79,8 @@ func (s *Store) SaveExecution(ctx context.Context, v execution.Execution) error 
 		return nil
 	})
 }
-func (s *Store) CurrentSubmission(ctx context.Context, tenant, taskID, round string) (delivery.Submission, error) {
-	var out delivery.Submission
+func (s *Store) CurrentResult(ctx context.Context, tenant, taskID, round string) (delivery.Result, error) {
+	var out delivery.Result
 	e := s.use(ctx, false, func(db *gorm.DB) error {
 		var r submissionRow
 		if e := db.Where("task_round = ?", key(tenant, taskID, round)).Order("sequence DESC").First(&r).Error; e != nil {
@@ -89,29 +90,17 @@ func (s *Store) CurrentSubmission(ctx context.Context, tenant, taskID, round str
 	})
 	return out, e
 }
-func (s *Store) GetSubmission(ctx context.Context, tenant, id string) (delivery.Submission, error) {
-	var out delivery.Submission
-	e := s.use(ctx, false, func(db *gorm.DB) error {
-		var r submissionRow
-		if e := db.First(&r, "row_key = ?", key(tenant, id)).Error; e != nil {
-			return e
-		}
-		return json.Unmarshal(r.Data, &out)
-	})
-	return out, e
-}
-func (s *Store) RegisterSubmission(ctx context.Context, v delivery.Submission) error {
+func (s *Store) RegisterResult(ctx context.Context, v delivery.Result) error {
 	return s.use(ctx, true, func(db *gorm.DB) error {
 		var seq coordination
 		if e := db.First(&seq, 1).Error; e != nil {
 			return e
 		}
-		v.CreatedAt = time.Now().UTC()
 		b, e := json.Marshal(v)
 		if e != nil {
 			return e
 		}
-		return db.Create(&submissionRow{Key: key(v.Tenant, v.ID), TaskRound: key(v.Tenant, v.TaskID, v.RoundID), Sequence: seq.Sequence, Data: b}).Error
+		return db.Create(&submissionRow{Key: key(v.Tenant, v.CommitID), TaskRound: key(v.Tenant, v.TaskID, v.RoundID), Sequence: seq.Sequence, Data: b}).Error
 	})
 }
 type assignmentRow struct {

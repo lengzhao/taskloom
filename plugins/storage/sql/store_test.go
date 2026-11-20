@@ -11,7 +11,6 @@ import (
 	"github.com/lengzhao/taskloom/cap/identity"
 	"github.com/lengzhao/taskloom/cap/record"
 	"github.com/lengzhao/taskloom/cap/task"
-	"github.com/lengzhao/taskloom/cap/unitofwork"
 	store "github.com/lengzhao/taskloom/plugins/storage/sql"
 )
 
@@ -46,7 +45,7 @@ func TestRollbackAcrossRepositoriesAndNestedFailure(t *testing.T) {
 		})
 		return nil
 	})
-	if !errors.Is(err, unitofwork.ErrRollback) {
+	if !errors.Is(err, store.ErrRollback) {
 		t.Fatalf("expected rollback-only, got %v", err)
 	}
 	if _, err = s.Resolve(ctx, "t", "u"); !errors.Is(err, fault.ErrNotFound) {
@@ -56,7 +55,7 @@ func TestRollbackAcrossRepositoriesAndNestedFailure(t *testing.T) {
 	if err != nil || len(es) != 0 {
 		t.Fatalf("event leaked: %v %v", es, err)
 	}
-	if err = s.CreatePrincipal(ctx, identity.Principal{Tenant: "t", ID: "u", Kind: "human"}); !errors.Is(err, unitofwork.ErrTransaction) {
+	if err = s.CreatePrincipal(ctx, identity.Principal{Tenant: "t", ID: "u", Kind: "human"}); !errors.Is(err, store.ErrTransaction) {
 		t.Fatalf("unowned write: %v", err)
 	}
 }

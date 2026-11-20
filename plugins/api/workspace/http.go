@@ -53,8 +53,8 @@ func New(c Config, d Deps) (*Module, error) {
 }
 func (m *Module) Routes() []httpapi.Route {
 	routes := []httpapi.Route{}
-	for _, r := range []struct{ method, path, op string }{{"GET", "/space", "space.read"}, {"PATCH", "/space", "space.edit"}, {"GET", "/projects", "projects.list"}, {"POST", "/projects", "project.create"}, {"PATCH", "/projects/{id}", "project.edit"}, {"GET", "/project-members", "project.members"}, {"POST", "/tasks/{id}/project", "task.project"}, {"POST", "/account/password", "identity.password.change"}, {"POST", "/users/{id}/password", "identity.password"}, {"GET", "/me", "session.viewer"}, {"GET", "/members", "members.list"}, {"POST", "/identities", "identity.create"}, {"POST", "/credentials", "identity.issue"}, {"POST", "/credentials/revoke", "identity.revoke"}, {"GET", "/app", "ui.app"}, {"POST", "/session", "session.login"}, {"DELETE", "/session", "session.logout"}, {"GET", "/tasks", "tasks.list"}, {"POST", "/tasks", "tasks.create"}, {"GET", "/tasks/{id}", "tasks.get"}, {"PATCH", "/tasks/{id}", "tasks.edit"}, {"POST", "/tasks/{id}/commits", "commits.append"},
-		{"GET", "/tasks/{id}/candidates", "tasks.candidates"}, {"POST", "/tasks/{id}/participants", "participants.set"}, {"GET", "/changes", "changes.read"}, {"POST", "/members", "members.set"}, {"DELETE", "/members", "members.remove"}} {
+	for _, r := range []struct{ method, path, op string }{{"GET", "/space", "space.read"}, {"PATCH", "/space", "space.edit"}, {"GET", "/projects", "projects.list"}, {"POST", "/projects", "project.create"}, {"PATCH", "/projects/{id}", "project.edit"}, {"GET", "/people", "people.list"}, {"POST", "/tasks/{id}/project", "task.project"}, {"POST", "/account/password", "identity.password.change"}, {"POST", "/users/{id}/password", "identity.password"}, {"GET", "/me", "session.viewer"}, {"GET", "/members", "members.list"}, {"POST", "/identities", "identity.create"}, {"POST", "/credentials", "identity.issue"}, {"POST", "/credentials/revoke", "identity.revoke"}, {"GET", "/app", "ui.app"}, {"POST", "/session", "session.login"}, {"DELETE", "/session", "session.logout"}, {"GET", "/tasks", "tasks.list"}, {"POST", "/tasks", "tasks.create"}, {"GET", "/tasks/{id}", "tasks.get"}, {"PATCH", "/tasks/{id}", "tasks.edit"}, {"POST", "/tasks/{id}/commits", "commits.append"},
+		{"POST", "/tasks/{id}/participants", "participants.set"}, {"GET", "/changes", "changes.read"}, {"POST", "/members", "members.set"}, {"DELETE", "/members", "members.remove"}} {
 		routes = append(routes, httpapi.Route{Method: r.method, Path: r.path, Operation: r.op, Handler: http.HandlerFunc(m.serve)})
 	}
 	return routes
@@ -107,8 +107,8 @@ func (m *Module) serve(w http.ResponseWriter, r *http.Request) {
 				result, err = m.d.Catalog.Space(ctx, token)
 			}
 		}
-	case strings.HasSuffix(path, "/project-members"):
-		result, err = m.d.Catalog.People(ctx, token)
+	case strings.HasSuffix(path, "/people"):
+		result, err = m.d.Queries.People(ctx, token)
 	case strings.HasSuffix(path, "/project"):
 		var in api.ProjectMove
 		if !httpx.Decode(w, r, &in) {
@@ -152,8 +152,6 @@ func (m *Module) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		err = m.d.Security.SetMember(ctx, token, key, in)
 		result = map[string]bool{"ok": err == nil}
-	case strings.HasSuffix(path, "/candidates"):
-		result, err = m.d.Queries.Candidates(ctx, token, taskID)
 	case strings.HasSuffix(path, "/participants"):
 		var in api.Participation
 		if !httpx.Decode(w, r, &in) {

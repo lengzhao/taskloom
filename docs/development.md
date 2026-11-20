@@ -46,7 +46,7 @@ Go 依赖首次需下载，不需要 Ruby。配置图由 PluginKit 真实构建�
 
 ## 两层装配实现
 
-实际使用 AgentKit `config.MergeYAML`，不复制其合并算法；使用 PluginKit 注册、typed Config/Deps 和 `build.Build[lifecycle.App]` 从 server 根构建。未复用 AgentKit 专属 runner 的全套 resolver。
+实际使用 AgentKit `config.MergeYAML`，不复制其合并算法；使用 PluginKit 注册、typed Config/Deps 和 `build.Build[lifecycle.Component]` 从 server 根构建。未复用 AgentKit 专属 runner 的全套 resolver。
 
 同 ID 深合并、列表整体替换、use 改变整节点替换；顶层 null 移除实例，但不会自动修复引用或级联删除消费者。空文件、注释文件或 `{}` 为有效空 L1。重复键、多 YAML 文档、未知节点字段拒绝；不支持 extends、环境插值或隐式多文件搜索。凭据引用仍是未来凭据适配能力的数据，不由当前加载器解密。
 
@@ -65,7 +65,7 @@ go run ./cmd/taskloom-admin -mode enroll-agent -tenant example \
 go run ./cmd/taskloom
 ```
 
-打开 `http://127.0.0.1:8080/v1/app`，用 `admin` 和 stdin 给出的密码登录（8–128 字节，不经命令行参数）。人只用密码登录，初始化和恢复不签发凭据、不写任何文件；脚本同样用密码登录（如 `TASKLOOM_ADMIN_PASSWORD=... python3 scripts/seed-demo.py`）。遗失密码时用 `-mode recover -password-stdin`：撤销该人全部旧凭据与会话并换成新密码。只有 `enroll-agent` 写 `-credential-file`：文件必须不存在、权限 0600，秘密不打印；数据库与文件不共享事务，写文件失败时换新路径重新登记。`-operator` 是审计声明，可信边界是部署机与数据库运维权限。
+打开 `http://127.0.0.1:8080/v1/app`，用 `admin` 和 stdin 给出的密码登录（8–128 字节，不经命令行参数）。人只用密码登录，初始化和恢复不签发凭据、不写任何文件。遗失密码时用 `-mode recover -password-stdin`：撤销该人全部旧凭据与会话并换成新密码。只有 `enroll-agent` 写 `-credential-file`：文件必须不存在、权限 0600，秘密不打印；数据库与文件不共享事务，写文件失败时换新路径重新登记。`-operator` 是审计声明，可信边界是部署机与数据库运维权限。
 
 ## 验证范围与已知限制
 
@@ -73,7 +73,7 @@ go run ./cmd/taskloom
 
 - 存储：持久化、跨仓储回滚、嵌套错误/panic 的 rollback-only、迁移校验和拒绝、事件顺序。
 - 安全：并发幂等与冲突、撤权后重放、跨租户、未知操作、初始化一次性、离线恢复、凭据签发不重复泄密、Agent 不继承所属人、管理员审计查询、Origin/CSRF、会话失效。
-- 任务与流程：信息不足、评论不改依据、更正引用、commit 分页、依据版本冲突、并发认领、换凭据重新认领、取消与旧写入、执行中改依据、结果替换、退回/重开、未答问题阻止完成、人工处理与转交、无验收配置、变化补拉重新鉴权、写入失败整体回滚、新 API 模块路由冲突启动前拒绝。
+- 任务与流程：信息不足、评论不改依据、更正引用、commit 分页、依据版本冲突、并发认领、换凭据重新认领、取消与旧写入、执行中改依据、结果替换、退回/取消后重开、完成后拒绝重开、未答问题阻止完成、人工处理与转交、无验收配置、变化补拉重新鉴权、写入失败整体回滚、新 API 模块路由冲突启动前拒绝。
 - 工作台：内置浏览器在独立临时库中验证过创建、分配、认领、提交、验收、项目与看板等主路径（最近几轮界面改动只做了脚本语法检查）。
 
 尚未验证：真实 Agent/Harness 联调与进程清理（M06）、MySQL/PostgreSQL 真实服务、生产负载、WebSocket、文件/S3。本地测试不能表述为生产可用。

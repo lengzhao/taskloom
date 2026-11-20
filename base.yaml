@@ -14,7 +14,7 @@ http:
     # The one browser origin allowed; plain http only for a loopback host.
     origin: http://127.0.0.1:8080
   deps:
-    modules: [health, workspace-api, workflow-api, mcp-api, audit-api]
+    modules: [health, workspace-api, workflow-api, plan-api, mcp-api, audit-api]
 health:
   use: api/health
 
@@ -42,7 +42,8 @@ flow:
     results: sql
     reviews: sql
     questions: sql
-    executions: sql
+    commits: sql
+    plan: sql
 command-runtime:
   use: commands/runtime
   deps:
@@ -87,6 +88,7 @@ workspace:
     commands: command-runtime
     events: sql
     progress: execution-commands
+    placer: plan-commands
 workspace-api:
   use: api/workspace
   deps:
@@ -102,6 +104,7 @@ workflow-query:
   deps:
     questions: sql
     commits: sql
+    plan: sql
     transactions: sql
     tasks: sql
     flow: flow
@@ -150,6 +153,16 @@ flow-commands:
     flow: flow
     executions: sql
     events: sql
+plan-commands:
+  use: commands/plan
+  deps:
+    commands: command-runtime
+    authorization: access
+    tasks: sql
+    flow: flow
+    plan: sql
+    commits: sql
+    events: sql
 
 workflow-api:
   use: api/workflow
@@ -159,6 +172,10 @@ workflow-api:
     controls: flow-commands
     workflow: workflow-query
     questions: question-commands
+plan-api:
+  use: api/plan
+  deps:
+    plan: plan-commands
 mcp-api:
   use: api/mcp
   deps:

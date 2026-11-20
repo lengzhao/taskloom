@@ -17,8 +17,8 @@ claude mcp add --transport http taskloom http://localhost:8899/v1/mcp \
 
 | 工具 | 对应命令 | 说明 |
 | --- | --- | --- |
-| inbox | workflow.Inbox | 等我处理的任务 |
-| read_task | workspace.Get + workflow.Read | 目标、标准、状态、等谁、can/blocked 原因、待答问题、当前结果、最近进展时间、最近 20 条时间线及 basis |
+| inbox | workflow.Inbox | 等我处理的任务；不含阻塞任务（Agent 只看到现在能做的事，阻塞任务用 read_task 查看，其中 `waiting_on_subtasks` 为 true） |
+| read_task | workspace.Get + workflow.Read | 目标、标准、状态、等谁、can/blocked 原因、待答问题、当前结果、最近进展时间、可读的父任务与子任务、最近 20 条时间线及 basis |
 | start_work | ExecutionCommands.Open | 认领执行 |
 | post_message | workspace.Comment | 留言：进度、回复人的引导；记录最近进展，不算交付 |
 | ask_owner | QuestionCommands.Ask | 提问或请求协助：默认问负责人，`to` 可指定已加入任务的参与者；未答前任务不能完成 |

@@ -9,7 +9,13 @@ import (
 	"github.com/lengzhao/taskloom/cap/task"
 )
 
-type Create struct{ Title, Goal, Criteria, ProjectID string }
+// Create may place the new task under ParentID in the same transaction; the
+// creator then also needs planning rights on the parent. Required says
+// whether the parent's delivery waits for it.
+type Create struct {
+	Title, Goal, Criteria, ProjectID, ParentID string
+	Required                                   bool `json:",omitempty"`
+}
 
 // ProjectMove only re-files a task; the last move wins and pins no version.
 type ProjectMove struct{ TaskID, ProjectID string }
@@ -57,7 +63,8 @@ type Viewer struct {
 type Queries interface {
 	Viewer(ctx context.Context, credential string) (Viewer, error)
 	Members(ctx context.Context, credential string) ([]authorization.DirectoryMember, error)
-	Candidates(ctx context.Context, credential, taskID string) ([]authorization.MemberOption, error)
+	// People is the active member directory, readable by active human members.
+	People(ctx context.Context, credential string) ([]authorization.MemberOption, error)
 	List(ctx context.Context, credential string) ([]Detail, error)
 	Get(ctx context.Context, credential, taskID string, after int64) (Detail, error)
 }

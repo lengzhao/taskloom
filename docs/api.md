@@ -18,13 +18,13 @@
 | --- | --- |
 | 有效人类成员 | 创建任务并成为负责人；读空间与项目目录，创建项目 |
 | 有效人类管理员 | 管理本租户成员、身份、凭据与空间资料；读取和管理本租户任务；查询审计 |
-| 任务负责人（有效人类） | 读写约定、追加 commit、管理参与者、分配、取消、退回/重开、验收 |
-| 当前人工处理人（仍参与） | 提交结果、查询候选并转交；不取得负责人或验收资格 |
+| 任务负责人（有效人类） | 读写约定、追加 commit、管理参与者、分配、取消、退回/重开、验收、调整子任务 |
+| 当前人工处理人（仍参与） | 提交结果并转交；不取得负责人或验收资格 |
 | 任务参与者 | 读取、评论（只能更正自己的评论）、提问 |
 | Agent | 不继承所属人任何权限；须显式参与任务；只能认领分配给自己的任务 |
 | 停用或不存在的成员 | 无任何访问，即使保留负责人/参与历史 |
 
-资源始终按认证租户查询；每次读写和幂等重放都检查当前关系。成员或参与关系变更与业务写共用全局写锁，先提交者生效。停用不删除历史，重新启用恢复仍保留的任务关系。
+资源始终按认证租户查询；每次读写和幂等重放都检查当前关系。任务写权限一律包含该任务的读权限，命令不再单独检查读取（由 access 测试固定）。成员或参与关系变更与业务写共用全局写锁，先提交者生效。停用不删除历史，重新启用恢复仍保留的任务关系。
 
 ## 会话、身份与管理
 
@@ -49,13 +49,13 @@
 | --- | --- |
 | GET/PATCH /space | 读取；管理员更新 Name、Description、ExpectedVersion，响应为当前空间 |
 | GET/POST /projects、PATCH /projects/{id} | 目录、创建（Name、Description、Owner）与编辑/归档（另带 Archived、ExpectedVersion）；管理员或项目负责人可编辑；写入响应为该项目当前状态，回执只存项目 ID |
-| GET /project-members | 有效人类成员候选，供选项目负责人 |
-| GET/POST /tasks | 当前可读任务列表；创建（Title、Goal、Criteria、可选 ProjectID），响应为调用者此刻读到的任务详情 |
+| GET /people | 有效成员目录（Subject、Kind、OwnerID），任一有效人类成员可读；供选项目负责人、处理人和参与者，不按任务过滤 |
+| GET/POST /tasks | 当前可读任务列表；创建（Title、Goal、Criteria、可选 ProjectID；可选 ParentID 与 Required 直接建为子任务，同一事务内创建并放置，需父任务调整子任务的资格，任一步失败都不留下任务；只传 Required 不传 ParentID 返回 400），响应为调用者此刻读到的任务详情 |
 | GET/PATCH /tasks/{id} | 详情与 commit 分页（`?after=<Sequence>`，每页 100）；修改约定（Title、Goal、Criteria、BasisVersion），响应为当前任务详情 |
 | POST /tasks/{id}/commits | 评论或更正（Body、可选 RefID，只能引用自己的评论）；响应为 `{TaskID, CommitID}`，重放返回同一 CommitID |
 | POST /tasks/{id}/participants | 负责人或管理员加入/移出参与者（Subject、Present） |
-| POST /tasks/{id}/project | 移入/移出项目（ProjectID，空为移出）；不固定版本，并发移动以后写为准 |
-| GET /tasks/{id}/candidates | 负责人、管理员或当前人工处理人：可分配的有效成员（Subject、Kind、OwnerID） |
+| POST /tasks/{id}/project | 移入/移出项目（ProjectID，空为移出）；不固定版本，并发移动以后写为准；与子任务关系无关 |
+| POST /tasks/{id}/parent | 放置子任务 {id}：ParentID（必填，不支持解除；祖先链超过 64 层视为冲突）、Required、SeenParentID、SeenRequired（所见当前关系，命令只固定它；父任务的其他变化不冲突）。挂接、切换必需、重挂需要父任务和子任务的负责人或管理员资格，只切换必需只需父任务资格；规则见[任务拆分](core-contracts.md#任务拆分)。新建子任务用带 ParentID 的 POST /tasks |
 
 ## 执行、交付与验收
 
@@ -67,20 +67,21 @@
 | POST /execution/assign | Subject；分配给人即开始人工执行 |
 | POST /execution/open | BasisVersion；Agent 认领，或人在依据变更后重新开始 |
 | POST /results | ExecutionID、Body |
-| POST /review | SubmissionID、CommitID、Outcome（approved/rejected）、Reason（退回必填） |
+| POST /review | CommitID（当前结果 commit）、Outcome（approved/rejected）、Reason（退回必填） |
 | POST /cancel | 无字段 |
-| POST /restart | RoundID；活跃任务即退回，终态即重开 |
+| POST /restart | RoundID；活跃任务即退回，已取消即重开，已完成返回冲突 |
 | POST /questions | RoundID、Body、可选 Addressee |
 | POST /questions/{qid}/answer | Body；仅被提问人回答当前轮问题 |
 
 以上写命令成功（含幂等重放）后，响应是调用者此刻的受权快照，与 `GET /workflow` 相同；命令本身只返回并回执 `Ref`（TaskID、命令后的 RoundID、新开的 ExecutionID），因此重放看到的是当前事实，不是写入当时的旧状态。
 
-快照包含流程位置（Status、RoundID、Acceptance、推导的 State 与 Waiting）、处理人、当前执行、当前交付及正文、当前结论（待验收时合成 pending）、未答问题，以及：
+快照包含流程位置（Status、RoundID、Acceptance、推导的 State 与 Waiting）、处理人、当前执行、当前交付及正文、当前结论（CommitID、Reviewer、Outcome、Reason、BasisVersion；待验收时合成 pending）、未答问题，以及：
 
-- `NextActor`：owner / assignee / reviewer / addressee；空表示没有固定角色需要行动。
-- `Can*` 与 `Blocked`：当前查看者能否认领/提交/验收及不能的原因码（如 `not_assigned`、`execution_in_progress`、`basis_changed`、`not_reviewer`，完整列表见 `cap/workflow`）。二者出自同一判断函数；它们只是提示，命令写入时重新检查。
+- `NextActor`：owner / assignee / reviewer / addressee；空表示没有固定角色需要行动。`Position.WaitingOnSubtasks`（等待必需子任务）时为空，除非本轮有未答问题（仍为 addressee）：下一步在子任务上，由子任务各自的 NextActor 承接。
+- `Can*` 与 `Blocked`：当前查看者能否认领/提交/验收及不能的原因码（如 `not_assigned`、`execution_in_progress`、`basis_changed`、`not_reviewer`、`required_children_pending`，完整列表见 `cap/workflow`）。
+- `Parent`、`Children`、`HiddenRequired`：调用者可读的直接父任务（含本任务是否被它必需）与直接子任务（标题、是否必需、阶段与步骤）；不可读的必需子任务只置 `HiddenRequired`，列表不含其标题或状态（ID 不是秘密，时间线可见，见[任务拆分](core-contracts.md#任务拆分)）。二者出自同一判断函数；它们只是提示，命令写入时重新检查。
 
-`GET /v1/inbox` 列出当前调用者可读且 NextActor 指向自己的任务，与快照共用同一推导，不保存收件箱记录。
+`GET /v1/inbox` 列出当前调用者可读且 NextActor 指向自己的任务，其后列出调用者负责或处理、正在阻塞的任务（`WaitingOnSubtasks: true`，无 NextActor）：仍属于调用者，但暂时无事可做；最后一个必需子任务完成后自动回到前一类。与快照共用同一推导，不保存收件箱记录。工作台"等我处理"计数只算前一类，阻塞任务带"阻塞"标记，阶段筛选可选"已阻塞"。
 
 ## 变化补拉
 

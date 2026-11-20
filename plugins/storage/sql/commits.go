@@ -98,5 +98,5 @@ func (s *Store) LatestReview(ctx context.Context, tenant, taskID, resultCommitID
 	if c.Kind == acceptance.KindApproved {
 		outcome = acceptance.OutcomeApproved
 	}
-	return acceptance.Review{Tenant: c.Tenant, TaskID: c.TaskID, ID: c.ID, CommitID: c.RefID, Reviewer: c.Author, Outcome: outcome, Reason: c.Body, BasisVersion: c.BasisVersion}, nil
+	return acceptance.Review{CommitID: c.RefID, Reviewer: c.Author, Outcome: outcome, Reason: c.Body, BasisVersion: c.BasisVersion}, nil
 }

@@ -1,6 +1,6 @@
 # 两层配置与实际可运行图
 
-根 base/config 只描述已实现能力，当前为 SQLite 工作台与 M05 流程图（见 [base.yaml](../base.yaml)）。未来架构只在[设计](architecture.md)描述，不提供未实现的完整业务图。
+根 base/config 只描述已实现能力，当前为 SQLite 工作台、M05 流程与本地目录文件存储图（见 [base.yaml](../base.yaml)）。未来架构只在[设计](architecture.md)描述，不提供未实现的完整业务图。
 
 ## 规则
 
@@ -25,6 +25,10 @@ server 以 resources 管 SQL、以 components 管 http，http 管各 API 模块�
 `storage/sql` 内部使用 GORM；连接字段为 `driver` 和 `dsn`。本地默认 `driver: sqlite`、`dsn: taskloom.db`（相对工作目录），生产通过同一 config.yaml 覆盖。切换到 MySQL/PostgreSQL 时同时选择对应 driver 和原生 DSN；同类型数据库只需改 DSN。业务 Deps、接口及状态配置不变，不新增配置层或通用 DSN 猜测规则。携带凭据的 DSN 不进入日志，当前通过受限部署 config 文件提供，不隐式插值环境变量。
 
 SQL resource 由 server 打开和关闭。支持范围以实际编入并验证的驱动为准；数据库切换与已有数据搬迁是两件事。存储一致性与迁移见[架构](architecture.md#存储与迁移)。
+
+## 文件存储配置
+
+`blobs`（storage/fs）的 `dir` 是文件字节目录，默认 `taskloom-files`（相对工作目录），由 server 作为 resource 打开（创建目录）；Docker 镜像放在 `/data/files`。`files.config.maxBytes` 是单个文件上限（默认 104857600，即 100MiB），`file-api.config.transferTimeout` 是一次上传或下载的读写时限（默认 10m）。一个目录只由一个进程打开，打开时清理上次中断留下的临时文件。与数据库的一致性及备份要求见[文件与链接](core-contracts.md#文件与链接)。S3 适配尚未实现，届时以同一 `cap/blob` 接口替换 `blobs` 节点。
 
 `http.config.origin`、loginTenant、Cookie 与生产 HTTPS 配置见 [API](api.md#通用约定)。
 

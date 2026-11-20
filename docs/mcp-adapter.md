@@ -18,14 +18,16 @@ claude mcp add --transport http taskloom http://localhost:8899/v1/mcp \
 | 工具 | 对应命令 | 说明 |
 | --- | --- | --- |
 | inbox | workflow.Inbox | 等我处理的任务；不含阻塞任务（Agent 只看到现在能做的事，阻塞任务用 read_task 查看，其中 `waiting_on_subtasks` 为 true） |
-| read_task | workspace.Get + workflow.Read | 你是谁（you）、目标、标准、状态、等谁、can/blocked 原因、待答问题（for_you 标出问你的）、已在任务中的其他参与者（participants）、当前结果、最近进展时间、可读的父任务与子任务、最近 20 条时间线及 basis |
+| read_task | workspace.Get + workflow.Read + file.Queries.List | 你是谁（you）、目标、标准、状态、等谁、can/blocked 原因、待答问题（for_you 标出问你的）、已在任务中的其他参与者（participants）、当前结果、最近进展时间、可读的父任务与子任务、最近 20 条时间线（带文件名与链接）及 basis |
 | start_work | ExecutionCommands.Open | 认领执行 |
-| post_message | workspace.Comment | 留言：进度、回复人的引导；记录最近进展，不算交付 |
+| post_message | workspace.Comment | 留言：进度、回复人的引导，可带 files（逗号分隔 file_id）与 links（每行一个 URL，可空格加标题）；记录最近进展，不算交付 |
 | list_members | workspace.People | 空间内有效成员（subject、kind），可按 ID 片段与 kind 过滤，按 subject 分页（next/after，每页 50）；供 ask_owner 的 `to` 选人 |
 | ask_owner | QuestionCommands.Ask | 提问或请求协助：默认问负责人，`to` 可填任一有效成员（不在任务中时自动加为参与者）；未答前任务不能完成 |
 | answer_question | QuestionCommands.Answer | 回答别人向自己提的问题（open_questions 中 for_you 为 true） |
 | close_question | QuestionCommands.Close | 撤回自己提的、已不需要回答的问题（须写理由），撤回后不再阻止完成 |
-| submit_result | ResultCommands.Submit | 明确提交结果 |
+| submit_result | ResultCommands.Submit | 明确提交结果；result、files、links 至少一项 |
+| upload_file | file.Commands.Upload | 上传 text 或 content_base64（MCP 请求上限 1MiB，约 700KB 内容），返回 file_id；只上传不进入时间线，更大的文件用 HTTP `POST /v1/tasks/{id}/files` |
+| read_file | file.Queries.Open | 读取文件：UTF-8 文本直接返回，其他 base64；超过 512KB 只返回元数据与下载路径 |
 
 分配、验收、取消与重开不对模型开放：插件以局部窄接口注入，只拿到上表能力，这些都属于人。
 
@@ -36,7 +38,7 @@ claude mcp add --transport http taskloom http://localhost:8899/v1/mcp \
 - **进展而非保活**：执行没有租约或超时。认领、本人留言、提问、提交结果都会更新执行的最近进展时间，负责人据此判断是否介入；instructions 提示模型长时间工作时每 10～15 分钟汇报一次。Agent 重启后用同一业务凭据（同实例）read_task 即可继续原执行，不新建执行。沉默或断线不改变执行。
 - **推送**：不订阅变化流；模型通过 inbox/read_task 按需读取，人的留言与回答在下次读取时可见。实时 steer 仍归 Agent 层。
 
-验证见 `plugins/api/mcp/mcp_test.go`：以真实默认配置图和 HTTP 路由运行，覆盖初始化与会话、成员目录、认领、损坏/过期 basis、留言幂等与进展记录、提问与回答、Agent 回答被问的问题、提交，以及通知、未知方法、批量、坏凭据和外部 Origin。
+验证见 `plugins/api/mcp/mcp_test.go`：以真实默认配置图和 HTTP 路由运行，覆盖初始化与会话、成员目录、认领、损坏/过期 basis、留言幂等与进展记录、提问与回答、Agent 回答被问的问题、提交、文件上传/交付/读取，以及通知、未知方法、批量、坏凭据和外部 Origin。
 
 ## 示例：AgentKit 常驻执行 Agent
 

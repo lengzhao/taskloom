@@ -103,6 +103,15 @@ details[open] > summary { margin-bottom: 4px }
 .timeline li.result::before { border-color: var(--ok) }
 .timeline .who { font-size: 12px; color: var(--muted) }
 .timeline p { margin-top: 2px }
+ul.attachments { list-style: none; margin: 4px 0 0; padding: 0 }
+.timeline ul.attachments li { padding: 0; border: 0; margin: 2px 0 }
+.timeline ul.attachments li::before { display: none }
+ul.attachments a { word-break: break-all }
+details.attach { margin: 6px 0 }
+details.attach summary { cursor: pointer; color: var(--muted); font-size: 13px }
+ul.attachments.chosen { margin: 4px 0 6px }
+.attach-label { margin: 10px 0 4px; color: var(--muted); font-size: 13px }
+ul.attachments.chosen li { margin: 2px 0 }
 
 #login { max-width: 420px; margin: 80px auto }
 .empty { padding: 40px 10px; text-align: center; color: var(--muted) }
@@ -292,6 +301,21 @@ async function api(path, method = 'GET', data, headers = {}) {
     headers: { 'Content-Type': 'application/json', 'X-Taskloom-Request': '1', ...(method === 'GET' ? {} : { 'Idempotency-Key': requestKey }), ...headers },
     ...(data ? { body: JSON.stringify(data) } : {}),
   });
+  return answer(r, fingerprint);
+}
+// upload sends one file's raw bytes; the same file keeps its key until answered.
+async function upload(path, file) {
+  const fingerprint = 'upload ' + path + ' ' + file.name + ' ' + file.size + ' ' + file.lastModified;
+  const requestKey = retryKeys.get(fingerprint) || crypto.randomUUID();
+  retryKeys.set(fingerprint, requestKey);
+  const r = await fetch(prefix + path + '/files?name=' + encodeURIComponent(file.name), {
+    method: 'POST',
+    headers: { 'Content-Type': file.type || 'application/octet-stream', 'X-Taskloom-Request': '1', 'Idempotency-Key': requestKey },
+    body: file,
+  });
+  return answer(r, fingerprint);
+}
+async function answer(r, fingerprint) {
   if (!r.ok) {
     if (r.status >= 400 && r.status < 500) retryKeys.delete(fingerprint);
     if (r.status === 401) showLogin();
@@ -439,7 +463,7 @@ $('detail-back').onclick=handle(async()=>{selected='';await list()});
 // ---------- Task detail ----------
 async function show() {
   const path = '/tasks/' + encodeURIComponent(selected);
-  const [d, w] = await Promise.all([api(path), api(path + '/workflow')]);
+  const [d, w, files] = await Promise.all([api(path), api(path + '/workflow'), api(path + '/files')]);
   let commits = d.Commits || [];
   while (commits.length && commits.length % 100 === 0) {
     const page = await api(path + '?after=' + commits.at(-1).Sequence);
@@ -451,6 +475,7 @@ async function show() {
   // Selectors for assignee, participant and addressee; any active task may ask any member.
   ctx.candidates = (d.CanEdit || w.CanAssign || w.Position.Status === 'active') ? await directory() : [];
   ctx.commits = new Map(commits.map(c => [c.ID, c]));
+  ctx.files = new Map(files.map(f => [f.ID, f]));
   $('detail').replaceChildren(
     renderHead(ctx),
     renderNext(ctx),
@@ -515,9 +540,10 @@ function renderNext(ctx) {
   // Only people sign in here; Agents work through the API.
   if (w.CanOpen) panel.append(h('div', 'actions', button('开始处理', () => ctx.send('/execution/open', claim), 'primary')));
   if (w.CanSubmit) {
-    const body = textarea('Body', true, '填写本次任务的处理结果');
-    const form = h('form', null, field('提交处理结果', body), h('div', 'actions', el('button', '提交结果', 'primary')));
-    form.onsubmit = handle(() => ctx.send('/results', { ...ctx.ref, Body: body.value }));
+    const body = textarea('Body', false, '填写本次任务的处理结果；也可以只交付文件或链接');
+    const extra = attachInputs();
+    const form = h('form', null, field('提交处理结果', body), extra.node, h('div', 'actions', el('button', '提交结果', 'primary')));
+    form.onsubmit = handle(async () => { await ctx.send('/results', { ...ctx.ref, Body: body.value, ...await extra.collect(ctx.path, body.value) }); });
     panel.append(form);
   }
   const actions = h('div', 'actions');
@@ -608,7 +634,7 @@ async function directory() { return (await api('/people?limit=200')).Items }
 
 function confirmThen(message, fn) { if (confirm(message)) return fn() }
 
-function renderResult({ w, active, send, ...ctx }) {
+function renderResult({ w, active, send, files, path }) {
   const panel = h('div', 'panel', el('h3', '当前结果'));
   if (!w.Result) {
     panel.append(el('p', '还没有提交结果。处理人明确提交后会显示在这里；普通评论不算交付。', 'muted'));
@@ -616,9 +642,105 @@ function renderResult({ w, active, send, ...ctx }) {
   }
   const outcome = w.Review ? (OUTCOME_LABEL[w.Review.Outcome] || w.Review.Outcome) : '此流程无需人工验收';
   panel.append(h('div', 'meta muted small', el('span', outcome)));
-  if (w.ResultCommit) panel.append(h('div', 'result', el('p', w.ResultCommit.Body), el('p', (w.ResultCommit.Author || '') + ' · ' + time(w.ResultCommit.CreatedAt), 'muted small')));
+  if (w.ResultCommit) panel.append(h('div', 'result', w.ResultCommit.Body ? el('p', w.ResultCommit.Body) : null, attachmentsView(w.ResultCommit, files, path), el('p', (w.ResultCommit.Author || '') + ' · ' + time(w.ResultCommit.CreatedAt), 'muted small')));
   if (w.Review?.Reason) panel.append(el('p', '验收意见：' + w.Review.Reason, 'muted'));
   return panel;
+}
+
+// attachInputs picks files to upload and links to attach. The chosen files are
+// listed and can be removed one by one. Everything that can be checked here
+// (count, empty files, link shape) is checked before any upload; files are
+// uploaded when the form is sent, and an upload stays private until the
+// form's commit references it. A file already uploaded by a send that then
+// failed is reused, not uploaded again, even if it was picked again.
+// Count and size limits come from GET /files/limits; the link shape rules
+// mirror domain/attachment.
+let fileLimits = null;
+async function limits() { return fileLimits ||= await api('/files/limits') }
+function attachInputs() {
+  const picker = el('input'); picker.type = 'file'; picker.multiple = true; picker.hidden = true;
+  const chosen = new Map();   // file key -> File, in pick order
+  const uploaded = new Map(); // file key -> uploaded file ID
+  const fileKey = f => f.name + '\n' + f.size + '\n' + f.lastModified;
+  const list = el('ul', undefined, 'attachments chosen');
+  const add = el('button', '选择文件…'); add.type = 'button'; add.onclick = () => picker.click();
+  const count = el('span', '', 'muted small');
+  const render = () => {
+    list.replaceChildren(...[...chosen].map(([k, f]) => {
+      const x = el('button', '移除', 'link small'); x.type = 'button';
+      x.onclick = () => { chosen.delete(k); render() };
+      return h('li', null, '📎 ' + f.name + ' ', el('span', size(f.size) + ' ', 'muted small'), x);
+    }));
+    count.textContent = (chosen.size ? ' 已选 ' + chosen.size + ' 个' : '') + (fileLimits ? '（最多 ' + fileLimits.MaxFiles + ' 个，单个不超过 ' + size(fileLimits.MaxBytes) + '）' : '');
+  };
+  limits().then(render, () => {});
+  picker.onchange = () => { for (const f of picker.files) chosen.set(fileKey(f), f); picker.value = ''; render() };
+  render();
+  const links = textarea('Links', false, '每行一个链接：https://… 后面可空格加标题；只保存链接，不保存页面内容');
+  links.style.minHeight = '44px';
+  const files = h('div', null, h('div', null, add, count), list, picker);
+  const node = h('details', 'attach', el('summary', '附件与链接'), h('div', 'attach-files', el('div', '文件', 'attach-label'), files), field('链接', links));
+  return {
+    node,
+    // collect returns the Files and Links to send with body, uploading files
+    // first; it refuses an invalid or empty send before any upload.
+    async collect(path, body) {
+      const out = {};
+      const lim = await limits();
+      const ls = [];
+      for (const line of links.value.split('\n').map(x => x.trim()).filter(Boolean)) {
+        const i = line.search(/\s/);
+        const l = i < 0 ? { URL: line } : { URL: line.slice(0, i), Title: line.slice(i).trim() };
+        let u = null;
+        try { u = new URL(l.URL) } catch {}
+        if (!u || !/^https?:$/.test(u.protocol) || u.username || u.password || l.URL.length > 2048)
+          throw Error('链接格式不对：' + l.URL + '（需以 http:// 或 https:// 开头）');
+        if ((l.Title || '').length > 200) throw Error('链接标题太长（最多 200 字）：' + l.Title.slice(0, 20) + '…');
+        ls.push(l);
+      }
+      if (ls.length > lim.MaxLinks) throw Error('链接最多 ' + lim.MaxLinks + ' 个，当前 ' + ls.length + ' 个');
+      if (chosen.size > lim.MaxFiles) throw Error('文件最多 ' + lim.MaxFiles + ' 个，当前 ' + chosen.size + ' 个');
+      const empty = [...chosen.values()].filter(f => f.size === 0).map(f => f.name);
+      if (empty.length) throw Error('空文件不能作为附件：' + empty.join('、'));
+      const big = [...chosen.values()].filter(f => f.size > lim.MaxBytes).map(f => f.name + '（' + size(f.size) + '）');
+      if (big.length) throw Error('超过单个文件上限 ' + size(lim.MaxBytes) + '：' + big.join('、'));
+      if (!body.trim() && !chosen.size && !ls.length) throw Error('请填写内容，或附上文件、链接');
+      const ids = [];
+      let n = 0;
+      for (const [k, file] of chosen) {
+        n++;
+        if (!uploaded.has(k)) {
+          notice('正在上传 ' + file.name + '（' + n + '/' + chosen.size + '）…');
+          try { uploaded.set(k, (await upload(path, file)).ID) }
+          catch (e) { throw Error('「' + file.name + '」上传失败：' + (e.status === 413 ? '超过文件大小上限' : e.message.trim())) }
+        }
+        ids.push(uploaded.get(k));
+      }
+      notice('');
+      if (ids.length) out.Files = ids;
+      if (ls.length) out.Links = ls;
+      return out;
+    },
+  };
+}
+function size(n) { return n < 1024 ? n + ' B' : n < 1048576 ? (n / 1024).toFixed(1) + ' KB' : (n / 1048576).toFixed(1) + ' MB' }
+// attachmentsView lists a commit's files (downloads) and links (new tab, no referrer).
+function attachmentsView(c, files, path) {
+  if (!c.Files?.length && !c.Links?.length) return null;
+  const ul = el('ul', undefined, 'attachments');
+  for (const id of c.Files || []) {
+    const f = files?.get(id);
+    const a = el('a', f ? f.Name : id.slice(0, 8));
+    a.href = prefix + path + '/files/' + encodeURIComponent(id);
+    a.download = f ? f.Name : '';
+    ul.append(h('li', null, '📎 ', a, f ? el('span', ' ' + size(f.Size), 'muted small') : null));
+  }
+  for (const l of c.Links || []) {
+    const a = el('a', l.Title || l.URL);
+    if (/^https?:\/\//i.test(l.URL)) { a.href = l.URL; a.target = '_blank'; a.rel = 'noopener noreferrer' }
+    ul.append(h('li', null, '🔗 ', a, l.Title ? el('span', ' ' + l.URL, 'muted small') : null));
+  }
+  return ul;
 }
 
 // folded shows a long result in the timeline as its first lines; the full text
@@ -650,15 +772,16 @@ function planText(c, d, w) {
   return text;
 }
 
-function renderTimeline({ d, w, path }, commits) {
+function renderTimeline({ d, w, path, files }, commits) {
   const panel = h('div', 'panel', el('h3', '时间线'));
   if (d.CanComment) {
     const ref = el('input'); ref.name = 'RefID'; ref.type = 'hidden';
+    const extra = attachInputs();
     const f = h('form', null,
-      field('给处理人留言 / 引导', textarea('Body', true, '补充说明、纠正方向或提出要求，处理人可在任务中查看；留言不算交付结果')),
-      ref, h('div', 'actions', el('button', '发送留言', 'primary')));
+      field('给处理人留言 / 引导', textarea('Body', false, '补充说明、纠正方向或提出要求，处理人可在任务中查看；留言不算交付结果')),
+      extra.node, ref, h('div', 'actions', el('button', '发送留言', 'primary')));
     f.id = 'comment';
-    f.onsubmit = handle(async () => { await api(path + '/commits', 'POST', formdata(f)); await show() });
+    f.onsubmit = handle(async () => { const v = formdata(f); await api(path + '/commits', 'POST', { Body: v.Body, RefID: v.RefID, ...await extra.collect(path, v.Body) }); await show() });
     panel.append(f);
   }
   const byID = new Map(commits.map(c => [c.ID, c]));
@@ -669,7 +792,8 @@ function renderTimeline({ d, w, path }, commits) {
     const li = h('li', c.Kind === 'result' ? 'result' : '',
       el('div', (KIND_LABEL[c.Kind] || c.Kind) + ' · ' + c.Author + ' · ' + time(c.CreatedAt), 'who'),
       (c.Kind === 'answer' || c.Kind === 'question.closed') && byID.has(c.RefID) ? el('div', (c.Kind === 'answer' ? '回答：' : '关闭的问题：') + byID.get(c.RefID).Body, 'muted small') : null,
-      c.Kind === 'result' ? folded(c.Body) : el('p', c.Kind === 'plan.changed' ? planText(c, d, w) : c.Kind === 'task.basis' ? basisText(c) : c.Body),
+      c.Kind === 'result' ? (c.Body ? folded(c.Body) : null) : c.Body || c.Kind !== 'comment' ? el('p', c.Kind === 'plan.changed' ? planText(c, d, w) : c.Kind === 'task.basis' ? basisText(c) : c.Body) : null,
+      attachmentsView(c, files, path),
       c.RefID && c.Kind === 'comment' ? el('code', '更正引用 ' + c.RefID, 'muted') : null);
     if (d.CanComment && c.Kind === 'comment' && c.Author === viewer?.Subject) {
       li.append(button('追加更正', () => {

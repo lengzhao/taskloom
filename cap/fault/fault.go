@@ -8,4 +8,6 @@ var (
 	ErrNotFound    = errors.New("not found")
 	ErrUnavailable = errors.New("storage unavailable")
 	ErrInput       = errors.New("invalid input")
+	// ErrTooLarge rejects content over a configured size limit.
+	ErrTooLarge = errors.New("content too large")
 )

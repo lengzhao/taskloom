@@ -18,6 +18,7 @@ import (
 	"github.com/lengzhao/pluginkit"
 	"github.com/lengzhao/taskloom/cap/authorization"
 	"github.com/lengzhao/taskloom/cap/fault"
+	capfile "github.com/lengzhao/taskloom/cap/file"
 	"github.com/lengzhao/taskloom/cap/httpapi"
 	work "github.com/lengzhao/taskloom/cap/workflow"
 	"github.com/lengzhao/taskloom/cap/workspace"
@@ -46,7 +47,12 @@ type asker interface {
 	Close(ctx context.Context, token, key string, in work.CloseQuestion) (work.Ref, error)
 }
 
-// Deps has seven fields, one per Agent-facing capability. Like api/workflow it
+type files interface {
+	capfile.Commands
+	capfile.Queries
+}
+
+// Deps has eight fields, one per Agent-facing capability. Like api/workflow it
 // only translates a protocol; splitting it would scatter one tool table across
 // adapters without separating any rule.
 type Deps struct {
@@ -58,12 +64,14 @@ type Deps struct {
 	Questions  asker        `json:"questions"`
 	// People is the member directory an Agent searches for whom to ask.
 	People directory `json:"people"`
+	// Files uploads and reads task files an Agent attaches or receives.
+	Files files `json:"files"`
 }
 type Module struct{ d Deps }
 
 func init() {
 	pluginkit.Register("api/mcp", func(_ struct{}, d Deps) (*Module, error) {
-		if d.Tasks == nil || d.Comments == nil || d.Workflow == nil || d.Executions == nil || d.Results == nil || d.Questions == nil || d.People == nil {
+		if d.Tasks == nil || d.Comments == nil || d.Workflow == nil || d.Executions == nil || d.Results == nil || d.Questions == nil || d.People == nil || d.Files == nil {
 			return nil, fault.ErrInput
 		}
 		return &Module{d}, nil
@@ -84,6 +92,7 @@ const instructions = `Taskloom 任务协作。你是执行者，人是负责人�
 3. inbox 里也可能是别人向你提的问题（next_actor 为 addressee）：read_task 查看 open_questions 中 for_you 为 true 的，用 answer_question 回答。
    用 post_message 汇报进度或回复人的引导；遇到需要人决定或需要别人协助的问题，用 ask_owner 提问，需要别人协助时先用 list_members 找到对方，再用 to 指定（未回答前任务不能完成）。
 4. 完成后用 submit_result 明确提交结果（普通留言不算交付）。被退回时按原因修改后再提交。
+   交付文件时先 upload_file 得到 file_id，再在 submit_result 或 post_message 的 files 中引用；链接放 links。时间线和结果里的文件用 read_file 读取。
 任务被转交、退回或取消后，你的执行会立即失效（写入被拒绝），此时停止在该任务上的工作。
 写操作需要 read_task 返回的 basis；遇到版本冲突先重新 read_task 再决定。`
 

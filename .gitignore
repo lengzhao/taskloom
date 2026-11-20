@@ -38,6 +38,8 @@ go.work.sum
 *.db-shm
 *.db-wal
 *.db-journal
+# Local task file bytes (storage/fs default directory)
+taskloom-files/
 
 # Taskloom credential generated for the local AgentKit container
 deploy/agent/taskloom.env

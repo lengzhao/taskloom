@@ -7,8 +7,8 @@
 - **认证**：浏览器只能用用户名和密码登录，登录签发的一小时凭据直接放在 HttpOnly、SameSite=Strict Cookie 中，有效与否只由凭据存储判断，进程重启或多实例不影响会话；非浏览器用 `Authorization: Bearer <凭据>`，这类凭据不能换成浏览器会话。
 - **浏览器写入**：HTTP 传输层对所有路由统一要求：带 Origin 时必须等于 `http.config.origin`；无 Authorization 的非 GET 请求必须带 `X-Taskloom-Request: 1`。origin 只有回环主机（localhost、127.0.0.1、::1）可用 http，其余须 https；会话 Cookie 除回环主机外都是 Secure。多租户库须设置 `workspace-api.config.loginTenant`。
 - **写入**：都需 `Idempotency-Key`；同键同载荷返回原结果，不同载荷 409。回执只存命令固定的引用与一次性返回值（如新建 ID、凭据编号），不存可推导的事实，见[命令生命周期](architecture.md#命令生命周期)。租户和作者来自认证主体，请求体不能指定。
-- **载荷**：JSON 使用导出字段名，路径绑定 ID，未知字段拒绝。正文上限 64KiB，业务文本上限 20000 字节。
-- **错误**：400 输入或游标无效，401 认证，403 授权，404 不存在，409 冲突（版本、幂等、状态不允许），500 技术失败。
+- **载荷**：JSON 使用导出字段名，路径绑定 ID，未知字段拒绝。正文上限 64KiB，业务文本上限 20000 字节。文件上传例外，见[文件](#文件)。
+- **错误**：400 输入或游标无效，401 认证，403 授权，404 不存在，409 冲突（版本、幂等、状态不允许），413 文件超过上限，500 技术失败。
 
 ## 权限
 
@@ -52,7 +52,7 @@
 | GET /people | 有效成员目录（Subject、Kind、OwnerID），任一有效成员（含 Agent）可读；`?q=` 按 Subject 片段搜索、`kind=human\|agent`、按 Subject 分页（`after`，`limit` 默认 50、最多 200），返回 `{Items, Next}`；供选项目负责人、处理人、参与者和被提问人，不按任务过滤 |
 | GET/POST /tasks | 当前可读任务列表；创建（Title、Goal、Criteria、可选 ProjectID；可选 ParentID 与 Required 直接建为子任务，同一事务内创建并放置，需父任务调整子任务的资格，任一步失败都不留下任务；只传 Required 不传 ParentID 返回 400），响应为调用者此刻读到的任务详情 |
 | GET/PATCH /tasks/{id} | 详情与 commit 分页（`?after=<Sequence>`，每页 100）；修改约定（Title、Goal、Criteria、BasisVersion），响应为当前任务详情 |
-| POST /tasks/{id}/commits | 评论或更正（Body、可选 RefID，只能引用自己的评论）；响应为 `{TaskID, CommitID}`，重放返回同一 CommitID |
+| POST /tasks/{id}/commits | 评论或更正（Body、可选 RefID，只能引用自己的评论；可选 Files、Links，见[文件](#文件)，三者至少一项）；响应为 `{TaskID, CommitID}`，重放返回同一 CommitID |
 | POST /tasks/{id}/participants | 负责人或管理员加入/移出参与者（Subject、Present） |
 | POST /tasks/{id}/project | 移入/移出项目（ProjectID，空为移出）；不固定版本，并发移动以后写为准；与子任务关系无关 |
 | POST /tasks/{id}/parent | 放置子任务 {id}：ParentID（必填，不支持解除；祖先链超过 64 层视为冲突）、Required、SeenParentID、SeenRequired（所见当前关系，命令只固定它；父任务的其他变化不冲突）。挂接、切换必需、重挂需要父任务和子任务的负责人或管理员资格，只切换必需只需父任务资格；规则见[任务拆分](core-contracts.md#任务拆分)。新建子任务用带 ParentID 的 POST /tasks |
@@ -66,7 +66,7 @@
 | GET /workflow | 受权快照（见下） |
 | POST /execution/assign | Subject；分配给人即开始人工执行 |
 | POST /execution/open | BasisVersion；Agent 认领，或人在依据变更后重新开始 |
-| POST /results | ExecutionID、Body |
+| POST /results | ExecutionID、Body、可选 Files、Links（三者至少一项，见[文件](#文件)） |
 | POST /review | CommitID（当前结果 commit）、Outcome（approved/rejected）、Reason（退回必填） |
 | POST /cancel | 无字段 |
 | POST /restart | RoundID；重开已取消的任务为新一轮；活跃与已完成任务返回冲突（活跃任务用验收退回、转交或修改约定） |
@@ -87,6 +87,20 @@
 
 `GET /v1/overview` 为调用者可读的每个任务给出列表所需的推导事实：`Assignee`（当前处理人）、`ParentID`（直接父任务；ID 不是秘密，标题只在可读时由调用者自己的列表得到）、`UpdatedAt`（时间线最后一条 commit 的时间）。不保存，每次读取时推导。
 
+## 文件
+
+规则见[核心契约](core-contracts.md#文件与链接)。
+
+| 路径（/tasks/{id} 下） | 说明 |
+| --- | --- |
+| POST /files?name=<文件名> | 请求体为文件原始字节，`Content-Type` 作为媒体类型（缺省 application/octet-stream）；需要评论资格与 Idempotency-Key，同键同字节返回原文件，同键不同字节 409；超过 `files.config.maxBytes`（默认 100MiB）返回 413。响应为文件元数据 `{ID, Name, MediaType, Size, Digest, Uploader, CreatedAt…}`；只上传不进入时间线 |
+| GET /files | 调用者可见的本任务文件元数据（已被引用的，以及自己尚未引用的上传），按上传时间排序 |
+| GET /files/{fid} | 下载字节，一律 `Content-Disposition: attachment`，CSP sandbox |
+
+`GET /v1/files/limits`（不在任务下，只需登录）返回 `{MaxBytes, MaxFiles, MaxLinks}`：单个上传上限（即 `files.config.maxBytes`）与每条 commit 的文件、链接数量上限，供客户端在发送前拒绝必然失败的请求；服务端照常校验。
+
+评论与结果的 `Files` 是本任务 FileID 列表（最多 20 个，不重复），`Links` 是 `{URL, Title}` 列表（最多 20 个，URL 为 http/https 且不含用户信息，最长 2048 字节；Title 最长 200 字节）。时间线 commit 原样返回 Files 与 Links，名称与大小由 `GET /files` 对照。上传与下载各自的读写时限由 `file-api.config.transferTimeout`（默认 10m）替代全局 HTTP 时限。
+
 ## 变化补拉
 
 1. `GET /v1/changes`（不带 cursor）返回当前游标，不回放历史。
@@ -97,4 +111,4 @@
 
 ## 工作台
 
-`/v1/app` 是内嵌的薄界面，无外部资源和前端构建链。它只依据快照的 `Can*`/`Blocked`/`NextActor` 决定可用操作，状态名只用于显示；取消、重开需二次确认；网络结果不明确时沿用同一幂等键。管理员在"用户与 Agent"中管理成员、签发和撤销凭据、查看审计记录；首次初始化与离线恢复只在 CLI 中执行。
+`/v1/app` 是内嵌的薄界面，无外部资源和前端构建链。留言与提交结果可在"附件与链接"中选择文件（列出已选文件、可逐个移除；按 `GET /files/limits` 在发送前检查数量、单个大小、空文件和链接格式，再逐个上传后引用，失败提示文件名）和填写链接。它只依据快照的 `Can*`/`Blocked`/`NextActor` 决定可用操作，状态名只用于显示；取消、重开需二次确认；网络结果不明确时沿用同一幂等键。管理员在"用户与 Agent"中管理成员、签发和撤销凭据、查看审计记录；首次初始化与离线恢复只在 CLI 中执行。

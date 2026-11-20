@@ -21,7 +21,12 @@ type Open struct {
 	TaskID       string
 	BasisVersion int64
 }
-type Submit struct{ TaskID, ExecutionID, Body string }
+// Submit delivers text, files of the same task and links; any one suffices.
+type Submit struct {
+	TaskID, ExecutionID, Body string
+	Files                     []string      `json:",omitempty"`
+	Links                     []commit.Link `json:",omitempty"`
+}
 type Review struct {
 	TaskID string
 	acceptance.Verdict

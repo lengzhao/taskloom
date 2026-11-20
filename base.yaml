@@ -1,10 +1,10 @@
-# Implemented M05 graph: SQLite workspace and execution/result/acceptance protocol; no Agent runtime.
+# Implemented graph: SQLite workspace, execution/result/acceptance protocol and local-directory task files; no Agent runtime.
 server:
   use: server
   config:
     shutdownTimeout: 10s
   deps:
-    resources: [sql]
+    resources: [sql, blobs]
     components: [http]
 http:
   use: transport/http
@@ -14,7 +14,7 @@ http:
     # The one browser origin allowed; plain http only for a loopback host.
     origin: http://127.0.0.1:8080
   deps:
-    modules: [health, workspace-api, workflow-api, plan-api, mcp-api, audit-api]
+    modules: [health, workspace-api, workflow-api, plan-api, file-api, mcp-api, audit-api]
 health:
   use: api/health
 
@@ -23,6 +23,11 @@ sql:
   config:
     driver: sqlite
     dsn: taskloom.db
+# File bytes; S3 would replace this node with the same cap/blob contract.
+blobs:
+  use: storage/fs
+  config:
+    dir: taskloom-files
 
 identity:
   use: identity/local
@@ -178,6 +183,23 @@ plan-api:
   use: api/plan
   deps:
     plan: plan-commands
+files:
+  use: commands/file
+  config:
+    maxBytes: 104857600
+  deps:
+    commands: command-runtime
+    transactions: sql
+    identity: identity
+    authorization: access
+    files: sql
+    blobs: blobs
+file-api:
+  use: api/file
+  config:
+    transferTimeout: 10m
+  deps:
+    files: files
 mcp-api:
   use: api/mcp
   deps:
@@ -188,6 +210,7 @@ mcp-api:
     results: result-commands
     questions: question-commands
     people: workspace
+    files: files
 audit-api:
   use: api/audit
   deps:

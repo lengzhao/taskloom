@@ -46,6 +46,9 @@ func Fail(w http.ResponseWriter, e error) {
 	case errors.Is(e, fault.ErrConflict):
 		status = 409
 		msg = "版本或请求冲突，请刷新"
+	case errors.Is(e, fault.ErrTooLarge):
+		status = 413
+		msg = "文件超过大小上限"
 	case errors.Is(e, fault.ErrInput):
 		status = 400
 		msg = "输入或游标无效，请刷新同步"

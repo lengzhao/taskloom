@@ -18,6 +18,9 @@ http:
 sql:
   config:
     dsn: /data/taskloom.db
+blobs:
+  config:
+    dir: /data/files
 EOF
   touch /app/.generated-config
 fi

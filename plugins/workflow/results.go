@@ -19,6 +19,7 @@ import (
 	"github.com/lengzhao/taskloom/cap/record"
 	"github.com/lengzhao/taskloom/cap/task"
 	api "github.com/lengzhao/taskloom/cap/workflow"
+	"github.com/lengzhao/taskloom/domain/attachment"
 )
 
 // ResultDeps has seven fields: a result is a commit (commits) registered as
@@ -57,8 +58,9 @@ func (m *ResultModule) Submit(ctx context.Context, token, key string, in api.Sub
 		if e = m.active(tx, t, pos, v); e != nil {
 			return api.Ref{}, e
 		}
-		if strings.TrimSpace(in.Body) == "" || len(in.Body) > 20000 {
-			return api.Ref{}, fault.ErrConflict
+		// Nothing to deliver is invalid input, not a state conflict.
+		if attachment.Empty(in.Body, in.Files, in.Links) || len(in.Body) > 20000 || attachment.Valid(in.Files, in.Links) != nil {
+			return api.Ref{}, fault.ErrInput
 		}
 		// The parent delivers only once its required subtasks are completed.
 		if e = m.d.Flow.CheckSubmit(tx, t); e != nil {
@@ -74,13 +76,13 @@ func (m *ResultModule) Submit(ctx context.Context, token, key string, in api.Sub
 			if e != nil {
 				return api.Ref{}, e
 			}
-			if old.BasisVersion == t.BasisVersion && old.Body == in.Body {
+			if old.BasisVersion == t.BasisVersion && attachment.Same(old, in.Body, in.Files, in.Links) {
 				return api.Ref{TaskID: t.ID, RoundID: pos.RoundID}, nil
 			}
 		} else if currentErr != nil && !errors.Is(currentErr, fault.ErrNotFound) {
 			return api.Ref{}, currentErr
 		}
-		c := commit.Commit{Tenant: t.Tenant, TaskID: t.ID, ID: id(), Kind: "result", Body: in.Body, Author: p.ID, OwnerID: p.OwnerID, BasisVersion: t.BasisVersion}
+		c := commit.Commit{Tenant: t.Tenant, TaskID: t.ID, ID: id(), Kind: "result", Body: in.Body, Files: in.Files, Links: in.Links, Author: p.ID, OwnerID: p.OwnerID, BasisVersion: t.BasisVersion}
 		if e = m.d.Commits.Append(tx, c); e != nil {
 			return api.Ref{}, e
 		}

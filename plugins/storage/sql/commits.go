@@ -32,6 +32,9 @@ func (s *Store) Append(ctx context.Context, c commit.Commit) error {
 				return err
 			}
 		}
+		if err := referenceFiles(db, c.Tenant, c.TaskID, c.Author, c.Files); err != nil {
+			return err
+		}
 		if err := db.Model(&coordination{}).Where("id = ?", 1).UpdateColumn("sequence", gorm.Expr("sequence + 1")).Error; err != nil {
 			return err
 		}

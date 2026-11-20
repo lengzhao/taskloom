@@ -37,7 +37,7 @@ func setup(t *testing.T) *fixture {
 	ctx := context.Background()
 	dir := t.TempDir()
 	overlay := filepath.Join(dir, "config.yaml")
-	raw, _ := json.Marshal(map[string]any{"sql": map[string]any{"config": map[string]any{"dsn": filepath.Join(dir, "db")}}})
+	raw, _ := json.Marshal(map[string]any{"sql": map[string]any{"config": map[string]any{"dsn": filepath.Join(dir, "db")}}, "blobs": map[string]any{"config": map[string]any{"dir": filepath.Join(dir, "files")}}})
 	if e := os.WriteFile(overlay, raw, 0600); e != nil {
 		t.Fatal(e)
 	}
@@ -50,6 +50,11 @@ func setup(t *testing.T) *fixture {
 		t.Fatal(e)
 	}
 	t.Cleanup(func() { storage.Close(ctx) })
+	blobs, _ := build.GetByID[lifecycle.Resource](graph, "blobs")
+	if e = blobs.Open(ctx); e != nil {
+		t.Fatal(e)
+	}
+	t.Cleanup(func() { blobs.Close(ctx) })
 	// The real transport: routes, prefix and the shared request envelope.
 	mux, _ := build.GetByID[http.Handler](graph, "http")
 	srv := httptest.NewServer(mux)
@@ -176,7 +181,7 @@ func TestAgentWorksATaskThroughMCP(t *testing.T) {
 	if init["protocolVersion"] != "2025-06-18" || !strings.Contains(init["instructions"].(string), "submit_result") || f.session == "" {
 		t.Fatal("initialize", init, f.session)
 	}
-	if n := len(f.rpc("tools/list", nil)["tools"].([]any)); n != 9 {
+	if n := len(f.rpc("tools/list", nil)["tools"].([]any)); n != 11 {
 		t.Fatal("tools", n)
 	}
 
@@ -330,5 +335,55 @@ func TestAgentAnswersAQuestionAskedOfIt(t *testing.T) {
 	task = f.ok("read_task", map[string]string{"task_id": id})
 	if len(task["open_questions"].([]any)) != 0 || task["next_actor"] != "assignee" {
 		t.Fatal("answer did not close the question", task["open_questions"], task["next_actor"])
+	}
+}
+
+// An Agent uploads a file, delivers it with a link, and the owner downloads
+// the same bytes; the file is visible in read_task and read_file.
+func TestAgentDeliversFilesThroughMCP(t *testing.T) {
+	f := setup(t)
+	f.rpc("initialize", map[string]any{"protocolVersion": "2025-06-18"})
+	var created struct{ Task struct{ ID string } }
+	f.ownerCall("POST", "/tasks", map[string]string{"Title": "写报告", "Goal": "报告", "Criteria": "有文件"}, &created)
+	id := created.Task.ID
+	f.ownerCall("POST", "/tasks/"+id+"/execution/assign", map[string]any{"Subject": "agent"}, nil)
+	basis := f.ok("read_task", map[string]string{"task_id": id})["basis"].(string)
+	basis = f.ok("start_work", map[string]string{"task_id": id, "basis": basis})["basis"].(string)
+
+	if text, isErr := f.tool("upload_file", map[string]string{"task_id": id, "name": "a.md"}); !isErr {
+		t.Fatal("upload without content", text)
+	}
+	up := f.ok("upload_file", map[string]string{"task_id": id, "name": "report.md", "text": "# 报告\n完成"})
+	fileID := up["file_id"].(string)
+	bin := f.ok("upload_file", map[string]string{"task_id": id, "name": "x.bin", "content_base64": "AAEC/w=="})
+	if text, isErr := f.tool("submit_result", map[string]string{"task_id": id, "basis": basis, "files": "0123456789abcdef0123456789abcdef"}); !isErr || !strings.Contains(text, "不存在") {
+		t.Fatal("unknown file accepted", text)
+	}
+	f.ok("submit_result", map[string]string{"task_id": id, "basis": basis, "files": fileID + "," + bin["file_id"].(string), "links": "https://example.com/doc 设计文档"})
+
+	task := f.ok("read_task", map[string]string{"task_id": id})
+	result := task["current_result"].(map[string]any)
+	files := result["files"].([]any)
+	if len(files) != 2 || files[0].(map[string]any)["name"] != "report.md" || result["links"] == nil {
+		t.Fatal("result attachments", result)
+	}
+	read := f.ok("read_file", map[string]string{"task_id": id, "file_id": fileID})
+	if read["text"] != "# 报告\n完成" || !strings.HasPrefix(read["media_type"].(string), "text/") {
+		t.Fatal("read_file", read)
+	}
+	if f.ok("read_file", map[string]string{"task_id": id, "file_id": bin["file_id"].(string)})["content_base64"] != "AAEC/w==" {
+		t.Fatal("binary read_file")
+	}
+
+	req, _ := http.NewRequest("GET", f.srv.URL+"/v1/tasks/"+id+"/files/"+fileID, nil)
+	req.Header.Set("Authorization", "Bearer "+f.owner)
+	resp, e := http.DefaultClient.Do(req)
+	if e != nil {
+		t.Fatal(e)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != 200 || string(body) != "# 报告\n完成" || !strings.HasPrefix(resp.Header.Get("Content-Disposition"), "attachment") || !strings.Contains(resp.Header.Get("Content-Security-Policy"), "sandbox") {
+		t.Fatal("download", resp.StatusCode, string(body), resp.Header)
 	}
 }

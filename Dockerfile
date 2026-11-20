@@ -1,4 +1,4 @@
-# Taskloom single-container image: server + local admin CLI, SQLite under /data.
+# Taskloom single-container image: server + local admin CLI, SQLite and task files under /data.
 # The SQLite driver needs cgo, so build on Alpine with a C toolchain.
 FROM golang:1.27.3-alpine AS build
 # Module proxy settings are build arguments, e.g. pass the host's values:

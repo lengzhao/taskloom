@@ -24,6 +24,7 @@ import (
 	"github.com/lengzhao/taskloom/cap/task"
 	"github.com/lengzhao/taskloom/cap/unitofwork"
 	api "github.com/lengzhao/taskloom/cap/workspace"
+	"github.com/lengzhao/taskloom/domain/attachment"
 	"github.com/lengzhao/taskloom/runtime/command"
 )
 
@@ -77,7 +78,12 @@ func (s *Service) allowed(ctx context.Context, p identity.Principal, action, id 
 	return s.d.Authorization.Check(ctx, p, action, id) == nil
 }
 func (s *Service) append(ctx context.Context, p identity.Principal, t task.Task, kind, body, ref string) (commit.Commit, error) {
-	c := commit.Commit{Tenant: p.Tenant, TaskID: t.ID, ID: id(), Author: p.ID, OwnerID: p.OwnerID, Kind: kind, Body: body, RefID: ref, BasisVersion: t.BasisVersion}
+	return s.appendCommit(ctx, p, t, commit.Commit{Kind: kind, Body: body, RefID: ref})
+}
+
+// appendCommit fills in the commit's task, author and basis, then appends it.
+func (s *Service) appendCommit(ctx context.Context, p identity.Principal, t task.Task, c commit.Commit) (commit.Commit, error) {
+	c.Tenant, c.TaskID, c.ID, c.Author, c.OwnerID, c.BasisVersion = p.Tenant, t.ID, id(), p.ID, p.OwnerID, t.BasisVersion
 	if e := s.d.Commits.Append(ctx, c); e != nil {
 		return c, e
 	}
@@ -187,7 +193,7 @@ func (s *Service) Edit(ctx context.Context, token, key string, in api.Edit) (api
 func (s *Service) Comment(ctx context.Context, token, key string, in api.Comment) (api.Ref, error) {
 	var out api.Ref
 	b, e := command.Run(ctx, s.d.Commands, capcommand.Request{Token: token, Key: key, Operation: "commit.append", Resource: in.TaskID}, in, func(tx context.Context, p identity.Principal) ([]byte, error) {
-		if strings.TrimSpace(in.Body) == "" || len(in.Body) > 20000 {
+		if attachment.Empty(in.Body, in.Files, in.Links) || len(in.Body) > 20000 || attachment.Valid(in.Files, in.Links) != nil {
 			return nil, fault.ErrInput
 		}
 		t, e := s.d.Tasks.GetTask(tx, p.Tenant, in.TaskID)
@@ -203,7 +209,7 @@ func (s *Service) Comment(ctx context.Context, token, key string, in api.Comment
 				return nil, az.ErrForbidden
 			}
 		}
-		c, e := s.append(tx, p, t, "comment", in.Body, in.RefID)
+		c, e := s.appendCommit(tx, p, t, commit.Commit{Kind: "comment", Body: in.Body, RefID: in.RefID, Files: in.Files, Links: in.Links})
 		if e != nil {
 			return nil, e
 		}

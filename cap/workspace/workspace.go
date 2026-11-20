@@ -25,7 +25,12 @@ type Edit struct {
 	TaskID, Title, Goal, Criteria string
 	BasisVersion                  int64
 }
-type Comment struct{ TaskID, Body, RefID string }
+// Comment may carry files of the same task and links; Body may then be empty.
+type Comment struct {
+	TaskID, Body, RefID string
+	Files               []string      `json:",omitempty"`
+	Links               []commit.Link `json:",omitempty"`
+}
 type Detail struct {
 	Task                task.Task
 	Position            flow.Position

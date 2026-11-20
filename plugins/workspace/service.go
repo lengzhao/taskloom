@@ -158,6 +158,11 @@ func (s *Service) Edit(ctx context.Context, token, key string, in api.Edit) (api
 		} else if pos.Status != flow.PhaseActive {
 			return nil, fault.ErrConflict
 		}
+		// Saving the same text changes nothing, so no version advances and no
+		// claim or result is invalidated.
+		if in.Title == t.Title && in.Goal == t.Goal && in.Criteria == t.Criteria {
+			return json.Marshal(api.Ref{TaskID: t.ID})
+		}
 		t, e = s.d.Tasks.UpdateBasis(tx, task.BasisChange{Tenant: p.Tenant, TaskID: in.TaskID, Title: in.Title, Goal: in.Goal, Criteria: in.Criteria})
 		if e != nil {
 			return nil, e
@@ -348,22 +353,37 @@ func (s *Service) SetParticipant(ctx context.Context, token, key string, in api.
 	return e
 }
 
-// People lists the tenant's active members (subject, kind, owner) to any
-// active human member: it is the one selector for assignees, participants
-// and project owners. Agents and inactive members never read the directory.
-func (s *Service) People(ctx context.Context, token string) ([]az.MemberOption, error) {
-	out := []az.MemberOption{}
+// People pages the tenant's active members (subject, kind, owner) for any
+// active member, Agents included: it is the one selector for addressees,
+// assignees, participants and project owners. It exposes no credentials.
+func (s *Service) People(ctx context.Context, token string, q az.MemberQuery) (api.PeoplePage, error) {
+	out := api.PeoplePage{Items: []az.MemberOption{}}
+	if q.Kind != "" && q.Kind != "human" && q.Kind != "agent" {
+		return out, fault.ErrInput
+	}
+	switch {
+	case q.Limit <= 0:
+		q.Limit = api.PeopleDefault
+	case q.Limit > api.PeopleMax:
+		q.Limit = api.PeopleMax
+	}
+	size := q.Limit
+	q.Limit++ // one extra row tells whether another page follows
 	e := s.d.Transactions.Do(ctx, func(tx context.Context) error {
-		p, e := s.d.Identity.Authenticate(tx, token)
+		p, e := s.actor(tx, token)
 		if e != nil {
 			return e
 		}
-		member, e := s.d.Members.GetMember(tx, p.Tenant, p.ID)
-		if e != nil || !member.Active || p.Kind != "human" {
-			return az.ErrForbidden
+		items, e := s.d.Members.ListActiveMembers(tx, p.Tenant, q)
+		if e != nil {
+			return e
 		}
-		out, e = s.d.Members.ListActiveMembers(tx, p.Tenant)
-		return e
+		if len(items) > size {
+			items = items[:size]
+			out.Next = items[size-1].Subject
+		}
+		out.Items = items
+		return nil
 	})
 	return out, e
 }

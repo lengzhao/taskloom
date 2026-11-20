@@ -116,7 +116,13 @@ func (f *fixture) ownerCall(method, path string, body, out any) {
 func (f *fixture) rpc(method string, params any) map[string]any {
 	f.t.Helper()
 	f.seq++
-	resp := f.post("/mcp", f.agent, map[string]any{"jsonrpc": "2.0", "id": f.seq, "method": method, "params": params}, map[string]string{"Mcp-Session-Id": f.session, "Accept": "application/json, text/event-stream"})
+	return f.rpcID(f.seq, method, params)
+}
+
+// rpcID sends a request with a given JSON-RPC id, as a client resending it does.
+func (f *fixture) rpcID(id int, method string, params any) map[string]any {
+	f.t.Helper()
+	resp := f.post("/mcp", f.agent, map[string]any{"jsonrpc": "2.0", "id": id, "method": method, "params": params}, map[string]string{"Mcp-Session-Id": f.session, "Accept": "application/json, text/event-stream"})
 	defer resp.Body.Close()
 	if s := resp.Header.Get("Mcp-Session-Id"); s != "" {
 		f.session = s
@@ -170,7 +176,7 @@ func TestAgentWorksATaskThroughMCP(t *testing.T) {
 	if init["protocolVersion"] != "2025-06-18" || !strings.Contains(init["instructions"].(string), "submit_result") || f.session == "" {
 		t.Fatal("initialize", init, f.session)
 	}
-	if n := len(f.rpc("tools/list", nil)["tools"].([]any)); n != 7 {
+	if n := len(f.rpc("tools/list", nil)["tools"].([]any)); n != 8 {
 		t.Fatal("tools", n)
 	}
 
@@ -197,13 +203,20 @@ func TestAgentWorksATaskThroughMCP(t *testing.T) {
 		t.Fatal("duplicate claim not explained", text)
 	}
 
-	// A message is progress the owner can see; retrying it in the same session is idempotent.
+	// A message is progress the owner can see. Resending the same request is
+	// idempotent; a new call with the same text is a new report.
 	var before snapshot
 	f.ownerCall("GET", "/tasks/"+id+"/workflow", nil, &before)
 	time.Sleep(5 * time.Millisecond)
-	first := f.ok("post_message", map[string]string{"task_id": id, "text": "开始拉取数据"})["text"]
-	if again := f.ok("post_message", map[string]string{"task_id": id, "text": "开始拉取数据"})["text"]; again != first {
-		t.Fatal("retried message was not idempotent", first, again)
+	msg := map[string]any{"name": "post_message", "arguments": map[string]string{"task_id": id, "text": "开始拉取数据"}}
+	f.seq++
+	text := func(r map[string]any) string { return r["content"].([]any)[0].(map[string]any)["text"].(string) }
+	first := text(f.rpcID(f.seq, "tools/call", msg))
+	if again := text(f.rpcID(f.seq, "tools/call", msg)); again != first {
+		t.Fatal("resent message was not idempotent", first, again)
+	}
+	if next := f.ok("post_message", map[string]string{"task_id": id, "text": "开始拉取数据"})["text"]; next == first {
+		t.Fatal("a repeated progress report was swallowed", next)
 	}
 	var after snapshot
 	f.ownerCall("GET", "/tasks/"+id+"/workflow", nil, &after)
@@ -213,11 +226,23 @@ func TestAgentWorksATaskThroughMCP(t *testing.T) {
 	if task = f.ok("read_task", map[string]string{"task_id": id}); task["execution"].(map[string]any)["last_progress_at"] == nil {
 		t.Fatal("agent cannot see its last progress", task["execution"])
 	}
+	// The directory gives the agent whom it may ask; paging returns next only when more follow.
+	people, _ := json.Marshal(f.ok("list_members", map[string]string{"kind": "human"}))
+	if !strings.Contains(string(people), `"subject":"owner"`) || strings.Contains(string(people), `"agent"`) || strings.Contains(string(people), "next") {
+		t.Fatal("list_members", string(people))
+	}
+	// The agent learns who it is and who is already on the task; it never lists itself.
+	if task["you"] != "agent" || len(task["participants"].([]any)) != 0 {
+		t.Fatal("viewer or askable participants", task["you"], task["participants"])
+	}
 
 	asked := f.ok("ask_owner", map[string]string{"task_id": id, "basis": started["basis"].(string), "question": "CSV 还是 Excel？"})
 	f.ownerCall("GET", "/tasks/"+id+"/workflow", nil, &w)
 	if len(w.Questions) != 1 || w.NextActor != "addressee" {
 		t.Fatal("question not waiting on the owner it was asked of", w.NextActor)
+	}
+	if q := f.ok("read_task", map[string]string{"task_id": id})["open_questions"].([]any)[0].(map[string]any); q["for_you"] != false {
+		t.Fatal("a question to the owner is marked for the agent", q)
 	}
 	f.ownerCall("POST", "/tasks/"+id+"/questions/"+w.Questions[0].ID+"/answer", map[string]string{"Body": "用 CSV"}, nil)
 	task = f.ok("read_task", map[string]string{"task_id": id})
@@ -298,7 +323,7 @@ func TestAgentAnswersAQuestionAskedOfIt(t *testing.T) {
 	}
 	task := f.ok("read_task", map[string]string{"task_id": id})
 	q := task["open_questions"].([]any)[0].(map[string]any)
-	if q["asked_of"] != "agent" || q["id"] == nil {
+	if q["asked_of"] != "agent" || q["for_you"] != true || q["id"] == nil {
 		t.Fatal("open question", q)
 	}
 	f.ok("answer_question", map[string]string{"task_id": id, "question_id": q["id"].(string), "text": "今天下班前"})

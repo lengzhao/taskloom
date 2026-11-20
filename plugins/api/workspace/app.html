@@ -409,7 +409,7 @@ function renderTasks(){
  }
 }
 async function openProject(p=null){
- editingProject=p;const people=await api('/people');$('project-form').reset();$('project-notice').textContent='';$('project-title').textContent=p?'编辑项目':'新建项目';$('project-name').value=p?.Name||'';$('project-description').value=p?.Description||'';
+ editingProject=p;const people=await directory();$('project-form').reset();$('project-notice').textContent='';$('project-title').textContent=p?'编辑项目':'新建项目';$('project-name').value=p?.Name||'';$('project-description').value=p?.Description||'';
  const owner=$('project-owner');owner.replaceChildren();for(const m of people.filter(m=>m.Kind==='human')){const o=el('option',m.Subject);o.value=m.Subject;owner.append(o)}owner.value=p?.Owner||viewer.Subject;
  $('project-dialog').showModal();
 }
@@ -431,7 +431,8 @@ async function show() {
     if (page.Commits.length < 100) break;
   }
   const ctx = makeContext(d, w, path);
-  ctx.candidates = (d.CanEdit || w.CanAssign) ? await api('/people') : [];
+  // Selectors for assignee, participant and addressee; any active task may ask any member.
+  ctx.candidates = (d.CanEdit || w.CanAssign || w.Position.Status === 'active') ? await directory() : [];
   ctx.commits = new Map(commits.map(c => [c.ID, c]));
   $('detail').replaceChildren(
     renderHead(ctx),
@@ -447,7 +448,7 @@ function makeContext(d, w, path) {
   const active = w.Position.Status === 'active';
   return {
     d, w, ex, active, path,
-    // Each command pins only what it needs: the basis to claim, the round to restart.
+    // Each command pins only what it needs: the basis to claim, the round to reopen.
     claim: { BasisVersion: d.Task.BasisVersion },
     round: { RoundID: w.Position.RoundID },
     ref: ex ? { ExecutionID: ex.ID } : {},
@@ -489,7 +490,10 @@ function renderNext(ctx) {
   panel.append(h('div', 'head', el('h3', title), pill(s)));
   if (w.Questions?.length) panel.append(el('p', '有待回答的问题，回答前任务不能完成。', 'muted'));
   else if (w.Position.Waiting) panel.append(el('p', w.Position.Waiting, 'muted'));
-  if (w.Blocked?.review) panel.append(el('p', '暂不能验收：' + (REASON_LABEL[w.Blocked.review] || w.Blocked.review), 'muted'));
+  if (active && w.Blocked?.review) panel.append(el('p', '暂不能验收：' + (REASON_LABEL[w.Blocked.review] || w.Blocked.review), 'muted'));
+  // The worker otherwise only sees the submit form vanish, e.g. while a question is open and the title names the addressee.
+  // A claim is the next move when one is open; the old execution's submit block is moot then.
+  if (active && !w.CanOpen && w.Blocked?.submit) panel.append(el('p', '暂不能提交结果：' + (REASON_LABEL[w.Blocked.submit] || w.Blocked.submit), 'muted'));
 
   renderQuestions(ctx, panel);
   // Only people sign in here; Agents work through the API.
@@ -516,7 +520,8 @@ function renderNext(ctx) {
     actions.append(button('验收通过', () => verdict('approved'), 'primary'), button('不通过，退回修改', () => verdict('rejected'), 'danger'));
   }
   // Assigning an executor is the owner's next step when nobody is assigned yet.
-  if (w.CanAssign && active && !w.Assignee && w.NextActor === 'owner') {
+  // Assigning stays open while blocked on subtasks: only delivery waits, the work may start.
+  if (w.CanAssign && active && !w.Assignee && (w.NextActor === 'owner' || w.Position.WaitingOnSubtasks)) {
     panel.classList.add('mine');
     panel.append(assignForm(ctx, '选择处理人'));
   }
@@ -572,6 +577,9 @@ function assignForm(ctx, text) {
   return f;
 }
 
+// The member directory pages by subject; selectors here take the first page of 200.
+async function directory() { return (await api('/people?limit=200')).Items }
+
 function confirmThen(message, fn) { if (confirm(message)) return fn() }
 
 function renderResult({ w, active, send, ...ctx }) {
@@ -585,6 +593,13 @@ function renderResult({ w, active, send, ...ctx }) {
   if (w.ResultCommit) panel.append(h('div', 'result', el('p', w.ResultCommit.Body), el('p', (w.ResultCommit.Author || '') + ' · ' + time(w.ResultCommit.CreatedAt), 'muted small')));
   if (w.Review?.Reason) panel.append(el('p', '验收意见：' + w.Review.Reason, 'muted'));
   return panel;
+}
+
+// basisText shows a task.basis body (the saved Edit) as the agreement it set.
+function basisText(c) {
+  let v;
+  try { v = JSON.parse(c.Body) } catch { return c.Body }
+  return ['标题：' + (v.Title || ''), '目标：' + (v.Goal || '（空）'), '验收标准：' + (v.Criteria || '（空）')].join('\n');
 }
 
 // planText turns a plan.changed body into words; titles come only from subtasks this viewer can read.
@@ -620,7 +635,7 @@ function renderTimeline({ d, w, path }, commits) {
     const li = h('li', c.Kind === 'result' ? 'result' : '',
       el('div', (KIND_LABEL[c.Kind] || c.Kind) + ' · ' + c.Author + ' · ' + time(c.CreatedAt), 'who'),
       c.Kind === 'answer' && byID.has(c.RefID) ? el('div', '回答：' + byID.get(c.RefID).Body, 'muted small') : null,
-      el('p', c.Kind === 'plan.changed' ? planText(c, d, w) : c.Body),
+      el('p', c.Kind === 'plan.changed' ? planText(c, d, w) : c.Kind === 'task.basis' ? basisText(c) : c.Body),
       c.RefID && c.Kind === 'comment' ? el('code', '更正引用 ' + c.RefID, 'muted') : null);
     if (d.CanComment && c.Kind === 'comment' && c.Author === viewer?.Subject) {
       li.append(button('追加更正', () => {
@@ -716,49 +731,59 @@ function renderExecution(ctx) {
   return panel;
 }
 
-// Ask anyone on the task for input or help. The owner is the default; others
-// must already be participants (the server checks). Unanswered questions hold completion.
+// Ask anyone for input or help. The owner is the default; any other active
+// member joins the task as a participant when asked. Unanswered questions hold completion.
 function renderAsk(ctx) {
   const { d, w, active, candidates, send } = ctx;
   if (!active) return null;
   const to = el('select');
   if (d.Task.Owner !== viewer.Subject) { const o = el('option', '负责人 ' + d.Task.Owner); o.value = ''; to.append(o); }
+  const joined = new Set(w.Participants || []);
   for (const m of candidates || []) {
     if (m.Subject === viewer.Subject || m.Subject === d.Task.Owner) continue;
-    const o = el('option', m.Subject + (m.Kind === 'agent' ? ' · Agent' : ' · 用户')); o.value = m.Subject; to.append(o);
+    const o = el('option', m.Subject + (m.Kind === 'agent' ? ' · Agent' : ' · 用户') + (joined.has(m.Subject) ? ' · 参与者' : '')); o.value = m.Subject; to.append(o);
   }
   if (!to.children.length) return null;
   const body = textarea('Body', true, '说明问题、为什么卡住、需要对方做什么');
   const f = h('form', null, field('问谁', to), field('问题', body),
-    el('p', '对方须是任务参与者；未回答前任务不能完成。', 'muted small'),
+    el('p', '可问任一成员；对方不在任务中时会自动加为参与者。未回答前任务不能完成。', 'muted small'),
     h('div', 'actions', el('button', '提问')));
   f.onsubmit = handle(() => send('/questions', { RoundID: w.Position.RoundID, Body: body.value, Addressee: to.value }));
   return h('div', 'panel', h('details', null, el('summary', '提问 / 请求协助'), f));
 }
 
-function renderParticipants({ d, path, candidates }) {
-  if (!d.CanEdit) return null;
-  const input = memberSelect(candidates, '请选择用户或 Agent');
-  const change = present => async () => {
-    await api(path + '/participants', 'POST', { Subject: input.value, Present: present });
-    notice(present ? '参与者已加入' : '参与者已移出');
+// Participants may be asked questions besides the owner; the snapshot lists them.
+function renderParticipants({ d, w, path, candidates }) {
+  const current = w.Participants || [];
+  if (!d.CanEdit && !current.length) return null;
+  const panel = h('div', 'panel', el('h3', '参与者'));
+  const set = (subject, present) => async () => {
+    await api(path + '/participants', 'POST', { Subject: subject, Present: present });
+    await show();
   };
-  const f = h('form', null, field('选择参与者', input), h('div', 'actions', el('button', '加入任务'), button('移出任务', () => { if (!input.reportValidity()) return; return change(false)() })));
-  f.onsubmit = handle(change(true));
-  return h('div', 'panel', h('details', null, el('summary', '管理参与者'), f));
+  const ul = el('ul', undefined, 'timeline');
+  for (const s of current) {
+    const li = h('li', null, el('span', s));
+    if (d.CanEdit) li.append(' ', button('移出', () => confirmThen('移出后不能再向对方提问。继续？', set(s, false)), 'link'));
+    ul.append(li);
+  }
+  panel.append(current.length ? ul : el('p', '暂无参与者；被提问或被分配的人会自动加入。', 'muted small'));
+  if (d.CanEdit) {
+    const input = memberSelect(candidates.filter(m => !current.includes(m.Subject)), '请选择用户或 Agent');
+    const f = h('form', null, field('加入参与者', input), h('div', 'actions', el('button', '加入任务')));
+    f.onsubmit = handle(() => set(input.value, true)());
+    panel.append(f);
+  }
+  return panel;
 }
 
+// Cancelling is the only control on active work: results go back by review,
+// people change by reassigning, requirements by editing the basis.
 function renderManage(ctx) {
-  const { w, active, round, send } = ctx;
-  if (!w.CanManage) return null;
-  const panel = h('div', 'panel', el('h3', '任务控制'));
-  const actions = h('div', 'actions');
-  if (active && w.CanManage) {
-    actions.append(button('退回并开始新轮', () => confirmThen('退回会开始新一轮，当前结果和验收结论只保留在历史中。继续？', () => send('/restart', round))));
-    actions.append(button('取消任务', () => confirmThen('取消后当前执行立即失效，不能再写入。继续？', () => send('/cancel', {})), 'danger'));
-  }
-  if (actions.children.length) panel.append(actions);
-  return panel.children.length > 1 ? panel : null;
+  const { w, active, send } = ctx;
+  if (!w.CanManage || !active) return null;
+  return h('div', 'panel', el('h3', '任务控制'),
+    h('div', 'actions', button('取消任务', () => confirmThen('取消后当前执行立即失效，不能再写入；之后可重开为新一轮。继续？', () => send('/cancel', {})), 'danger')));
 }
 
 

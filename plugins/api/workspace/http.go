@@ -108,7 +108,9 @@ func (m *Module) serve(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	case strings.HasSuffix(path, "/people"):
-		result, err = m.d.Queries.People(ctx, token)
+		q := r.URL.Query()
+		limit, _ := strconv.Atoi(q.Get("limit"))
+		result, err = m.d.Queries.People(ctx, token, authorization.MemberQuery{Search: q.Get("q"), Kind: q.Get("kind"), After: q.Get("after"), Limit: limit})
 	case strings.HasSuffix(path, "/project"):
 		var in api.ProjectMove
 		if !httpx.Decode(w, r, &in) {

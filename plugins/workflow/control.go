@@ -48,9 +48,10 @@ func (m *ControlModule) Cancel(ctx context.Context, token, key string, in api.Ca
 	})
 }
 
-// Restart fences the current execution and starts a new round from the round
-// the caller saw: sending active work back, or reopening a cancelled task.
-// Completed tasks reject it; flow enforces that.
+// Restart reopens a cancelled task in a new round from the round the caller
+// saw; flow rejects active and completed tasks. Cancelling already fenced the
+// execution and a cancelled task takes no assignment or claim, so nothing is
+// left to fence here.
 func (m *ControlModule) Restart(ctx context.Context, token, key string, in api.Restart) (api.Ref, error) {
 	return run(ctx, m.d.Commands, token, key, "task.restart", in.TaskID, in, func(tx context.Context, p identity.Principal) (api.Ref, error) {
 		t, pos, e := load(tx, m.d.Tasks, m.d.Flow, p, in.TaskID)
@@ -59,9 +60,6 @@ func (m *ControlModule) Restart(ctx context.Context, token, key string, in api.R
 		}
 		if pos.RoundID != in.RoundID {
 			return api.Ref{}, fault.ErrConflict
-		}
-		if e = fence(tx, m.d.Executions, t); e != nil {
-			return api.Ref{}, e
 		}
 		if _, e = m.d.Flow.Restart(tx, t); e != nil {
 			return api.Ref{}, e

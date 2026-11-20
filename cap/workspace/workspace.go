@@ -60,11 +60,25 @@ type Viewer struct {
 	Tenant, Subject, Kind string
 	CanAdmin              bool
 }
+// PeoplePage is one page of the member directory; Next, when set, is the
+// After of the following page.
+type PeoplePage struct {
+	Items []authorization.MemberOption
+	Next  string `json:",omitempty"`
+}
+
+// Directory page sizes: Limit 0 means PeopleDefault, larger values are capped.
+const (
+	PeopleDefault = 50
+	PeopleMax     = 200
+)
+
 type Queries interface {
 	Viewer(ctx context.Context, credential string) (Viewer, error)
 	Members(ctx context.Context, credential string) ([]authorization.DirectoryMember, error)
-	// People is the active member directory, readable by active human members.
-	People(ctx context.Context, credential string) ([]authorization.MemberOption, error)
+	// People pages the active member directory, readable by any active member,
+	// Agents included: it is where an addressee or assignee is picked.
+	People(ctx context.Context, credential string, q authorization.MemberQuery) (PeoplePage, error)
 	List(ctx context.Context, credential string) ([]Detail, error)
 	Get(ctx context.Context, credential, taskID string, after int64) (Detail, error)
 }

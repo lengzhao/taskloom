@@ -80,7 +80,8 @@ type Controller interface {
 	// task, or "" for a root task. Commands use it to announce the change.
 	Parent(ctx context.Context, value task.Task) (string, error)
 	Cancel(ctx context.Context, value task.Task) (Position, error)
-	// Restart starts a new active round on an active or cancelled task;
-	// a completed task is final and rejects it.
+	// Restart reopens a cancelled task in a new active round. An active task
+	// rejects it (send a result back by review, a person by reassigning, a
+	// requirement by editing the basis); a completed task is final.
 	Restart(ctx context.Context, value task.Task) (Position, error)
 }

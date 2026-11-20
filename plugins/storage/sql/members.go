@@ -2,6 +2,7 @@ package sql
 
 import (
 	"context"
+	"strings"
 
 	az "github.com/lengzhao/taskloom/cap/authorization"
 	"gorm.io/gorm"
@@ -35,6 +36,13 @@ func (s *Store) HasParticipant(ctx context.Context, p az.Participant) (bool, err
 	})
 	return count == 1, e
 }
+func (s *Store) ListParticipants(ctx context.Context, tenant, taskID string) ([]string, error) {
+	out := []string{}
+	e := s.use(ctx, false, func(db *gorm.DB) error {
+		return db.Model(&participantRow{}).Where("tenant = ? AND task_id = ?", tenant, taskID).Order("subject").Pluck("subject", &out).Error
+	})
+	return out, e
+}
 func (s *Store) SetParticipant(ctx context.Context, p az.Participant, present bool) error {
 	return s.use(ctx, true, func(db *gorm.DB) error {
 		row := participantRow{Key: key(p.Tenant, p.TaskID, p.Subject), Tenant: p.Tenant, TaskID: p.TaskID, Subject: p.Subject}
@@ -45,15 +53,33 @@ func (s *Store) SetParticipant(ctx context.Context, p az.Participant, present bo
 	})
 }
 
-func (s *Store) ListActiveMembers(ctx context.Context, tenant string) ([]az.MemberOption, error) {
+func (s *Store) ListActiveMembers(ctx context.Context, tenant string, q az.MemberQuery) ([]az.MemberOption, error) {
 	out := []az.MemberOption{}
+	kinds := []string{"human", "agent"}
+	if q.Kind != "" {
+		kinds = []string{q.Kind}
+	}
 	e := s.use(ctx, false, func(db *gorm.DB) error {
-		return db.Table("member_rows AS m").Select("m.subject, p.kind, p.owner_id").
+		db = db.Table("member_rows AS m").Select("m.subject, p.kind, p.owner_id").
 			Joins("JOIN principal_rows AS p ON p.tenant = m.tenant AND p.subject = m.subject").
-			Where("m.tenant = ? AND m.active = ? AND m.role IN ? AND p.kind IN ?", tenant, true, []string{"member", "admin"}, []string{"human", "agent"}).
-			Order("p.kind, m.subject").Scan(&out).Error
+			Where("m.tenant = ? AND m.active = ? AND m.role IN ? AND p.kind IN ?", tenant, true, []string{"member", "admin"}, kinds)
+		if q.Search != "" {
+			db = db.Where("LOWER(m.subject) LIKE ? ESCAPE '\\'", "%"+likeEscape(strings.ToLower(q.Search))+"%")
+		}
+		if q.After != "" {
+			db = db.Where("m.subject > ?", q.After)
+		}
+		if q.Limit > 0 {
+			db = db.Limit(q.Limit)
+		}
+		return db.Order("m.subject").Scan(&out).Error
 	})
 	return out, e
+}
+
+// likeEscape makes a search term match literally inside a LIKE pattern.
+func likeEscape(s string) string {
+	return strings.NewReplacer("\\", "\\\\", "%", "\\%", "_", "\\_").Replace(s)
 }
 
 func (s *Store) ListMembers(ctx context.Context, tenant string) ([]az.DirectoryMember, error) {

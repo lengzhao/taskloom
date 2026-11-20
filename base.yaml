@@ -102,6 +102,7 @@ workspace-api:
 workflow-query:
   use: query/workflow
   deps:
+    participants: sql
     questions: sql
     commits: sql
     plan: sql
@@ -144,6 +145,7 @@ question-commands:
     questions: sql
     progress: execution-commands
     relations: sql
+    participants: sql
     events: sql
 flow-commands:
   use: commands/flow
@@ -185,6 +187,7 @@ mcp-api:
     executions: execution-commands
     results: result-commands
     questions: question-commands
+    people: workspace
 audit-api:
   use: api/audit
   deps:

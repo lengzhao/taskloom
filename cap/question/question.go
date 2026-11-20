@@ -9,7 +9,7 @@ import "context"
 
 // Question is open until its addressee answers it. It never becomes current
 // again in another round: a question from an older round or an inactive task
-// is obsolete without any write, so Restart/Cancel need not touch it.
+// is obsolete without any write, so Cancel and reopening need not touch it.
 type Question struct {
 	Tenant, TaskID, ID, RoundID string
 	CommitID, Addressee         string

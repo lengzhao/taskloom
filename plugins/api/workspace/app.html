@@ -490,9 +490,10 @@ function renderNext(ctx) {
   panel.append(h('div', 'head', el('h3', title), pill(s)));
   if (w.Questions?.length) panel.append(el('p', '有待回答的问题，回答前任务不能完成。', 'muted'));
   else if (w.Position.Waiting) panel.append(el('p', w.Position.Waiting, 'muted'));
-  if (w.Blocked?.review) panel.append(el('p', '暂不能验收：' + (REASON_LABEL[w.Blocked.review] || w.Blocked.review), 'muted'));
+  if (active && w.Blocked?.review) panel.append(el('p', '暂不能验收：' + (REASON_LABEL[w.Blocked.review] || w.Blocked.review), 'muted'));
   // The worker otherwise only sees the submit form vanish, e.g. while a question is open and the title names the addressee.
-  if (active && w.Blocked?.submit) panel.append(el('p', '暂不能提交结果：' + (REASON_LABEL[w.Blocked.submit] || w.Blocked.submit), 'muted'));
+  // A claim is the next move when one is open; the old execution's submit block is moot then.
+  if (active && !w.CanOpen && w.Blocked?.submit) panel.append(el('p', '暂不能提交结果：' + (REASON_LABEL[w.Blocked.submit] || w.Blocked.submit), 'muted'));
 
   renderQuestions(ctx, panel);
   // Only people sign in here; Agents work through the API.
@@ -519,7 +520,8 @@ function renderNext(ctx) {
     actions.append(button('验收通过', () => verdict('approved'), 'primary'), button('不通过，退回修改', () => verdict('rejected'), 'danger'));
   }
   // Assigning an executor is the owner's next step when nobody is assigned yet.
-  if (w.CanAssign && active && !w.Assignee && w.NextActor === 'owner') {
+  // Assigning stays open while blocked on subtasks: only delivery waits, the work may start.
+  if (w.CanAssign && active && !w.Assignee && (w.NextActor === 'owner' || w.Position.WaitingOnSubtasks)) {
     panel.classList.add('mine');
     panel.append(assignForm(ctx, '选择处理人'));
   }
@@ -593,6 +595,13 @@ function renderResult({ w, active, send, ...ctx }) {
   return panel;
 }
 
+// basisText shows a task.basis body (the saved Edit) as the agreement it set.
+function basisText(c) {
+  let v;
+  try { v = JSON.parse(c.Body) } catch { return c.Body }
+  return ['标题：' + (v.Title || ''), '目标：' + (v.Goal || '（空）'), '验收标准：' + (v.Criteria || '（空）')].join('\n');
+}
+
 // planText turns a plan.changed body into words; titles come only from subtasks this viewer can read.
 function planText(c, d, w) {
   let v;
@@ -626,7 +635,7 @@ function renderTimeline({ d, w, path }, commits) {
     const li = h('li', c.Kind === 'result' ? 'result' : '',
       el('div', (KIND_LABEL[c.Kind] || c.Kind) + ' · ' + c.Author + ' · ' + time(c.CreatedAt), 'who'),
       c.Kind === 'answer' && byID.has(c.RefID) ? el('div', '回答：' + byID.get(c.RefID).Body, 'muted small') : null,
-      el('p', c.Kind === 'plan.changed' ? planText(c, d, w) : c.Body),
+      el('p', c.Kind === 'plan.changed' ? planText(c, d, w) : c.Kind === 'task.basis' ? basisText(c) : c.Body),
       c.RefID && c.Kind === 'comment' ? el('code', '更正引用 ' + c.RefID, 'muted') : null);
     if (d.CanComment && c.Kind === 'comment' && c.Author === viewer?.Subject) {
       li.append(button('追加更正', () => {
@@ -758,7 +767,7 @@ function renderParticipants({ d, w, path, candidates }) {
     if (d.CanEdit) li.append(' ', button('移出', () => confirmThen('移出后不能再向对方提问。继续？', set(s, false)), 'link'));
     ul.append(li);
   }
-  panel.append(current.length ? ul : el('p', '暂无参与者，只能向负责人提问。', 'muted small'));
+  panel.append(current.length ? ul : el('p', '暂无参与者；被提问或被分配的人会自动加入。', 'muted small'));
   if (d.CanEdit) {
     const input = memberSelect(candidates.filter(m => !current.includes(m.Subject)), '请选择用户或 Agent');
     const f = h('form', null, field('加入参与者', input), h('div', 'actions', el('button', '加入任务')));

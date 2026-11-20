@@ -135,6 +135,11 @@ func TestCreateReadCommitEditAndRevoke(t *testing.T) {
 	if _, e = s.Edit(ctx, token, "stale", api.Edit{TaskID: d.Task.ID, Title: "stale", BasisVersion: 1}); !errors.Is(e, fault.ErrConflict) {
 		t.Fatal("stale", e)
 	}
+	// Saving the same text is a no-op: no new version and no timeline entry.
+	same, e := s.Edit(ctx, token, "same", api.Edit{TaskID: d.Task.ID, Title: "目标", Goal: "交付", Criteria: "通过", BasisVersion: 2})
+	if e != nil || same.Task.BasisVersion != 2 || len(same.Commits) != len(edited.Commits) {
+		t.Fatal("unchanged edit advanced the basis", same.Task.BasisVersion, len(same.Commits), len(edited.Commits), e)
+	}
 	page, e := s.Changes(ctx, token, start.Cursor)
 	if e != nil || len(page.Changes) < 4 {
 		t.Fatalf("changes %+v %v", page, e)

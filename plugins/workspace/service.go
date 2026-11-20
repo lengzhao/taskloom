@@ -158,6 +158,11 @@ func (s *Service) Edit(ctx context.Context, token, key string, in api.Edit) (api
 		} else if pos.Status != flow.PhaseActive {
 			return nil, fault.ErrConflict
 		}
+		// Saving the same text changes nothing, so no version advances and no
+		// claim or result is invalidated.
+		if in.Title == t.Title && in.Goal == t.Goal && in.Criteria == t.Criteria {
+			return json.Marshal(api.Ref{TaskID: t.ID})
+		}
 		t, e = s.d.Tasks.UpdateBasis(tx, task.BasisChange{Tenant: p.Tenant, TaskID: in.TaskID, Title: in.Title, Goal: in.Goal, Criteria: in.Criteria})
 		if e != nil {
 			return nil, e

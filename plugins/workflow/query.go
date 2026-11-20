@@ -34,12 +34,15 @@ type QueryDeps struct {
 	Questions question.Reader `json:"questions"`
 	// Plan shows the direct parent and subtasks, filtered by what the viewer may read.
 	Plan plan.Reader `json:"plan"`
+	// Participants tells askers whom a question may name; reviewed as the
+	// twelfth reader of this read-only aggregation, no write capability.
+	Participants az.ParticipantLister `json:"participants"`
 }
 type Query struct{ d QueryDeps }
 
 func init() {
 	pluginkit.Register("query/workflow", func(_ struct{}, d QueryDeps) (*Query, error) {
-		if d.Commits == nil || d.Transactions == nil || d.Tasks == nil || d.Flow == nil || d.Executions == nil || d.Results == nil || d.Reviews == nil || d.Identity == nil || d.Authorization == nil || d.Questions == nil || d.Plan == nil {
+		if d.Commits == nil || d.Transactions == nil || d.Tasks == nil || d.Flow == nil || d.Executions == nil || d.Results == nil || d.Reviews == nil || d.Identity == nil || d.Authorization == nil || d.Questions == nil || d.Plan == nil || d.Participants == nil {
 			return nil, fault.ErrInput
 		}
 		return &Query{d}, nil
@@ -135,6 +138,10 @@ func (s *Query) Read(ctx context.Context, token, taskID string) (api.Snapshot, e
 				out.CanSubmit = why(api.ActionSubmit, code, worker)
 			}
 			if e = s.relations(tx, p, t, &out); e != nil {
+				return e
+			}
+			out.Viewer = p.ID
+			if out.Participants, e = s.d.Participants.ListParticipants(tx, t.Tenant, t.ID); e != nil {
 				return e
 			}
 			if len(blocked) > 0 {

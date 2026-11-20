@@ -29,6 +29,12 @@ type Relations interface {
 	IsAssigned(ctx context.Context, tenant, taskID, subject string) (bool, error)
 	HasParticipant(ctx context.Context, value Participant) (bool, error)
 }
+
+// ParticipantLister lists a task's current participants, the people a
+// question may be addressed to besides the owner.
+type ParticipantLister interface {
+	ListParticipants(ctx context.Context, tenant, taskID string) ([]string, error)
+}
 type ParticipantWriter interface {
 	SetParticipant(ctx context.Context, value Participant, present bool) error
 }
@@ -42,10 +48,18 @@ type Authorizer interface {
 // MemberOption is public directory metadata, never credentials or runtime identity.
 type MemberOption struct{ Subject, Kind, OwnerID string }
 
+// MemberQuery narrows and pages the active member directory, which is ordered
+// by subject. Search matches part of the subject; Kind is human, agent or empty
+// for both; After is the last subject of the previous page; Limit 0 lists all.
+type MemberQuery struct {
+	Search, Kind, After string
+	Limit               int
+}
+
 // MemberDirectory is the read-only capability needed by task member selectors.
 type MemberDirectory interface {
 	MemberReader
-	ListActiveMembers(ctx context.Context, tenant string) ([]MemberOption, error)
+	ListActiveMembers(ctx context.Context, tenant string, q MemberQuery) ([]MemberOption, error)
 	ListMembers(ctx context.Context, tenant string) ([]DirectoryMember, error)
 }
 

@@ -334,7 +334,7 @@ func TestFlowWithoutAcceptanceCompletesOnResult(t *testing.T) {
 	}
 }
 
-func TestSameRoundRetryFencesOldExecutionAndReturnAdoptsBasis(t *testing.T) {
+func TestSameRoundRetryFencesOldExecutionAndReopenAdoptsBasis(t *testing.T) {
 	f := setup(t, nil)
 	d := f.create(t)
 	s := f.open(t, d)
@@ -356,13 +356,23 @@ func TestSameRoundRetryFencesOldExecutionAndReturnAdoptsBasis(t *testing.T) {
 	if _, e = f.results.Submit(f.ctx, f.agent, "old-result", api.Submit{TaskID: d.Task.ID, ExecutionID: old.ID, Body: "late old"}); !errors.Is(e, fault.ErrConflict) {
 		t.Fatal("old execution wrote", e)
 	}
+	// Active work is never restarted: a new round comes only from reopening a cancelled task.
 	s = f.read(t, d.Task.ID)
-	s, e = f.controls.Restart(f.ctx, f.owner, "return", api.Restart{TaskID: d.Task.ID, RoundID: s.Position.RoundID})
+	if _, e = f.controls.Restart(f.ctx, f.owner, "return", api.Restart{TaskID: d.Task.ID, RoundID: s.Position.RoundID}); !errors.Is(e, fault.ErrConflict) {
+		t.Fatal("active task restarted", e)
+	}
+	if now := f.read(t, d.Task.ID); now.Position.RoundID != oldRound || now.Execution == nil || !now.Execution.Writable {
+		t.Fatal("rejected restart changed the task", now.Position, now.Execution)
+	}
+	if s, e = f.controls.Cancel(f.ctx, f.owner, "cancel", api.Cancel{TaskID: d.Task.ID}); e != nil {
+		t.Fatal(e)
+	}
+	s, e = f.controls.Restart(f.ctx, f.owner, "reopen", api.Restart{TaskID: d.Task.ID, RoundID: s.Position.RoundID})
 	if e != nil {
 		t.Fatal(e)
 	}
 	if s.Position.RoundID == oldRound || s.Result != nil {
-		t.Fatal("return did not isolate round")
+		t.Fatal("reopen did not isolate round")
 	}
 	edited, e := f.tasks.Edit(f.ctx, f.owner, "adopt-basis", workspace.Edit{TaskID: d.Task.ID, Title: "new goal", Goal: "new", Criteria: "new", BasisVersion: d.Task.BasisVersion})
 	if e != nil {

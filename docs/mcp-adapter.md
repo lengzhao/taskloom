@@ -18,23 +18,24 @@ claude mcp add --transport http taskloom http://localhost:8899/v1/mcp \
 | 工具 | 对应命令 | 说明 |
 | --- | --- | --- |
 | inbox | workflow.Inbox | 等我处理的任务；不含阻塞任务（Agent 只看到现在能做的事，阻塞任务用 read_task 查看，其中 `waiting_on_subtasks` 为 true） |
-| read_task | workspace.Get + workflow.Read | 目标、标准、状态、等谁、can/blocked 原因、待答问题、当前结果、最近进展时间、可读的父任务与子任务、最近 20 条时间线及 basis |
+| read_task | workspace.Get + workflow.Read | 你是谁（you）、目标、标准、状态、等谁、can/blocked 原因、待答问题（for_you 标出问你的）、已在任务中的其他参与者（participants）、当前结果、最近进展时间、可读的父任务与子任务、最近 20 条时间线及 basis |
 | start_work | ExecutionCommands.Open | 认领执行 |
 | post_message | workspace.Comment | 留言：进度、回复人的引导；记录最近进展，不算交付 |
-| ask_owner | QuestionCommands.Ask | 提问或请求协助：默认问负责人，`to` 可指定已加入任务的参与者；未答前任务不能完成 |
-| answer_question | QuestionCommands.Answer | 回答别人向自己提的问题（open_questions 中 asked_of 为自己） |
+| list_members | workspace.People | 空间内有效成员（subject、kind），可按 ID 片段与 kind 过滤，按 subject 分页（next/after，每页 50）；供 ask_owner 的 `to` 选人 |
+| ask_owner | QuestionCommands.Ask | 提问或请求协助：默认问负责人，`to` 可填任一有效成员（不在任务中时自动加为参与者）；未答前任务不能完成 |
+| answer_question | QuestionCommands.Answer | 回答别人向自己提的问题（open_questions 中 for_you 为 true） |
 | submit_result | ResultCommands.Submit | 明确提交结果 |
 
-分配、验收、取消、退回与重开不对模型开放：插件以局部窄接口注入，只拿到上表能力，这些都属于人。
+分配、验收、取消与重开不对模型开放：插件以局部窄接口注入，只拿到上表能力，这些都属于人。
 
 ## 约束
 
 - **basis**：read_task 和每次写操作返回不透明 basis（任务、轮次、依据版本、执行 ID），写操作须原样带回；不会替模型取最新版本写入，过期视图得到冲突和“先 read_task”的提示。
-- **幂等**：同一会话内相同工具与参数复用同一幂等键，客户端重试不会重复写入；因此同一会话内完全相同的留言只记录一次。
+- **幂等**：幂等键由会话、JSON-RPC 请求 id、工具与参数派生：客户端原样重发同一请求不会重复写入；新的调用即使正文相同（如重复的进度汇报）也是新写入。缺少会话时按凭据派生，客户端重启后请求 id 从头计数，正文也相同的调用会被当作重发。
 - **进展而非保活**：执行没有租约或超时。认领、本人留言、提问、提交结果都会更新执行的最近进展时间，负责人据此判断是否介入；instructions 提示模型长时间工作时每 10～15 分钟汇报一次。Agent 重启后用同一业务凭据（同实例）read_task 即可继续原执行，不新建执行。沉默或断线不改变执行。
 - **推送**：不订阅变化流；模型通过 inbox/read_task 按需读取，人的留言与回答在下次读取时可见。实时 steer 仍归 Agent 层。
 
-验证见 `plugins/api/mcp/mcp_test.go`：以真实默认配置图和 HTTP 路由运行，覆盖初始化与会话、认领、损坏/过期 basis、留言幂等与进展记录、提问与回答、Agent 回答被问的问题、提交，以及通知、未知方法、批量、坏凭据和外部 Origin。
+验证见 `plugins/api/mcp/mcp_test.go`：以真实默认配置图和 HTTP 路由运行，覆盖初始化与会话、成员目录、认领、损坏/过期 basis、留言幂等与进展记录、提问与回答、Agent 回答被问的问题、提交，以及通知、未知方法、批量、坏凭据和外部 Origin。
 
 ## 示例：AgentKit 常驻执行 Agent
 
@@ -55,6 +56,6 @@ docker run -d --name taskloom-agent --restart unless-stopped --network taskloom-
 docker logs -f taskloom-agent
 ```
 
-入口脚本在容器内按环境变量生成 `~/.agentkit/mcp.json`（AgentKit 的 `${env:X}` 在变量存在时保留为运行期引用 `env:X`，scopedEnv 与 baseUrl 等普通字段不会再解析它；需要直接取值的字段用 `${var:X}`）。验收通过任务立即完成；任务被转交、退回或取消时，Agent 的执行立即失效，下次读写时得知并停止处理。
+入口脚本在容器内按环境变量生成 `~/.agentkit/mcp.json`（AgentKit 的 `${env:X}` 在变量存在时保留为运行期引用 `env:X`，scopedEnv 与 baseUrl 等普通字段不会再解析它；需要直接取值的字段用 `${var:X}`）。验收通过任务立即完成；任务被转交、修改约定或取消时，Agent 的执行立即失效，下次读写时得知并停止处理。
 
 已知限制：AgentKit v0.4.45 的 timer 在 fresh 模式下各次唤醒的投递 ID 为 `taskloom:<启动时间>:run-N`，路由只识别 `:t:`/`:u:` 段，同一进程的所有唤醒会并入同一会话，历史随唤醒增长；示例配置以约 40k token 触发摘要压缩来限界，根治需在 AgentKit 中修正 timer 的会话 ID。空闲时 inbox 为空，每次唤醒只需 inbox→finish 两步。

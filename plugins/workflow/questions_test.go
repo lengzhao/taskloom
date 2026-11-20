@@ -7,6 +7,7 @@ import (
 	"github.com/lengzhao/taskloom/cap/fault"
 	api "github.com/lengzhao/taskloom/cap/workflow"
 	workspace "github.com/lengzhao/taskloom/cap/workspace"
+	"slices"
 	"testing"
 )
 
@@ -107,29 +108,47 @@ func TestQuestionFromOldRoundIsObsolete(t *testing.T) {
 	}
 }
 
-// A question may be addressed to a participant who can help: it lands in their
-// inbox, only they can answer, and completion waits for them like for the owner.
-func TestQuestionToParticipantWaitsOnThem(t *testing.T) {
+// A question may be addressed to any active member who can help: it lands in
+// their inbox, only they can answer, and completion waits for them like for the owner.
+func TestQuestionToMemberWaitsOnThem(t *testing.T) {
 	f := setup(t, nil)
 	qs := f.questions()
 	helper := f.human(t, "helper")
-	f.human(t, "outsider")
+	outsider := f.human(t, "outsider")
 	d := f.create(t)
 	s := f.open(t, d)
 	round := s.Position.RoundID
 	ask := func(key, to string) (api.Snapshot, error) {
 		return qs.Ask(f.ctx, f.agent, key, api.Ask{TaskID: d.Task.ID, RoundID: round, Body: "这个接口的鉴权怎么配？", Addressee: to})
 	}
-	if _, e := ask("not-participant", "outsider"); !errors.Is(e, fault.ErrInput) {
-		t.Fatal("asked a non-participant", e)
+	if _, e := ask("not-member", "nobody"); !errors.Is(e, fault.ErrInput) {
+		t.Fatal("asked a non-member", e)
 	}
 	if _, e := ask("self", "agent"); !errors.Is(e, fault.ErrInput) {
 		t.Fatal("asked itself", e)
 	}
+	// A member not on the task joins it by being asked, so they can read and answer.
+	if _, e := f.query.Read(f.ctx, outsider, d.Task.ID); e == nil {
+		t.Fatal("outsider reads the task before being asked")
+	}
+	s, e := ask("ask-outsider", "outsider")
+	if e != nil {
+		t.Fatal(e)
+	}
+	if got := f.read(t, d.Task.ID).Participants; !slices.Contains(got, "outsider") {
+		t.Fatal("asked member not added as participant", got)
+	}
+	o, e := f.query.Read(f.ctx, outsider, d.Task.ID)
+	if e != nil || o.Viewer != "outsider" || len(o.Questions) != 1 || o.Questions[0].Addressee != "outsider" {
+		t.Fatal("asked member cannot read the question", o.Questions, e)
+	}
+	if _, e = qs.Answer(f.ctx, outsider, "outsider-answer", api.Answer{TaskID: d.Task.ID, QuestionID: s.Questions[0].ID, Body: "问 helper"}); e != nil {
+		t.Fatal(e)
+	}
 	if e := f.tasks.SetParticipant(f.ctx, f.owner, "add-helper", workspace.Participation{TaskID: d.Task.ID, Subject: "helper", Present: true}); e != nil {
 		t.Fatal(e)
 	}
-	s, e := ask("ask-helper", "helper")
+	s, e = ask("ask-helper", "helper")
 	if e != nil {
 		t.Fatal(e)
 	}

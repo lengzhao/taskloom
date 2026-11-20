@@ -18,9 +18,10 @@ import (
 	api "github.com/lengzhao/taskloom/cap/workflow"
 )
 
-// QuestionDeps has eight fields: the command lifecycle, the task and its flow
+// QuestionDeps has nine fields: the command lifecycle, the task and its flow
 // position, the timeline that holds the text, the question records, the
-// executor's progress, the relations that validate an addressee, and the
+// executor's progress, the relations that validate an addressee, the
+// participant write that lets a newly asked member read the task, and the
 // change event. Splitting them would only move the same transaction
 // coordination elsewhere.
 type QuestionDeps struct {
@@ -31,14 +32,16 @@ type QuestionDeps struct {
 	Questions question.Store     `json:"questions"`
 	Progress  execution.Progress `json:"progress"`
 	Relations az.Relations       `json:"relations"`
-	Events    record.EventWriter `json:"events"`
+	// Participants adds an addressee who is not yet on the task, so they can read and answer.
+	Participants az.ParticipantWriter `json:"participants"`
+	Events       record.EventWriter   `json:"events"`
 }
 type QuestionModule struct{ d QuestionDeps }
 
 func init() { pluginkit.Register("commands/question", NewQuestions) }
 
 func NewQuestions(_ struct{}, d QuestionDeps) (*QuestionModule, error) {
-	if d.Commands == nil || d.Tasks == nil || d.Flow == nil || d.Commits == nil || d.Questions == nil || d.Progress == nil || d.Relations == nil || d.Events == nil {
+	if d.Commands == nil || d.Tasks == nil || d.Flow == nil || d.Commits == nil || d.Questions == nil || d.Progress == nil || d.Relations == nil || d.Participants == nil || d.Events == nil {
 		return nil, fault.ErrInput
 	}
 	return &QuestionModule{d}, nil
@@ -67,8 +70,10 @@ func (m *QuestionModule) appendCommit(ctx context.Context, p identity.Principal,
 	return c, m.d.Commits.Append(ctx, c)
 }
 
-// addressee resolves who a question is asked of: the owner by default, or a
-// current participant who is an active member. Nobody asks themselves.
+// addressee resolves who a question is asked of: the owner by default, or any
+// active member of the tenant. A member not yet on the task is added as a
+// participant in the same transaction, since answering needs reading the task.
+// Nobody asks themselves.
 func (m *QuestionModule) addressee(ctx context.Context, p identity.Principal, t task.Task, requested string) (string, error) {
 	to := strings.TrimSpace(requested)
 	if to == "" {
@@ -81,16 +86,23 @@ func (m *QuestionModule) addressee(ctx context.Context, p identity.Principal, t 
 		return to, nil
 	}
 	member, e := m.d.Relations.GetMember(ctx, t.Tenant, to)
-	if e != nil || !member.Active {
+	if e != nil || !member.Active || (member.Role != "admin" && member.Role != "member") {
 		return "", fault.ErrInput
 	}
-	if in, e := m.d.Relations.HasParticipant(ctx, az.Participant{Tenant: t.Tenant, TaskID: t.ID, Subject: to}); e != nil || !in {
-		return "", fault.ErrInput
+	who := az.Participant{Tenant: t.Tenant, TaskID: t.ID, Subject: to}
+	in, e := m.d.Relations.HasParticipant(ctx, who)
+	if e != nil || in {
+		return to, e
 	}
-	return to, nil
+	if e = m.d.Participants.SetParticipant(ctx, who, true); e != nil {
+		return "", e
+	}
+	// Participation changes who may read the task, so every viewer refreshes access.
+	return to, m.d.Events.AppendEvent(ctx, record.Event{Tenant: t.Tenant, Resource: t.ID, Kind: record.EventAccessChanged})
 }
 
-// Ask is open to any task participant; it waits on the addressee.
+// Ask is open to any task participant; it waits on the addressee, who may be
+// any active member.
 func (m *QuestionModule) Ask(ctx context.Context, token, key string, in api.Ask) (api.Ref, error) {
 	return run(ctx, m.d.Commands, token, key, "commit.append", in.TaskID, in, func(tx context.Context, p identity.Principal) (api.Ref, error) {
 		if !validText(in.Body) {

@@ -10,8 +10,10 @@ import (
 	"github.com/lengzhao/taskloom/cap/record"
 	capsecurity "github.com/lengzhao/taskloom/cap/security"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	az "github.com/lengzhao/taskloom/cap/authorization"
 	"github.com/lengzhao/taskloom/cap/fault"
@@ -349,7 +351,7 @@ func TestMembershipOwnerParticipantsAndImmediateRemoval(t *testing.T) {
 	}
 }
 
-func TestPeopleListsActiveMembersToActiveHumans(t *testing.T) {
+func TestPeopleListsActiveMembersToActiveMembers(t *testing.T) {
 	s, sec, admin, db := fixtureWithStore(t)
 	ctx := context.Background()
 	for _, name := range []string{"owner", "guest"} {
@@ -376,10 +378,16 @@ func TestPeopleListsActiveMembersToActiveHumans(t *testing.T) {
 	if e = s.SetParticipant(ctx, owner, "join", api.Participation{TaskID: d.Task.ID, Subject: "guest", Present: true}); e != nil {
 		t.Fatal(e)
 	}
-	// Any active human member reads the directory; it is not task-scoped.
-	for _, token := range []string{admin, owner, guest} {
-		list, e := s.People(ctx, token)
-		if e != nil || len(list) != 4 {
+	agentCredential, e := sec.Issue(ctx, admin, "agent-credential", capsecurity.IssueInput{Tenant: "t", Subject: "agent", ExpiresAt: time.Now().Add(time.Hour)})
+	if e != nil {
+		t.Fatal(e)
+	}
+	all := az.MemberQuery{}
+	// Any active member, an Agent included, reads the directory; it is not task-scoped.
+	for _, token := range []string{admin, owner, guest, agentCredential.Secret} {
+		page, e := s.People(ctx, token, all)
+		list := page.Items
+		if e != nil || len(list) != 4 || page.Next != "" {
 			t.Fatalf("people: %+v %v", list, e)
 		}
 		found := false
@@ -392,10 +400,44 @@ func TestPeopleListsActiveMembersToActiveHumans(t *testing.T) {
 			t.Fatal("missing agent metadata")
 		}
 	}
+	// Search, kind and paging narrow the same ordered directory.
+	if p, e := s.People(ctx, owner, az.MemberQuery{Search: "UES"}); e != nil || len(p.Items) != 1 || p.Items[0].Subject != "guest" {
+		t.Fatal("search", p, e)
+	}
+	if p, e := s.People(ctx, owner, az.MemberQuery{Search: "%"}); e != nil || len(p.Items) != 0 {
+		t.Fatal("wildcard not literal", p, e)
+	}
+	if p, e := s.People(ctx, owner, az.MemberQuery{Kind: "agent"}); e != nil || len(p.Items) != 1 || p.Items[0].Subject != "agent" {
+		t.Fatal("kind", p, e)
+	}
+	if _, e := s.People(ctx, owner, az.MemberQuery{Kind: "robot"}); !errors.Is(e, fault.ErrInput) {
+		t.Fatal("bad kind", e)
+	}
+	seen := []string{}
+	for q := (az.MemberQuery{Limit: 3}); ; {
+		p, e := s.People(ctx, owner, q)
+		if e != nil {
+			t.Fatal(e)
+		}
+		for _, m := range p.Items {
+			seen = append(seen, m.Subject)
+		}
+		if p.Next == "" {
+			break
+		}
+		q.After = p.Next
+	}
+	if strings.Join(seen, ",") != "agent,guest,owner,u" {
+		t.Fatal("pages", seen)
+	}
 	if e = sec.SetMember(ctx, admin, "disable-agent", az.Member{Tenant: "t", Subject: "agent", Role: "member", Active: false}); e != nil {
 		t.Fatal(e)
 	}
-	list, e := s.People(ctx, owner)
+	if _, e = s.People(ctx, agentCredential.Secret, all); !errors.Is(e, az.ErrForbidden) {
+		t.Fatal("inactive agent reads directory", e)
+	}
+	page, e := s.People(ctx, owner, all)
+	list := page.Items
 	if e != nil || len(list) != 3 {
 		t.Fatalf("inactive candidate: %+v %v", list, e)
 	}
@@ -412,17 +454,17 @@ func TestPeopleListsActiveMembersToActiveHumans(t *testing.T) {
 		t.Fatal(e)
 	}
 	// A foreign tenant's member reads only its own tenant's directory.
-	if other, e := s.People(ctx, foreign.Secret); e != nil || len(other) != 1 || other[0].Subject != "foreign" {
+	if other, e := s.People(ctx, foreign.Secret, all); e != nil || len(other.Items) != 1 || other.Items[0].Subject != "foreign" {
 		t.Fatal("cross-tenant directory", other, e)
 	}
-	list, e = s.People(ctx, owner)
-	if e != nil || len(list) != 3 {
+	page, e = s.People(ctx, owner, all)
+	if list = page.Items; e != nil || len(list) != 3 {
 		t.Fatalf("cross-tenant member leaked: %+v %v", list, e)
 	}
 	if e = sec.SetMember(ctx, admin, "disable-owner", az.Member{Tenant: "t", Subject: "owner", Role: "member", Active: false}); e != nil {
 		t.Fatal(e)
 	}
-	if _, e = s.People(ctx, owner); !errors.Is(e, az.ErrForbidden) {
+	if _, e = s.People(ctx, owner, all); !errors.Is(e, az.ErrForbidden) {
 		t.Fatal("revoked owner", e)
 	}
 }

@@ -18,9 +18,14 @@ import (
 	"github.com/lengzhao/taskloom/cap/workspace"
 )
 
-// call carries the request credential and the MCP session used to derive
-// idempotency keys, so a client retrying the same call reuses one key.
-type call struct{ token, session string }
+// call carries the request credential, the MCP session and the JSON-RPC
+// request id used to derive idempotency keys: a client resending the same
+// request reuses one key, while a new call with the same text, such as a
+// repeated progress report, is a new write.
+type call struct {
+	token, session string
+	request        json.RawMessage
+}
 
 func (c call) key(parts ...any) string {
 	scope := c.session
@@ -28,7 +33,7 @@ func (c call) key(parts ...any) string {
 		sum := sha256.Sum256([]byte(c.token))
 		scope = hex.EncodeToString(sum[:])
 	}
-	raw, _ := json.Marshal(append([]any{scope}, parts...))
+	raw, _ := json.Marshal(append([]any{scope, c.request}, parts...))
 	h := sha256.Sum256(raw)
 	return hex.EncodeToString(h[:16])
 }
@@ -137,10 +142,11 @@ func toolList() []tool {
 	return []tool{
 		{"inbox", "列出当前等你处理的任务（下一步在等你这个执行 Agent）。", schema(nil, nil)},
 		{"read_task", "读取任务：目标、验收标准、状态、下一步等谁、你能做哪些操作及不能做的原因、待回答问题、当前结果和最近时间线，并返回写操作所需的 basis。", schema([]string{"task_id"}, map[string]string{"task_id": descTask})},
+		{"list_members", "查找空间内的有效成员（用户与 Agent），用于 ask_owner 的 to。按 ID 片段搜索，按 subject 排序分页：返回 next 时，把它作为 after 取下一页。", schema(nil, map[string]string{"query": "可选：ID 中包含的文字", "kind": "可选：human 或 agent", "after": "可选：上一页返回的 next"})},
 		{"start_work", "认领并开始执行任务。", schema([]string{"task_id", "basis"}, map[string]string{"task_id": descTask, "basis": descBasis})},
 		{"post_message", "在任务时间线留言：汇报进度、回复人的引导。留言会更新你的最近进展时间，但不算交付结果。", schema([]string{"task_id", "text"}, map[string]string{"task_id": descTask, "text": "留言内容"})},
-		{"ask_owner", "提问或请求协助（说明问题、为何卡住、可选方案和建议）。默认问任务负责人；需要某位参与者协助时用 to 指定其 ID（对方须已被负责人加入任务）。问题未回答前任务不能完成；回答会出现在 read_task 的时间线中。", schema([]string{"task_id", "basis", "question"}, map[string]string{"task_id": descTask, "basis": descBasis, "question": "问题内容", "to": "可选：被提问的参与者 ID，留空为负责人"})},
-		{"answer_question", "回答别人向你提的问题（read_task 的 open_questions 中 asked_of 为你的那条）。", schema([]string{"task_id", "question_id", "text"}, map[string]string{"task_id": descTask, "question_id": "问题 ID（open_questions 中的 id）", "text": "回答内容"})},
+		{"ask_owner", "提问或请求协助（说明问题、为何卡住、可选方案和建议）。默认问任务负责人；需要别人协助时用 to 指定空间内任一有效成员（用 list_members 查找）；对方不在任务中时会自动加为参与者。问题未回答前任务不能完成；回答会出现在 read_task 的时间线中。", schema([]string{"task_id", "basis", "question"}, map[string]string{"task_id": descTask, "basis": descBasis, "question": "问题内容", "to": "可选：被提问人的 ID（list_members 返回的 subject）；留空为负责人"})},
+		{"answer_question", "回答别人向你提的问题（read_task 的 open_questions 中 for_you 为 true 的那条）。", schema([]string{"task_id", "question_id", "text"}, map[string]string{"task_id": descTask, "question_id": "问题 ID（open_questions 中的 id）", "text": "回答内容"})},
 		{"submit_result", "明确提交本轮的正式结果（交付物）。需要已认领执行；再次提交会替换当前结果。", schema([]string{"task_id", "basis", "result"}, map[string]string{"task_id": descTask, "basis": descBasis, "result": "结果正文"})},
 	}
 }
@@ -183,6 +189,20 @@ func (m *Module) call(ctx context.Context, c call, name string, rawArgs json.Raw
 			return "当前没有等你处理的任务。", nil
 		}
 		return pretty(items), nil
+	case "list_members":
+		page, err := m.d.People.People(ctx, c.token, az.MemberQuery{Search: args["query"], Kind: args["kind"], After: args["after"]})
+		if err != nil {
+			return "", err
+		}
+		members := []map[string]string{}
+		for _, x := range page.Items {
+			members = append(members, map[string]string{"subject": x.Subject, "kind": x.Kind})
+		}
+		out := map[string]any{"members": members}
+		if page.Next != "" {
+			out["next"] = page.Next
+		}
+		return pretty(out), nil
 	case "read_task":
 		if err := required(args, "task_id"); err != nil {
 			return "", err
@@ -224,7 +244,7 @@ func (m *Module) call(ctx context.Context, c call, name string, rawArgs json.Raw
 			return "", err
 		}
 		n := b.next(s)
-		return pretty(map[string]any{"message": "已认领执行。长时间工作请定期 post_message 汇报进度。", "execution_id": n.ExecutionID, "basis": n.token()}), nil
+		return pretty(map[string]any{"message": "已认领执行。长时间工作请定期 post_message 汇报进度。", "basis": n.token()}), nil
 	case "ask_owner":
 		if err = required(args, "question"); err != nil {
 			return "", err
@@ -259,6 +279,18 @@ func (m *Module) call(ctx context.Context, c call, name string, rawArgs json.Raw
 
 const timelineLimit = 20
 
+// others lists the task's participants besides the caller: who is already
+// involved. Anyone in list_members may still be asked.
+func others(w work.Snapshot) []string {
+	out := []string{}
+	for _, s := range w.Participants {
+		if s != w.Viewer {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
 func (m *Module) readTask(ctx context.Context, c call, taskID string) (string, error) {
 	d, err := m.d.Tasks.Get(ctx, c.token, taskID, 0)
 	if err != nil {
@@ -291,7 +323,7 @@ func (m *Module) readTask(ctx context.Context, c call, taskID string) (string, e
 	}
 	questions := []map[string]any{}
 	for _, q := range w.Questions {
-		questions = append(questions, map[string]any{"id": q.ID, "question": byID[q.CommitID].Body, "asked_by": byID[q.CommitID].Author, "asked_of": q.Addressee, "asked_at": byID[q.CommitID].CreatedAt.Format(time.RFC3339)})
+		questions = append(questions, map[string]any{"id": q.ID, "question": byID[q.CommitID].Body, "asked_by": byID[q.CommitID].Author, "asked_of": q.Addressee, "for_you": q.Addressee == w.Viewer, "asked_at": byID[q.CommitID].CreatedAt.Format(time.RFC3339)})
 	}
 	if len(commits) > timelineLimit {
 		commits = commits[len(commits)-timelineLimit:]
@@ -305,6 +337,7 @@ func (m *Module) readTask(ctx context.Context, c call, taskID string) (string, e
 		timeline = append(timeline, entry)
 	}
 	out := map[string]any{
+		"you":                 w.Viewer,
 		"task_id":             d.Task.ID,
 		"title":               d.Task.Title,
 		"goal":                d.Task.Goal,
@@ -319,6 +352,7 @@ func (m *Module) readTask(ctx context.Context, c call, taskID string) (string, e
 		"can":                 map[string]bool{"start_work": w.CanOpen, "submit_result": w.CanSubmit},
 		"blocked":             blocked,
 		"open_questions":      questions,
+		"participants":        others(w),
 		"timeline":            timeline,
 		"basis":               b.token(),
 	}

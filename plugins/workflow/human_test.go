@@ -45,7 +45,7 @@ func TestHumanProcessesAndSubmitsWithoutRuntimeProof(t *testing.T) {
 	if e != nil || len(items) != 1 || items[0].NextActor != api.ActorAssignee {
 		t.Fatal(items, e)
 	}
-	if _, e = f.taskQueries.People(f.ctx, worker); e != nil {
+	if _, e = f.taskQueries.People(f.ctx, worker, az.MemberQuery{}); e != nil {
 		t.Fatal("human delegate cannot list people", e)
 	}
 	if !s.Execution.Writable || s.Execution.CredentialID != "" || s.Execution.Subject != "worker" {

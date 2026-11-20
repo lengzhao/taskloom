@@ -27,9 +27,10 @@ type Review struct {
 }
 type Cancel struct{ TaskID string }
 
-// Restart starts a new round from the round the caller saw: on an active task
-// it sends work back, on a cancelled one it reopens the task. A completed task
-// is final; rework is a new task.
+// Restart reopens a cancelled task in a new round, from the round the caller
+// saw. Active and completed tasks reject it: active work is sent back by
+// review, reassignment or a basis edit; a completed task is final and rework
+// is a new task.
 type Restart struct{ TaskID, RoundID string }
 
 // Actor names who must act next for the task to move. Empty means nothing is
@@ -75,6 +76,8 @@ type PlanTask struct {
 }
 
 type Snapshot struct {
+	// Viewer is the caller's subject; the other per-viewer fields are judged for it.
+	Viewer       string
 	ResultCommit *commit.Commit
 	Assignee     string
 	NextActor    Actor
@@ -93,6 +96,9 @@ type Snapshot struct {
 	Parent         *PlanTask  `json:",omitempty"`
 	Children       []PlanTask `json:",omitempty"`
 	HiddenRequired bool       `json:",omitempty"`
+	// Participants are the task's current participants, the subjects a
+	// question may name as Addressee besides the owner.
+	Participants []string `json:",omitempty"`
 }
 
 // Ask raises a request for input to the task owner inside the round the

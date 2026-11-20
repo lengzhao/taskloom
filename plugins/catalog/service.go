@@ -164,7 +164,7 @@ func (s *Service) SaveProject(ctx context.Context, token, key string, in api.Pro
 		if owner == "" {
 			owner = p.ID
 		}
-		members, e := s.d.Members.ListActiveMembers(tx, p.Tenant)
+		members, e := s.d.Members.ListActiveMembers(tx, p.Tenant, az.MemberQuery{})
 		if e != nil {
 			return nil, e
 		}

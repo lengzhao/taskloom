@@ -53,3 +53,17 @@ type ResultAccess interface {
 type Progress interface {
 	RecordProgress(ctx context.Context, p identity.Principal, tenant, taskID string) error
 }
+
+// Executor is what a task command needs from the caller's own execution of
+// that task, inside the command's transaction.
+type Executor interface {
+	Progress
+	// Hold returns p's own writable execution of the task on its current round
+	// and basis while the task is active, or fault.ErrConflict.
+	Hold(ctx context.Context, p identity.Principal, tenant, taskID string) (Execution, error)
+	// Follow pins a held execution to the task's current basis and records
+	// progress. It is called after the executor's own change to the task, such
+	// as a required subtask it created, advanced the basis: the author of a
+	// change already knows it, so its execution is not fenced by it.
+	Follow(ctx context.Context, v Execution) error
+}

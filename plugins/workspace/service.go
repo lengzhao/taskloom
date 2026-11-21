@@ -40,8 +40,10 @@ type Deps struct {
 	Members       az.MemberDirectory     `json:"members"`
 	Participants  az.ParticipantWriter   `json:"participants"`
 	Events        record.EventLog        `json:"events"`
-	// Progress lets an Agent's comment count as progress on its own execution.
-	Progress execution.Progress `json:"progress"`
+	// Executor is the caller's own execution of a task: an Agent's comment
+	// counts as progress on it, and an Agent splitting the task it executes
+	// keeps it across the basis change it made.
+	Executor execution.Executor `json:"executor"`
 	// Placer places a task created under a parent in the same transaction.
 	// Thirteen fields, reviewed: the placement rule stays in the plan module;
 	// this field only lets creation and placement be one atomic command.
@@ -55,7 +57,7 @@ func init() {
 	pluginkit.Register("workspace/tasks", func(_ struct{}, d Deps) (*Service, error) { return New(d) })
 }
 func New(d Deps) (*Service, error) {
-	if d.Catalog == nil || d.Transactions == nil || d.Tasks == nil || d.Commits == nil || d.Flow == nil || d.Members == nil || d.Participants == nil || d.Identity == nil || d.Authorization == nil || d.Events == nil || d.Progress == nil || d.Placer == nil {
+	if d.Catalog == nil || d.Transactions == nil || d.Tasks == nil || d.Commits == nil || d.Flow == nil || d.Members == nil || d.Participants == nil || d.Identity == nil || d.Authorization == nil || d.Events == nil || d.Executor == nil || d.Placer == nil {
 		return nil, errors.New("task capabilities required")
 	}
 	if d.Commands == nil {
@@ -94,8 +96,10 @@ func (s *Service) event(ctx context.Context, t task.Task) error {
 }
 func (s *Service) Create(ctx context.Context, token, key string, in api.Create) (api.Ref, error) {
 	var out api.Ref
-	if in.Required && in.ParentID == "" {
-		return out, fault.ErrInput // Required describes a relation that would not exist
+	if (in.Required || in.Owner != "") && in.ParentID == "" {
+		// Required describes a relation that would not exist; a top-level
+		// task is owned by the person who creates it.
+		return out, fault.ErrInput
 	}
 	p, e := s.actor(ctx, token)
 	if e != nil {
@@ -106,6 +110,11 @@ func (s *Service) Create(ctx context.Context, token, key string, in api.Create) 
 		// Creating under a parent changes the parent's plan, so it also needs
 		// planning rights there; checked again before any replay.
 		req.Authorize = func(tx context.Context, actor identity.Principal) error {
+			if actor.Kind == "agent" {
+				// An Agent splits only the task it executes; the command
+				// checks it holds the current execution.
+				return s.d.Authorization.Check(tx, actor, "task.split", in.ParentID)
+			}
 			if e := s.d.Authorization.Check(tx, actor, "task.create", actor.Tenant); e != nil {
 				return e
 			}
@@ -113,13 +122,17 @@ func (s *Service) Create(ctx context.Context, token, key string, in api.Create) 
 		}
 	}
 	b, e := command.Run(ctx, s.d.Commands, req, in, func(tx context.Context, p identity.Principal) ([]byte, error) {
-		if p.Kind != "human" || !valid(in.Title, in.Goal, in.Criteria) {
+		if !valid(in.Title, in.Goal, in.Criteria) {
 			return nil, fault.ErrInput
+		}
+		owner, held, e := s.creation(tx, p, in)
+		if e != nil {
+			return nil, e
 		}
 		if e := s.projectOpen(tx, p.Tenant, in.ProjectID); e != nil {
 			return nil, e
 		}
-		t := task.Task{ProjectID: in.ProjectID, Tenant: p.Tenant, ID: id(), Title: in.Title, Goal: in.Goal, Criteria: in.Criteria, Owner: p.ID, BasisVersion: 1}
+		t := task.Task{ProjectID: in.ProjectID, Tenant: p.Tenant, ID: id(), Title: in.Title, Goal: in.Goal, Criteria: in.Criteria, Owner: owner, BasisVersion: 1}
 		if e := s.d.Tasks.CreateTask(tx, t); e != nil {
 			return nil, e
 		}
@@ -134,6 +147,17 @@ func (s *Service) Create(ctx context.Context, token, key string, in api.Create) 
 			if e := s.d.Placer.Apply(tx, p, plan.Placement{ChildID: t.ID, ParentID: in.ParentID, Required: in.Required}); e != nil {
 				return nil, e
 			}
+			// A creator who does not own the subtask follows it as a participant.
+			if owner != p.ID {
+				if e := s.d.Participants.SetParticipant(tx, az.Participant{Tenant: p.Tenant, TaskID: t.ID, Subject: p.ID}, true); e != nil {
+					return nil, e
+				}
+			}
+			if held != nil {
+				if e := s.d.Executor.Follow(tx, *held); e != nil {
+					return nil, e
+				}
+			}
 		} else if e := s.event(tx, t); e != nil {
 			return nil, e
 		}
@@ -144,6 +168,48 @@ func (s *Service) Create(ctx context.Context, token, key string, in api.Create) 
 	}
 	return out, e
 }
+
+// creation decides who owns a new task. A person owns a top-level task they
+// create. A subtask may name any active human member as owner; otherwise its
+// creator owns it, or, for an Agent, the parent's owner. An Agent creates
+// subtasks only under the task it holds the current execution of, returned
+// so that execution can follow the parent's basis.
+func (s *Service) creation(ctx context.Context, p identity.Principal, in api.Create) (string, *execution.Execution, error) {
+	var held *execution.Execution
+	owner := p.ID
+	switch p.Kind {
+	case "human":
+	case "agent":
+		if in.ParentID == "" {
+			return "", nil, az.ErrForbidden
+		}
+		v, e := s.d.Executor.Hold(ctx, p, p.Tenant, in.ParentID)
+		if e != nil {
+			return "", nil, e
+		}
+		parent, e := s.d.Tasks.GetTask(ctx, p.Tenant, in.ParentID)
+		if e != nil {
+			return "", nil, e
+		}
+		held, owner = &v, parent.Owner
+	default:
+		return "", nil, az.ErrForbidden
+	}
+	if in.Owner == "" {
+		return owner, held, nil
+	}
+	people, e := s.d.Members.ListActiveMembers(ctx, p.Tenant, az.MemberQuery{Search: in.Owner, Kind: "human"})
+	if e != nil {
+		return "", nil, e
+	}
+	for _, m := range people {
+		if m.Subject == in.Owner {
+			return in.Owner, held, nil
+		}
+	}
+	return "", nil, fault.ErrInput
+}
+
 func (s *Service) Edit(ctx context.Context, token, key string, in api.Edit) (api.Ref, error) {
 	var out api.Ref
 	b, e := command.Run(ctx, s.d.Commands, capcommand.Request{Token: token, Key: key, Operation: "task.edit", Resource: in.TaskID}, in, func(tx context.Context, p identity.Principal) ([]byte, error) {
@@ -213,7 +279,7 @@ func (s *Service) Comment(ctx context.Context, token, key string, in api.Comment
 		if e != nil {
 			return nil, e
 		}
-		if e = s.d.Progress.RecordProgress(tx, p, t.Tenant, t.ID); e != nil {
+		if e = s.d.Executor.RecordProgress(tx, p, t.Tenant, t.ID); e != nil {
 			return nil, e
 		}
 		if e = s.event(tx, t); e != nil {

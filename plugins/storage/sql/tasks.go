@@ -17,6 +17,11 @@ type taskRow struct {
 
 func (s *Store) CreateTask(ctx context.Context, t task.Task) error {
 	return s.use(ctx, true, func(db *gorm.DB) error {
+		seq, err := nextSequence(db)
+		if err != nil {
+			return err
+		}
+		t.Sequence = seq
 		b, err := json.Marshal(t)
 		if err != nil {
 			return err

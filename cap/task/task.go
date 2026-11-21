@@ -15,6 +15,10 @@ type Task struct {
 	// title, goal, criteria or the set of required subtasks. Executions,
 	// results, reviews and edits are pinned to it.
 	BasisVersion int64
+	// Sequence is the task's creation order, taken from the global counter
+	// that also orders commits and events when the task is stored. A child is
+	// always newer than its parent, which keeps the work breakdown acyclic.
+	Sequence int64
 }
 
 // BasisChange contains only fields the named basis update may change.

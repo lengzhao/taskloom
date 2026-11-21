@@ -105,7 +105,7 @@ func explain(err error) string {
 	case errors.Is(err, fault.ErrTooLarge):
 		return "文件超过大小上限。"
 	case errors.Is(err, fault.ErrInput):
-		return "输入无效：检查参数（正文、文件、链接不能全为空；file_id 须来自本任务；链接须为 http(s)；文件名不能为空；文件不能超过上限）。"
+		return "输入无效：检查参数（正文、文件、链接不能全为空；file_id 须来自本任务；链接须为 http(s)；文件名不能为空；文件不能超过上限；子任务的 owner 须为空间内有效用户）。"
 	default:
 		return "服务暂时不可用，可稍后重试。"
 	}
@@ -160,6 +160,7 @@ func toolList() []tool {
 		{"answer_question", "回答别人向你提的问题（read_task 的 open_questions 中 for_you 为 true 的那条）。", schema([]string{"task_id", "question_id", "text"}, map[string]string{"task_id": descTask, "question_id": "问题 ID（open_questions 中的 id）", "text": "回答内容"})},
 		{"close_question", "撤回你提的、已不再需要回答的问题（open_questions 中 asked_by 为你的那条），须写明理由；撤回后它不再阻止任务完成。", schema([]string{"task_id", "question_id", "reason"}, map[string]string{"task_id": descTask, "question_id": "问题 ID（open_questions 中的 id）", "reason": "为什么不再需要回答"})},
 		{"submit_result", "明确提交本轮的正式结果（交付物），可带文件和链接。需要已认领执行；再次提交会替换当前结果。result、files、links 至少一项。", schema([]string{"task_id", "basis"}, map[string]string{"task_id": descTask, "basis": descBasis, "result": "结果正文", "files": descFiles, "links": descLinks})},
+		{"create_subtask", "把你正在执行的任务拆出一个子任务，交给别人并行处理。需要你持有该任务当前有效的执行（已 start_work）。required 为 true 时，本任务要等该子任务完成才能提交结果；你的执行仍然有效，可以继续做你自己的部分。子任务负责人默认是本任务负责人，也可以用 owner 指定空间内任一有效用户（list_members 且 kind 为 human）；由子任务负责人决定交给谁处理。你会成为子任务的参与者，可用 read_task 查看进度。", schema([]string{"task_id", "title"}, map[string]string{"task_id": "你正在执行的任务 ID（子任务的父任务）", "title": "子任务标题", "goal": "子任务目标", "criteria": "子任务验收标准", "required": "可选：true 表示本任务必须等它完成才能提交；默认 false", "owner": "可选：子任务负责人的 ID（用户，不能是 Agent）；留空为本任务负责人"})},
 		{"upload_file", "把一个文件上传到任务，返回 file_id，供 submit_result 或 post_message 的 files 引用；只上传不会出现在时间线中。text 与 content_base64 二选一。经本工具上传的内容上限约 700KB，更大的文件用 HTTP POST /v1/tasks/{id}/files 上传（同一凭据）。", schema([]string{"task_id", "name"}, map[string]string{"task_id": descTask, "name": "文件名，如 report.md", "text": "文本文件的内容（UTF-8）", "content_base64": "二进制文件内容的 base64", "media_type": "可选：如 text/markdown、image/png；留空按文件名推断"})},
 		{"read_file", "读取任务中的一个文件（read_task 的 files 中列出）。UTF-8 文本直接返回内容，其他文件返回 base64；超过 512KB 时只返回元数据和 HTTP 下载路径。", schema([]string{"task_id", "file_id"}, map[string]string{"task_id": descTask, "file_id": "文件 ID"})},
 	}
@@ -251,6 +252,27 @@ func (m *Module) call(ctx context.Context, c call, name string, rawArgs json.Raw
 			return "", err
 		}
 		return "已撤回问题。", nil
+	case "create_subtask":
+		if err := required(args, "task_id", "title"); err != nil {
+			return "", err
+		}
+		req := false
+		switch strings.TrimSpace(args["required"]) {
+		case "", "false":
+		case "true":
+			req = true
+		default:
+			return "", invalid("required 只能是 true 或 false")
+		}
+		ref, err := m.d.Comments.Create(ctx, c.token, c.key(name, args), workspace.Create{Title: args["title"], Goal: args["goal"], Criteria: args["criteria"], ParentID: args["task_id"], Owner: args["owner"], Required: req})
+		if err != nil {
+			return "", err
+		}
+		msg := "已创建子任务；由子任务负责人安排处理人。"
+		if req {
+			msg = "已创建必需子任务；它完成前本任务不能提交结果，你的执行仍然有效，可继续做你的部分。"
+		}
+		return pretty(map[string]any{"message": msg, "subtask_id": ref.TaskID}), nil
 	case "upload_file":
 		return m.uploadFile(ctx, c, args)
 	case "read_file":

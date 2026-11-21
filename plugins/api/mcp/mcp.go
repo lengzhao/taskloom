@@ -25,12 +25,14 @@ import (
 )
 
 // Local interfaces keep the adapter to what an executing Agent may call: no
-// task editing, assignment, review or task control.
+// task editing, assignment, review or task control. Creating a task is only
+// splitting the task it executes; the command refuses anything else.
 type taskReader interface {
 	Get(ctx context.Context, credential, taskID string, after int64) (workspace.Detail, error)
 }
 type commenter interface {
 	Comment(ctx context.Context, credential, key string, in workspace.Comment) (workspace.Ref, error)
+	Create(ctx context.Context, credential, key string, in workspace.Create) (workspace.Ref, error)
 }
 type claimer interface {
 	Open(ctx context.Context, token, key string, in work.Open) (work.Ref, error)

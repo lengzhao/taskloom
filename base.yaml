@@ -92,7 +92,7 @@ workspace:
     authorization: access
     commands: command-runtime
     events: sql
-    progress: execution-commands
+    executor: execution-commands
     placer: plan-commands
 workspace-api:
   use: api/workspace

@@ -56,9 +56,6 @@ func id() string {
 	return fmt.Sprintf("%x", b)
 }
 
-// maxDepth bounds the ancestor walk; a deeper chain is refused rather than walked.
-const maxDepth = 64
-
 // side is one end of a change, as recorded in the parent's commit.
 type side struct {
 	ParentID string `json:"parent"`
@@ -135,12 +132,15 @@ func (m *Module) Apply(ctx context.Context, p identity.Principal, in capplan.Pla
 		return nil // nothing changes, so no version advances
 	}
 	// Projects only organize tasks and grant nothing, so parent and child may
-	// sit in different projects; the parent must exist and the tree stay acyclic.
-	if _, e = m.d.Tasks.GetTask(ctx, p.Tenant, to.ParentID); e != nil {
+	// sit in different projects. A child must be newer than its parent: along
+	// any parent chain creation order strictly decreases, so no chain can
+	// return to where it started and the tree stays acyclic without a walk.
+	parent, e := m.d.Tasks.GetTask(ctx, p.Tenant, to.ParentID)
+	if e != nil {
 		return e
 	}
-	if e = m.acyclic(ctx, p.Tenant, child.ID, to.ParentID); e != nil {
-		return e
+	if child.Sequence <= parent.Sequence {
+		return fault.ErrConflict
 	}
 	// Every parent whose plan changes must be active; a terminal parent's plan is frozen.
 	parents := []string{from.ParentID}
@@ -208,25 +208,6 @@ func (m *Module) record(ctx context.Context, p identity.Principal, parentID stri
 	}
 	_, e = m.d.Flow.Refresh(ctx, t)
 	return e
-}
-
-// acyclic refuses a parent that is the child itself or one of its descendants.
-func (m *Module) acyclic(ctx context.Context, tenant, childID, parentID string) error {
-	id := parentID
-	for depth := 0; depth < maxDepth; depth++ {
-		if id == childID {
-			return fault.ErrConflict
-		}
-		l, e := m.d.Plan.Parent(ctx, tenant, id)
-		if errors.Is(e, fault.ErrNotFound) {
-			return nil
-		}
-		if e != nil {
-			return e
-		}
-		id = l.ParentID
-	}
-	return fault.ErrConflict
 }
 
 // announce notifies every task whose view changed, once each.

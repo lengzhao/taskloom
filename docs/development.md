@@ -15,6 +15,8 @@
 | plugins/transport/http | 路由挂载、监听及受管模块启停 |
 | plugins/api/health | 进程存活检查 |
 | plugins/all.go | 当前已实现插件的集中注册入口 |
+| harness/agentkit | Agent 层适配：AgentKit 平台插件 `platform/taskloom`，只读业务 API 决定唤醒/steer/停止，见[MCP 接入](mcp-adapter.md#示例agentkit-常驻执行-agent) |
+| cmd/taskloom-agent | AgentKit 原生 runner 加上述插件的二进制，镜像见 deploy/agent |
 
 构造函数不打开连接；根从 resources 顺序 Open 后运行 components，退出先 Stop 组件、再逆序 Close 资源。失败的 Open 自行清理部分状态。HTTP 独占其模块生命周期，模块不能重复列入根 resources。退出时限内组件应配合取消，Go 无法强制终止不合作的 goroutine。
 
@@ -79,4 +81,10 @@ go run ./cmd/taskloom
 - 文件：本地目录存储的原子写入与拒绝覆盖、路径穿越键拒绝、打开时清理残留临时文件；未引用上传只对上传者可见；上传超限 413、幂等重放与同键不同字节冲突且均不留下字节、非参与者不能上传或读取、跨任务读取与引用拒绝、不能引用他人未引用的上传、评论/结果只带文件或链接、引用缺失文件时结果整体回滚、相同交付不重复登记、MCP 上传/提交/读取与下载头。
 - 工作台：内置浏览器在独立临时库中验证过创建、分配、认领、提交、验收、项目与看板等主路径（最近几轮界面改动只做了脚本语法检查）。
 
-尚未验证：真实 Agent/Harness 联调与进程清理（M06）、MySQL/PostgreSQL 真实服务、生产负载、WebSocket、S3 适配、文件删除与孤立字节清理。本地测试不能表述为生产可用。
+真实 Agent 联调（2026-11-20，`taskloom:local` 独立实例 + `deploy/agent` 镜像 + deepseek-v4.1-flash，worker-1 一个实例）：
+
+- 真实通过：分配后约 2 秒唤醒，认领→说明计划→提交→验收完成；验收退回后带退回原因唤醒并重新提交；运行中负责人留言被 steer 进当前 turn 且结果采纳；Agent 提问后负责人普通留言不唤醒、回答后一次唤醒并带上两条新动态；被提问（addressee）时只回答不认领；运行中取消或改派给另一 Agent 后 1–2 秒内停止该 turn；Taskloom 停机 40 秒期间按 3/6/12/24 秒退避且不调用模型，恢复后沿用原游标；Agent 容器运行中重启后自动唤醒并沿用原执行提交；撤销凭据后报错并按 60 秒退避；空闲时不调用模型；每个任务独立会话（`taskloom:<任务ID>`），Agent 自己的写入不唤醒自己。
+- 仅单测（harness/agentkit）：失去读取权限时停止、游标被拒后从 inbox 重新同步、人类凭据被拒、上下文取消退出。
+- 未验证：同一 Agent 换凭据成为新实例与旧实例并存、多 Agent 实例并发、慢客户端、长时间运行与会话压缩、Codex/Claude Code 等其他 Harness。
+
+尚未验证：Agent 进程外部工具的清理（本示例 Agent 没有 shell/文件工具）、MySQL/PostgreSQL 真实服务、生产负载、WebSocket、S3 适配、文件删除与孤立字节清理。本地测试不能表述为生产可用。

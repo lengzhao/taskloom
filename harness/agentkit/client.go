@@ -30,6 +30,10 @@ var errGone = errors.New("task not readable")
 // an operator issues a new one.
 var errAuth = errors.New("taskloom credential rejected")
 
+// errBadCursor means the change feed rejected the cursor (400): it does not
+// belong to this database any more, so the adapter resynchronizes.
+var errBadCursor = errors.New("taskloom change cursor rejected")
+
 type viewer struct{ Tenant, Subject, Kind string }
 
 type change struct{ TaskID, Kind string }
@@ -55,11 +59,6 @@ type taskDetail struct {
 	Commits []commitView
 }
 
-type snapshot struct {
-	Assignee string
-	Position struct{ Status string }
-}
-
 func (c *client) me(ctx context.Context) (viewer, error) {
 	var v viewer
 	return v, c.get(ctx, "/me", &v)
@@ -71,17 +70,19 @@ func (c *client) changes(ctx context.Context, cursor string) (changePage, error)
 	if cursor != "" {
 		path += "?cursor=" + url.QueryEscape(cursor)
 	}
-	return p, c.get(ctx, path, &p)
+	err := c.get(ctx, path, &p)
+	if cursor != "" && errors.Is(err, errBadRequest) {
+		err = fmt.Errorf("%w: %v", errBadCursor, err)
+	}
+	return p, err
 }
+
+// errBadRequest is any 400; only the caller knows which input was rejected.
+var errBadRequest = errors.New("bad request")
 
 func (c *client) inbox(ctx context.Context) ([]pending, error) {
 	var out []pending
 	return out, c.get(ctx, "/inbox", &out)
-}
-
-func (c *client) workflow(ctx context.Context, taskID string) (snapshot, error) {
-	var s snapshot
-	return s, c.get(ctx, "/tasks/"+url.PathEscape(taskID)+"/workflow", &s)
 }
 
 // commitsAfter pages through the task timeline after a sequence. The server
@@ -126,6 +127,8 @@ func (c *client) get(ctx context.Context, path string, into any) error {
 		return errAuth
 	case resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusForbidden:
 		return fmt.Errorf("%w: GET %s: %d", errGone, path, resp.StatusCode)
+	case resp.StatusCode == http.StatusBadRequest:
+		return fmt.Errorf("%w: GET %s: %s", errBadRequest, path, strings.TrimSpace(string(body)))
 	case resp.StatusCode/100 != 2:
 		return fmt.Errorf("GET %s: %d %s", path, resp.StatusCode, strings.TrimSpace(string(body)))
 	}

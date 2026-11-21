@@ -238,7 +238,7 @@ func TestCancelFencesWritesImmediately(t *testing.T) {
 	if _, e = f.results.Submit(f.ctx, f.agent, "late", api.Submit{TaskID: d.Task.ID, ExecutionID: old.ID, Body: "late"}); !errors.Is(e, fault.ErrConflict) {
 		t.Fatal("late write", e)
 	}
-	if items, _ := f.query.Inbox(f.ctx, f.agent); len(items) != 0 {
+	if items, _ := f.query.Inbox(f.ctx, f.agent, nil); len(items) != 0 {
 		t.Fatal("cancelled task still waits on the agent", items)
 	}
 	s, e = f.controls.Restart(f.ctx, f.owner, "reopen", api.Restart{TaskID: d.Task.ID, RoundID: s.Position.RoundID})

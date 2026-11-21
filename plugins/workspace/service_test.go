@@ -160,7 +160,7 @@ func TestCreateReadCommitEditAndRevoke(t *testing.T) {
 	if _, e = s.Comment(ctx, token, "comment", api.Comment{TaskID: d.Task.ID, Body: "初始"}); !errors.Is(e, az.ErrForbidden) {
 		t.Fatal("revoked replay", e)
 	}
-	list, e := s.List(ctx, token)
+	list, e := s.List(ctx, token, nil)
 	if !errors.Is(e, az.ErrForbidden) || len(list) != 0 {
 		t.Fatal("revoked list", e)
 	}

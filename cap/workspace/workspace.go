@@ -84,7 +84,9 @@ type Queries interface {
 	// People pages the active member directory, readable by any active member,
 	// Agents included: it is where an addressee or assignee is picked.
 	People(ctx context.Context, credential string, q authorization.MemberQuery) (PeoplePage, error)
-	List(ctx context.Context, credential string) ([]Detail, error)
+	// List returns readable tasks without their timelines; ids, when given,
+	// limits it to those tasks (at most task.MaxPick).
+	List(ctx context.Context, credential string, ids []string) ([]Detail, error)
 	Get(ctx context.Context, credential, taskID string, after int64) (Detail, error)
 }
 type ChangeFeed interface {

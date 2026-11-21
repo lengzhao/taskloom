@@ -188,7 +188,7 @@ func (m *Module) call(ctx context.Context, c call, name string, rawArgs json.Raw
 	}
 	switch name {
 	case "inbox":
-		all, err := m.d.Workflow.Inbox(ctx, c.token)
+		all, err := m.d.Workflow.Inbox(ctx, c.token, nil)
 		if err != nil {
 			return "", err
 		}

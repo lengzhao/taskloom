@@ -3,6 +3,7 @@ package workflow_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	capsecurity "github.com/lengzhao/taskloom/cap/security"
 	"testing"
 
@@ -41,7 +42,7 @@ func TestHumanProcessesAndSubmitsWithoutRuntimeProof(t *testing.T) {
 	if e != nil || s.CanOpen || !s.CanSubmit || !s.CanAssign || s.CanManage {
 		t.Fatalf("human flags %+v %v", s, e)
 	}
-	items, e := f.query.Inbox(f.ctx, worker)
+	items, e := f.query.Inbox(f.ctx, worker, nil)
 	if e != nil || len(items) != 1 || items[0].NextActor != api.ActorAssignee {
 		t.Fatal(items, e)
 	}
@@ -165,7 +166,7 @@ func TestOverviewAndOwnerSelfAssignment(t *testing.T) {
 	if s := f.read(t, child.Task.ID); s.Assignee != "owner" || len(s.Participants) != 0 {
 		t.Fatal("owner self-assignment", s.Assignee, s.Participants)
 	}
-	items, e := f.query.Overview(f.ctx, f.owner)
+	items, e := f.query.Overview(f.ctx, f.owner, nil)
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -179,7 +180,49 @@ func TestOverviewAndOwnerSelfAssignment(t *testing.T) {
 	if p := byID[parent.Task.ID]; p.Assignee != "" || p.ParentID != "" || p.UpdatedAt.IsZero() {
 		t.Fatal("parent overview", p)
 	}
-	if mine, e := f.query.Overview(f.ctx, outsider); e != nil || len(mine) != 0 {
+	if mine, e := f.query.Overview(f.ctx, outsider, nil); e != nil || len(mine) != 0 {
 		t.Fatal("overview leaked unreadable tasks", mine, e)
+	}
+
+	// Naming tasks limits every list to them; a missing or unreadable task is
+	// left out exactly as in the full list.
+	ids := []string{child.Task.ID, "missing", child.Task.ID}
+	if items, e := f.query.Overview(f.ctx, f.owner, ids); e != nil || len(items) != 1 || items[0] != byID[child.Task.ID] {
+		t.Fatal("overview by id", items, e)
+	}
+	if items, e := f.query.Overview(f.ctx, outsider, ids); e != nil || len(items) != 0 {
+		t.Fatal("overview by id leaked", items, e)
+	}
+	if list, e := f.taskQueries.List(f.ctx, f.owner, []string{parent.Task.ID, "missing"}); e != nil || len(list) != 1 || list[0].Task.ID != parent.Task.ID || list[0].Commits != nil {
+		t.Fatal("list by id", list, e)
+	}
+	if list, e := f.taskQueries.List(f.ctx, outsider, []string{parent.Task.ID}); e != nil || len(list) != 0 {
+		t.Fatal("list by id leaked", list, e)
+	}
+	full, e := f.query.Inbox(f.ctx, f.owner, nil)
+	if e != nil {
+		t.Fatal(e)
+	}
+	for _, x := range full {
+		if items, e := f.query.Inbox(f.ctx, f.owner, []string{x.TaskID, "missing"}); e != nil || len(items) != 1 || items[0] != x {
+			t.Fatal("inbox by id", x, items, e)
+		}
+	}
+	if len(full) == 0 {
+		t.Fatal("inbox empty")
+	}
+	many := make([]string, 101)
+	for i := range many {
+		many[i] = fmt.Sprint("t", i)
+	}
+	for _, e := range []error{
+		func() error { _, e := f.query.Overview(f.ctx, f.owner, many); return e }(),
+		func() error { _, e := f.query.Inbox(f.ctx, f.owner, many); return e }(),
+		func() error { _, e := f.taskQueries.List(f.ctx, f.owner, many); return e }(),
+		func() error { _, e := f.taskQueries.List(f.ctx, f.owner, []string{""}); return e }(),
+	} {
+		if !errors.Is(e, fault.ErrInput) {
+			t.Fatal("bad id list accepted", e)
+		}
 	}
 }

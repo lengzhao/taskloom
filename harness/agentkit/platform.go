@@ -10,10 +10,11 @@
 //   - wake: a task enters the Agent's inbox, or someone else wrote to it while
 //     it is there; the Agent's own commits never wake it (no self-reply);
 //   - steer: a wake for a task whose turn is running is folded into that turn
-//     by the AgentKit runner;
-//   - stop: a running turn is stopped when its task is cancelled, the Agent is
-//     replaced as assignee or loses access. Taskloom has already fenced the
-//     writes; stopping only saves effort and proves nothing about tools.
+//     by the AgentKit runner.
+//
+// A running turn is not stopped when its task is cancelled or reassigned:
+// Taskloom has already fenced the execution, and this Agent has only Taskloom
+// tools, so its remaining writes are rejected and the turn ends on its own.
 package harness
 
 import (
@@ -23,7 +24,6 @@ import (
 	"log/slog"
 	"os"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/lengzhao/agentkit"
@@ -78,12 +78,8 @@ func (c *Config) Validate() error {
 // Nothing is persisted: after a restart every task in the inbox is woken once
 // and the Agent continues from read_task.
 type taskState struct {
-	seen      int64 // last timeline sequence already reported to the Agent
-	woken     bool  // woken at least once since this process started
-	assignee  bool  // the Agent was the assignee when last woken
-	busy      bool  // a turn of this task's session is running
-	stopping  bool  // a stop was requested for the running turn
-	routeKeys map[agentkit.SessionID]bool
+	seen  int64 // last timeline sequence already reported to the Agent
+	woken bool  // woken at least once since this process started
 }
 
 type Platform struct {
@@ -93,17 +89,13 @@ type Platform struct {
 	maxGap time.Duration
 	sleep  func(context.Context, time.Duration) error
 
-	// Receive-side state, touched only by the runner's Receive loop.
+	// State touched only by the runner's Receive loop.
 	me      string
 	cursor  string
 	started bool
 	queue   []agentkit.MessageEvent
 	backoff time.Duration
-
-	// Shared with Send, which turn goroutines call concurrently.
-	mu     sync.Mutex
-	tasks  map[string]*taskState
-	routes map[agentkit.SessionID]string
+	tasks   map[string]*taskState
 }
 
 // New registers platform/taskloom.
@@ -127,7 +119,6 @@ func newPlatform(cfg Config, api *client) *Platform {
 		maxGap: time.Duration(cfg.MaxBackoffSeconds) * time.Second,
 		sleep:  sleepContext,
 		tasks:  map[string]*taskState{},
-		routes: map[agentkit.SessionID]string{},
 	}
 }
 
@@ -192,7 +183,7 @@ func (p *Platform) step(ctx context.Context) error {
 	}
 	page, err := p.api.changes(ctx, p.cursor)
 	if err != nil {
-		if isBadCursor(err) {
+		if errors.Is(err, errBadCursor) {
 			// The cursor does not belong to this database any more (restored
 			// or replaced). Resynchronize from the inbox instead of guessing.
 			slog.Warn("taskloom cursor rejected, resynchronizing", "err", err)
@@ -246,43 +237,20 @@ func (p *Platform) start(ctx context.Context) error {
 	return nil
 }
 
-// review re-evaluates the given tasks (all inbox and running tasks when all is
-// set) against the inbox, which Taskloom derives from the same facts as every
-// snapshot. The adapter keeps no copy of business rules.
+// review wakes the given tasks (every inbox task when all is set) that wait on
+// the Agent. The inbox is derived by Taskloom from the same facts as every
+// snapshot, so the adapter keeps no copy of business rules.
 func (p *Platform) review(ctx context.Context, ids map[string]bool, all bool) error {
 	inbox, err := p.api.inbox(ctx)
 	if err != nil {
 		return err
 	}
-	waiting := map[string]pending{}
 	for _, it := range inbox {
-		if it.NextActor != "" { // blocked entries have nothing to do yet
-			waiting[it.TaskID] = it
+		// Blocked entries (NextActor empty) have nothing to do yet.
+		if it.NextActor == "" || !all && !ids[it.TaskID] {
+			continue
 		}
-	}
-	if ids == nil {
-		ids = map[string]bool{}
-	}
-	if all {
-		for id := range waiting {
-			ids[id] = true
-		}
-		p.mu.Lock()
-		for id, st := range p.tasks {
-			if st.busy {
-				ids[id] = true
-			}
-		}
-		p.mu.Unlock()
-	}
-	for id := range ids {
-		var err error
-		if it, ok := waiting[id]; ok {
-			err = p.wakeIfNew(ctx, it)
-		} else {
-			err = p.stopIfLost(ctx, id)
-		}
-		if err != nil {
+		if err := p.wakeIfNew(ctx, it); err != nil {
 			return err
 		}
 	}
@@ -292,7 +260,7 @@ func (p *Platform) review(ctx context.Context, ids map[string]bool, all bool) er
 func (p *Platform) state(id string) *taskState {
 	st := p.tasks[id]
 	if st == nil {
-		st = &taskState{routeKeys: map[agentkit.SessionID]bool{}}
+		st = &taskState{}
 		p.tasks[id] = st
 	}
 	return st
@@ -301,10 +269,8 @@ func (p *Platform) state(id string) *taskState {
 // wakeIfNew wakes the task's session the first time it is seen waiting, and
 // afterwards only when someone other than the Agent wrote to it.
 func (p *Platform) wakeIfNew(ctx context.Context, it pending) error {
-	p.mu.Lock()
-	seen := p.state(it.TaskID).seen
-	p.mu.Unlock()
-	title, commits, err := p.api.commitsAfter(ctx, it.TaskID, seen)
+	st := p.state(it.TaskID)
+	title, commits, err := p.api.commitsAfter(ctx, it.TaskID, st.seen)
 	if errors.Is(err, errGone) {
 		return nil // lost between the inbox read and this one; the next change says more
 	}
@@ -313,70 +279,23 @@ func (p *Platform) wakeIfNew(ctx context.Context, it pending) error {
 	}
 	var others []commitView
 	for _, c := range commits {
-		seen = max(seen, c.Sequence)
+		st.seen = max(st.seen, c.Sequence)
 		if c.Author != p.me {
 			others = append(others, c)
 		}
 	}
-	p.mu.Lock()
-	st := p.state(it.TaskID)
 	first := !st.woken
-	st.seen = seen
 	if !first && len(others) == 0 {
-		p.mu.Unlock()
 		return nil
 	}
 	st.woken = true
-	if it.NextActor == "assignee" {
-		st.assignee = true // an addressee wake keeps what an earlier wake knew
-	}
-	ev := p.event(it.TaskID, wakeText(it, title, others, first))
-	st.routeKeys[routeKey(ev)] = true
-	p.routes[routeKey(ev)] = it.TaskID
-	p.mu.Unlock()
 	slog.Info("taskloom wake", "task", it.TaskID, "next_actor", it.NextActor, "first", first, "new_commits", len(others))
-	p.queue = append(p.queue, ev)
-	return nil
-}
-
-// stopIfLost stops a running turn whose task the Agent may no longer work on.
-// A task merely waiting on someone else (a question to the owner, a result in
-// review) is left alone: the turn is finishing on its own.
-func (p *Platform) stopIfLost(ctx context.Context, id string) error {
-	p.mu.Lock()
-	st := p.tasks[id]
-	running := st != nil && st.busy && !st.stopping
-	wasAssignee := st != nil && st.assignee
-	p.mu.Unlock()
-	if !running {
-		return nil
-	}
-	reason := ""
-	snap, err := p.api.workflow(ctx, id)
-	switch {
-	case errors.Is(err, errGone):
-		reason = "access lost"
-	case err != nil:
-		return err
-	case snap.Position.Status == "cancelled":
-		reason = "task cancelled"
-	case wasAssignee && snap.Assignee != p.me:
-		reason = "assignee replaced"
-	}
-	if reason == "" {
-		return nil
-	}
-	p.mu.Lock()
-	st.stopping = true
-	ev := p.event(id, "/stop")
-	p.mu.Unlock()
-	slog.Info("taskloom stop", "task", id, "reason", reason)
-	p.queue = append(p.queue, ev)
+	p.queue = append(p.queue, p.event(it.TaskID, wakeText(it, title, others, first)))
 	return nil
 }
 
 // event addresses one task's session. Each task is its own channel, so its
-// history, steering and stop stay apart from every other task.
+// history and steering stay apart from every other task.
 func (p *Platform) event(taskID, text string) agentkit.MessageEvent {
 	ev := agentkit.MessageEvent{Message: agentkit.ModelMessage{
 		Role:    "user",
@@ -385,35 +304,14 @@ func (p *Platform) event(taskID, text string) agentkit.MessageEvent {
 	return rctx.WithInboundRoute(ev, agentkit.SessionRouteInput{Platform: platformID, Instance: platformID, ChannelID: taskID})
 }
 
-func routeKey(ev agentkit.MessageEvent) agentkit.SessionID {
-	id, _ := rctx.RouteSessionID(ev.Envelope.Route)
-	return id
-}
-
-// Send observes turn boundaries to know which task sessions are running. The
-// Agent reports to people only through Taskloom tools, so nothing is posted.
+// Send only logs turn outcomes: the Agent reports to people through Taskloom
+// tools, so nothing is posted.
 func (p *Platform) Send(_ context.Context, out agentkit.OutboundEvent) error {
-	if out.Type != agentkit.EventTurnStart && out.Type != agentkit.EventTurnEnd && out.Type != "error" {
-		return nil
-	}
-	key := rctx.OutboundRouteID(out)
-	p.mu.Lock()
-	id, ok := p.routes[key]
-	if ok {
-		st := p.state(id)
-		switch out.Type {
-		case agentkit.EventTurnStart:
-			st.busy = true
-		case agentkit.EventTurnEnd:
-			st.busy, st.stopping = false, false
-		}
-	}
-	p.mu.Unlock()
 	switch out.Type {
 	case agentkit.EventTurnEnd:
-		slog.Info("taskloom turn end", "task", id, "data", truncate(string(out.Data), 300))
+		slog.Info("taskloom turn end", "session", rctx.OutboundRouteID(out), "data", truncate(string(out.Data), 300))
 	case "error":
-		slog.Warn("taskloom turn error", "task", id, "data", truncate(string(out.Data), 500))
+		slog.Warn("taskloom turn error", "session", rctx.OutboundRouteID(out), "data", truncate(string(out.Data), 500))
 	}
 	return nil
 }
@@ -437,10 +335,6 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return string(r[:n]) + "…"
-}
-
-func isBadCursor(err error) bool {
-	return err != nil && strings.Contains(err.Error(), "/changes") && strings.Contains(err.Error(), ": 400 ")
 }
 
 func sleepContext(ctx context.Context, d time.Duration) error {

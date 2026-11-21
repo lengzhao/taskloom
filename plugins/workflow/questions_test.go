@@ -38,7 +38,7 @@ func TestOpenQuestionWaitsOnOwnerAndHoldsCompletion(t *testing.T) {
 		t.Fatalf("question not waiting on owner %+v", s.Questions)
 	}
 	q := s.Questions[0]
-	items, e := f.query.Inbox(f.ctx, f.owner)
+	items, e := f.query.Inbox(f.ctx, f.owner, nil)
 	if e != nil || len(items) != 1 || items[0].TaskID != d.Task.ID {
 		t.Fatal("owner inbox misses question", items, e)
 	}
@@ -156,10 +156,10 @@ func TestQuestionToMemberWaitsOnThem(t *testing.T) {
 	if q.Addressee != "helper" || s.NextActor != api.ActorAddressee {
 		t.Fatal("question not addressed to helper", q.Addressee, s.NextActor)
 	}
-	if items, _ := f.query.Inbox(f.ctx, helper); len(items) != 1 || items[0].TaskID != d.Task.ID {
+	if items, _ := f.query.Inbox(f.ctx, helper, nil); len(items) != 1 || items[0].TaskID != d.Task.ID {
 		t.Fatal("helper inbox misses the question", items)
 	}
-	if items, _ := f.query.Inbox(f.ctx, f.owner); len(items) != 0 {
+	if items, _ := f.query.Inbox(f.ctx, f.owner, nil); len(items) != 0 {
 		t.Fatal("owner is not the one asked", items)
 	}
 	if _, e = qs.Answer(f.ctx, f.owner, "owner-answer", api.Answer{TaskID: d.Task.ID, QuestionID: q.ID, Body: "x"}); !errors.Is(e, az.ErrForbidden) {

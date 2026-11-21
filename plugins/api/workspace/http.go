@@ -187,7 +187,7 @@ func (m *Module) serve(w http.ResponseWriter, r *http.Request) {
 		in.TaskID = taskID
 		result, err = m.current(ctx, token)(m.d.Commands.Edit(ctx, token, key, in))
 	case r.Method == "GET":
-		result, err = m.d.Queries.List(ctx, token)
+		result, err = m.d.Queries.List(ctx, token, r.URL.Query()["id"])
 	case r.Method == "POST":
 		var in api.Create
 		if !httpx.Decode(w, r, &in) {

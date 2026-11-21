@@ -2,10 +2,11 @@
 #
 # platform/taskloom (harness/agentkit) follows the Agent's Taskloom change feed
 # and wakes one session per task only when that task waits on this Agent; a
-# change to a task whose turn is running is steered into it, and a turn is
-# stopped when its task is cancelled or reassigned. No model call happens
-# while nothing waits. Only Taskloom MCP tools plus todo/finish are exposed:
-# no shell, files, web or sub-agents. Business rules stay in Taskloom.
+# change to a task whose turn is running is steered into it. No model call
+# happens while nothing waits. Only Taskloom MCP tools plus todo/finish are
+# exposed: no shell, files, web or sub-agents, so a turn on a cancelled or
+# reassigned task is fenced by Taskloom and finishes on its own (rule 9).
+# Business rules stay in Taskloom.
 
 runner.default:
   config:

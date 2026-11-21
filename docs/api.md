@@ -50,7 +50,7 @@
 | GET/PATCH /space | 读取；管理员更新 Name、Description、ExpectedVersion，响应为当前空间 |
 | GET/POST /projects、PATCH /projects/{id} | 目录、创建（Name、Description、Owner）与编辑/归档（另带 Archived、ExpectedVersion）；管理员或项目负责人可编辑；写入响应为该项目当前状态，回执只存项目 ID |
 | GET /people | 有效成员目录（Subject、Kind、OwnerID），任一有效成员（含 Agent）可读；`?q=` 按 Subject 片段搜索、`kind=human\|agent`、按 Subject 分页（`after`，`limit` 默认 50、最多 200），返回 `{Items, Next}`；供选项目负责人、处理人、参与者和被提问人，不按任务过滤 |
-| GET/POST /tasks | 当前可读任务列表；创建（Title、Goal、Criteria、可选 ProjectID；可选 ParentID 与 Required 直接建为子任务，同一事务内创建并放置，需父任务调整子任务的资格，任一步失败都不留下任务；只传 Required 不传 ParentID 返回 400），响应为调用者此刻读到的任务详情 |
+| GET/POST /tasks | 当前可读任务列表（不含时间线；可用 `?id=` 限定，见[变化补拉](#变化补拉)）；创建（Title、Goal、Criteria、可选 ProjectID；可选 ParentID 与 Required 直接建为子任务，同一事务内创建并放置，需父任务调整子任务的资格，任一步失败都不留下任务；只传 Required 不传 ParentID 返回 400），响应为调用者此刻读到的任务详情 |
 | GET/PATCH /tasks/{id} | 详情与 commit 分页（`?after=<Sequence>`，每页 100）；修改约定（Title、Goal、Criteria、BasisVersion），响应为当前任务详情 |
 | POST /tasks/{id}/commits | 评论或更正（Body、可选 RefID，只能引用自己的评论；可选 Files、Links，见[文件](#文件)，三者至少一项）；响应为 `{TaskID, CommitID}`，重放返回同一 CommitID；已失效执行的 Agent 实例返回 409，见[写入隔离](core-contracts.md#执行与写入隔离) |
 | POST /tasks/{id}/participants | 负责人或管理员加入/移出参与者（Subject、Present） |
@@ -87,6 +87,8 @@
 
 `GET /v1/overview` 为调用者可读的每个任务给出列表所需的推导事实：`Assignee`（当前处理人）、`ParentID`（直接父任务；ID 不是秘密，标题只在可读时由调用者自己的列表得到）、`UpdatedAt`（时间线最后一条 commit 的时间）。不保存，每次读取时推导。
 
+`GET /tasks`、`/inbox`、`/overview` 都接受重复的 `?id=<任务ID>`（最多 100 个，空值 400），只返回这些任务中调用者可读的部分；不存在与不可读一样不出现，所以按 ID 读不比读全表多透露任何信息。
+
 ## 文件
 
 规则见[核心契约](core-contracts.md#文件与链接)。
@@ -107,7 +109,7 @@
 2. 读取任务列表和快照。
 3. 之后用 `GET /v1/changes?cursor=<游标>` 补拉，每次返回新游标。
 
-游标就是事件序号。每条事件读取时重新鉴权，因此游标本身不授予任何访问，无需签名或过期；事件当前不清理。Change 只含变更类型与任务 ID：`task.changed`（调用者可读的任务有变化，重读快照）或 `access.changed`（成员、参与者、空间、项目变化，重读列表）。不推送正文或未授权摘要。工作台每 4 秒补拉一次；重复变化按 ID 重读即可。WebSocket 尚未实现。
+游标就是事件序号。每条事件读取时重新鉴权，因此游标本身不授予任何访问，无需签名或过期；事件当前不清理。Change 只含变更类型与任务 ID：`task.changed`（调用者可读的任务有变化，重读快照）或 `access.changed`（成员、参与者、空间、项目变化，重读列表）。不推送正文或未授权摘要。工作台每 4 秒补拉一次：只有 `task.changed` 时用 `?id=` 重读这些任务（超过 100 个时整表重读），回答里缺席的任务从各列表移除；出现 `access.changed` 时整表重读。重复变化按 ID 重读即可。WebSocket 尚未实现。
 
 ## 工作台
 

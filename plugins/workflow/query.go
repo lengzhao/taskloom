@@ -197,14 +197,14 @@ func (s *Query) relations(ctx context.Context, p identity.Principal, t task.Task
 
 // Inbox derives "waiting on me" from the same facts as Read; it keeps no
 // separate inbox records, so it cannot drift from the task's real state.
-func (s *Query) Inbox(ctx context.Context, token string) ([]api.Pending, error) {
+func (s *Query) Inbox(ctx context.Context, token string, ids []string) ([]api.Pending, error) {
 	out := []api.Pending{}
 	e := s.d.Transactions.Do(ctx, func(tx context.Context) error {
 		p, e := s.d.Identity.Authenticate(tx, token)
 		if e != nil {
 			return e
 		}
-		ts, e := s.d.Tasks.ListTasks(tx, p.Tenant)
+		ts, e := task.Pick(tx, s.d.Tasks, p.Tenant, ids)
 		if e != nil {
 			return e
 		}
@@ -231,14 +231,14 @@ func (s *Query) Inbox(ctx context.Context, token string) ([]api.Pending, error) 
 
 // Overview reads, for every task the caller may read, the facts a list shows
 // beside the task. Nothing is stored for it.
-func (s *Query) Overview(ctx context.Context, token string) ([]api.Overview, error) {
+func (s *Query) Overview(ctx context.Context, token string, ids []string) ([]api.Overview, error) {
 	out := []api.Overview{}
 	e := s.d.Transactions.Do(ctx, func(tx context.Context) error {
 		p, e := s.d.Identity.Authenticate(tx, token)
 		if e != nil {
 			return e
 		}
-		ts, e := s.d.Tasks.ListTasks(tx, p.Tenant)
+		ts, e := task.Pick(tx, s.d.Tasks, p.Tenant, ids)
 		if e != nil {
 			return e
 		}

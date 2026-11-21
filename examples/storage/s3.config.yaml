@@ -1,0 +1,11 @@
+# File bytes in an S3-compatible bucket instead of the local directory.
+# Credentials come from AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY (or the
+# instance IAM role), never from this file. Configure the bucket to abort
+# incomplete multipart uploads (e.g. after 1 day).
+blobs:
+  use: storage/s3
+  config:
+    endpoint: s3.amazonaws.com
+    region: us-east-1
+    bucket: my-taskloom-files
+    prefix: taskloom/

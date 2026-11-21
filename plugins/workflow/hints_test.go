@@ -69,7 +69,7 @@ func TestInboxListsOnlyTasksWaitingOnCaller(t *testing.T) {
 	}
 	inbox := func(token string) map[string]api.Actor {
 		t.Helper()
-		items, e := f.query.Inbox(f.ctx, token)
+		items, e := f.query.Inbox(f.ctx, token, nil)
 		if e != nil {
 			t.Fatal(e)
 		}
@@ -159,7 +159,7 @@ func TestApprovedTaskLeavesTheAgentInbox(t *testing.T) {
 	if s = f.read(t, d.Task.ID); s.Position.Status != "completed" || s.NextActor != "" {
 		t.Fatal("approved task", s.Position.Status, s.NextActor)
 	}
-	if items, e := f.query.Inbox(f.ctx, f.agent); e != nil || len(items) != 0 {
+	if items, e := f.query.Inbox(f.ctx, f.agent, nil); e != nil || len(items) != 0 {
 		t.Fatal("agent inbox should be empty", items, e)
 	}
 }

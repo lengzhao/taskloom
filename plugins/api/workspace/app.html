@@ -245,6 +245,7 @@ const $ = id => document.getElementById(id);
 const prefix = location.pathname.replace(/\/app$/, '');
 const retryKeys = new Map();
 let selected = '', cursor = '', busy = false, pendingRefresh = false, view = 'mine';
+const pendingIDs = new Set(); // changed tasks not yet re-read
 let inboxIDs = new Set(); // tasks currently waiting on the signed-in user
 let blockedMine = new Set(); // the user's own tasks waiting on required subtasks
 let expandBasis = ''; // a task created incomplete keeps its agreement editor open
@@ -372,12 +373,30 @@ let spaceInfo=null, projects=[], projectID='', taskCache=[], inboxMap=new Map(),
 async function list() {
  const [tasks,inbox,ps,sp,ov]=await Promise.all([api('/tasks'),api('/inbox'),api('/projects'),api('/space'),api('/overview')]);
  taskCache=tasks;overview=new Map(ov.map(x=>[x.TaskID,x]));projects=ps;spaceInfo=sp;inboxMap=new Map(inbox.filter(x=>!x.WaitingOnSubtasks).map(x=>[x.TaskID,x.NextActor]));inboxIDs=new Set(inboxMap.keys());blockedMine=new Set(inbox.filter(x=>x.WaitingOnSubtasks).map(x=>x.TaskID));
+ pendingIDs.clear();
+ render();
+}
+// refresh re-reads only the named tasks (at most 100) and merges them; a task
+// missing from the answer is no longer readable and leaves every list.
+async function refresh(ids) {
+ const q=ids.map(id=>'id='+encodeURIComponent(id)).join('&');
+ const [tasks,inbox,ov]=await Promise.all([api('/tasks?'+q),api('/inbox?'+q),api('/overview?'+q)]);
+ const gone=new Set(ids);
+ taskCache=taskCache.filter(d=>!gone.has(d.Task.ID)).concat(tasks).sort((a,b)=>a.Task.ID<b.Task.ID?-1:a.Task.ID>b.Task.ID?1:0);
+ for(const id of ids){overview.delete(id);inboxMap.delete(id);blockedMine.delete(id)}
+ for(const x of ov)overview.set(x.TaskID,x);
+ for(const x of inbox){if(x.WaitingOnSubtasks)blockedMine.add(x.TaskID);else inboxMap.set(x.TaskID,x.NextActor)}
+ inboxIDs=new Set(inboxMap.keys());
+ render();
+}
+function render() {
+ const sp=spaceInfo;
  $('space-name').textContent=sp.Name;$('mine-count').hidden=!inboxMap.size;$('mine-count').textContent=inboxMap.size;
  for(const name of ['mine','all','projects','space'])$('tab-'+name).classList.toggle('on',view===name);
  const prev=$('project-filter').value;projectOptions($('project-filter'),true);$('project-filter').value=prev;
  const createPrev=$('create-project').value;projectOptions($('create-project'),false);$('create-project').value=projectID||createPrev;if(!$('create-project').value)$('create-project').value='';
  renderBrowse();
- if(selected&&!tasks.some(d=>d.Task.ID===selected)){selected='';notice('任务访问权限已变更')}
+ if(selected&&!taskCache.some(d=>d.Task.ID===selected)){selected='';notice('任务访问权限已变更')}
  $('browse').hidden=!!selected;$('detail-shell').hidden=!selected;
 }
 function projectOptions(select,filter=false,current=''){
@@ -1100,17 +1119,22 @@ setInterval(async () => {
   try {
     const p = await api('/changes?cursor=' + encodeURIComponent(cursor));
     cursor = p.Cursor;
-    pendingRefresh = pendingRefresh || p.Changes.length > 0;
+    // A task change re-reads that task only; membership, space or project
+    // changes (access.changed) re-read everything.
+    for (const c of p.Changes) {
+      if (c.Kind === 'task.changed' && c.TaskID) pendingIDs.add(c.TaskID); else pendingRefresh = true;
+    }
+    const due = pendingRefresh || pendingIDs.size > 0;
     const editing = document.activeElement?.matches('input,textarea,select') || (view==='space') || $('create-box').open;
-    if (pendingRefresh && !editing && !document.querySelector('dialog[open]')) {
-      await list();
+    if (due && !editing && !document.querySelector('dialog[open]')) {
+      if (pendingRefresh || pendingIDs.size > 100) await list(); else await refresh([...pendingIDs]);
       if (selected) await show();
-      pendingRefresh = false;
+      pendingRefresh = false; pendingIDs.clear();
     } else if (selected) {
       const state = await api('/tasks/' + encodeURIComponent(selected) + '/workflow');
       const live = $('execution-live-status');
       if (live) live.textContent = '实时：' + (state.Assignee || '待分配') + (state.Execution ? ' · ' + execLabel(state.Execution, state.Position) : '');
-      if (pendingRefresh && editing) notice('任务有新变化，已保留你的输入；完成编辑后刷新。');
+      if (due && editing) notice('任务有新变化，已保留你的输入；完成编辑后刷新。');
     }
   } catch (e) {
     cursor = '';

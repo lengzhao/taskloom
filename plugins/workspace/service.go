@@ -226,17 +226,25 @@ func (s *Service) Comment(ctx context.Context, token, key string, in api.Comment
 	}
 	return out, e
 }
-func (s *Service) detail(ctx context.Context, p identity.Principal, t task.Task, after int64) (api.Detail, error) {
-	var d api.Detail
+
+// summary is a task as a list shows it: no timeline is read.
+func (s *Service) summary(ctx context.Context, p identity.Principal, t task.Task) (api.Detail, error) {
 	if e := s.d.Authorization.Check(ctx, p, "task.read", t.ID); e != nil {
-		return d, e
+		return api.Detail{}, e
 	}
 	pos, e := s.d.Flow.Read(ctx, t)
 	if e != nil {
+		return api.Detail{}, e
+	}
+	return api.Detail{Task: t, Position: pos, CanEdit: s.allowed(ctx, p, "task.edit", t.ID), CanComment: s.allowed(ctx, p, "commit.append", t.ID)}, nil
+}
+func (s *Service) detail(ctx context.Context, p identity.Principal, t task.Task, after int64) (api.Detail, error) {
+	d, e := s.summary(ctx, p, t)
+	if e != nil {
 		return d, e
 	}
-	cs, e := s.d.Commits.List(ctx, t.Tenant, t.ID, after, 100)
-	return api.Detail{Task: t, Position: pos, Commits: cs, CanEdit: s.allowed(ctx, p, "task.edit", t.ID), CanComment: s.allowed(ctx, p, "commit.append", t.ID)}, e
+	d.Commits, e = s.d.Commits.List(ctx, t.Tenant, t.ID, after, 100)
+	return d, e
 }
 func (s *Service) Get(ctx context.Context, token, id string, after int64) (api.Detail, error) {
 	var out api.Detail
@@ -257,26 +265,25 @@ func (s *Service) Get(ctx context.Context, token, id string, after int64) (api.D
 	})
 	return out, e
 }
-func (s *Service) List(ctx context.Context, token string) ([]api.Detail, error) {
+func (s *Service) List(ctx context.Context, token string, ids []string) ([]api.Detail, error) {
 	out := []api.Detail{}
 	e := s.d.Transactions.Do(ctx, func(tx context.Context) error {
 		p, e := s.actor(tx, token)
 		if e != nil {
 			return e
 		}
-		ts, e := s.d.Tasks.ListTasks(tx, p.Tenant)
+		ts, e := task.Pick(tx, s.d.Tasks, p.Tenant, ids)
 		if e != nil {
 			return e
 		}
 		for _, t := range ts {
-			d, e := s.detail(tx, p, t, 0)
+			d, e := s.summary(tx, p, t)
 			if errors.Is(e, az.ErrForbidden) {
 				continue
 			}
 			if e != nil {
 				return e
 			}
-			d.Commits = nil
 			out = append(out, d)
 		}
 		return nil

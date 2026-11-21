@@ -174,7 +174,9 @@ type Queries interface {
 	Read(ctx context.Context, token, taskID string) (Snapshot, error)
 	// Inbox lists readable active tasks currently waiting on the caller, then
 	// the caller's own tasks marked WaitingOnSubtasks with no NextActor.
-	Inbox(ctx context.Context, token string) ([]Pending, error)
+	// ids, when given, limits Inbox and Overview to those tasks (at most
+	// task.MaxPick), so a client can refresh only the tasks that changed.
+	Inbox(ctx context.Context, token string, ids []string) ([]Pending, error)
 	// Overview lists every task the caller may read, for the task list.
-	Overview(ctx context.Context, token string) ([]Overview, error)
+	Overview(ctx context.Context, token string, ids []string) ([]Overview, error)
 }

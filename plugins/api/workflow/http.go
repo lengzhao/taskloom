@@ -86,9 +86,9 @@ func (m *Module) serve(w http.ResponseWriter, r *http.Request) {
 		in.TaskID, in.QuestionID = taskID, r.PathValue("qid")
 		result, err = m.after(ctx, token, taskID)(m.d.Questions.Close(ctx, token, key, in))
 	case strings.HasSuffix(path, "/overview"):
-		result, err = m.d.Workflow.Overview(ctx, token)
+		result, err = m.d.Workflow.Overview(ctx, token, r.URL.Query()["id"])
 	case strings.HasSuffix(path, "/inbox"):
-		result, err = m.d.Workflow.Inbox(ctx, token)
+		result, err = m.d.Workflow.Inbox(ctx, token, r.URL.Query()["id"])
 	case strings.HasSuffix(path, "/workflow"):
 		result, err = m.d.Workflow.Read(ctx, token, taskID)
 	case strings.HasSuffix(path, "/execution/assign"):

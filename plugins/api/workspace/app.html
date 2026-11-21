@@ -460,6 +460,7 @@ function projectOptions(select,filter=false,current=''){
  const none=el('option','未归属项目');none.value=filter?'none':'';select.append(none);
  for(const p of projects.filter(p=>filter||!p.Archived||p.ID===current)){const o=el('option',p.Name+(p.Archived?'（已归档）':''));o.value=p.ID;select.append(o)}
 }
+const memberText=p=>'成员 '+((p.Members||[]).join('、')||'无');
 function counts(id){const ts=taskCache.filter(d=>d.Task.ProjectID===id);const done=ts.filter(d=>d.Position.Status==='completed').length;const cancelled=ts.filter(d=>d.Position.Status==='cancelled').length;return `可见任务 ${ts.length} · 完成 ${done} · 未完成 ${ts.length-done-cancelled} · 取消 ${cancelled}`}
 function renderBrowse(){
  const root=$('catalog-content');root.replaceChildren();$('task-area').hidden=view==='projects'||view==='space';
@@ -483,14 +484,14 @@ function renderBrowse(){
   const grid=h('div','project-grid');root.append(grid);
   for(const p of projects.filter(p=>showArchived||!p.Archived)){
    const card=button('',async()=>{view='project';projectID=p.ID;selected='';await list() },'project-card');
-   card.append(el('strong',p.Name+(p.Archived?' · 已归档':'')),el('p',p.Description||'尚未填写项目说明','muted small'),el('p','负责人 '+p.Owner,'small'),el('p',counts(p.ID),'small'));grid.append(card)
+   card.append(el('strong',p.Name+(p.Archived?' · 已归档':'')),el('p',p.Description||'尚未填写项目说明','muted small'),el('p','负责人 '+p.Owner+' · '+memberText(p),'small'),el('p',counts(p.ID),'small'));grid.append(card)
   }
   if(!grid.children.length)grid.append(el('p','还没有项目。你也可以直接在“全部任务”中创建任务。','empty'));
   return;
  }
  if(view==='project'){
   const p=projects.find(p=>p.ID===projectID);if(!p){view='projects';renderBrowse();return}
-  $('page-title').textContent=p.Name;root.append(el('p',p.Description||'尚未填写项目说明','muted'),el('p','负责人 '+p.Owner+' · 成员 '+((p.Members||[]).join('、')||'无')+' · '+counts(p.ID),'small'));
+  $('page-title').textContent=p.Name;root.append(el('p',p.Description||'尚未填写项目说明','muted'),el('p','负责人 '+p.Owner+' · '+memberText(p)+' · '+counts(p.ID),'small'));
   const actions=h('div','actions',button('← 所有项目',async()=>{view='projects';projectID='';await list()}));root.append(actions);
   if(viewer.CanAdmin||p.Owner===viewer.Subject){
    actions.append(button('编辑项目',()=>openProject(p)),button(p.Archived?'恢复项目':'归档项目',()=>confirmThen(p.Archived?'恢复后可以向项目添加任务。继续？':'归档后不能新增或移入任务，已有任务及历史保留。继续？',async()=>{await api('/projects/'+p.ID,'PATCH',{Name:p.Name,Description:p.Description,Owner:p.Owner,Members:p.Members||[],Archived:!p.Archived,ExpectedVersion:p.Version});await list()})))
@@ -528,6 +529,10 @@ async function openProject(p=null){
  const owner=$('project-owner');owner.replaceChildren();for(const m of people.filter(m=>m.Kind==='human')){const o=el('option',m.Subject);o.value=m.Subject;owner.append(o)}owner.value=p?.Owner||viewer.Subject;
  const box=$('project-members');box.replaceChildren();const current=new Set(p?.Members||[]);
  for(const m of people){const c=el('input');c.type='checkbox';c.value=m.Subject;c.checked=current.has(m.Subject);c.style.width='auto';const l=el('label','',null);l.style.display='inline-flex';l.style.gap='4px';l.style.marginRight='14px';l.append(c,document.createTextNode(m.Subject+(m.Kind==='agent'?' · Agent':'')));box.append(l)}
+ // The owner already belongs to the project, so their own box is hidden (and
+ // left out on save); a tick survives switching the owner back and forth.
+ const sync=()=>{for(const c of box.querySelectorAll('input'))c.parentElement.hidden=c.value===owner.value};
+ owner.onchange=sync;sync();
  $('project-dialog').showModal();
 }
 $('project-close').onclick=()=>$('project-dialog').close();

@@ -276,3 +276,29 @@ func TestReceiveStopsWithContext(t *testing.T) {
 		t.Fatal("Receive returned without an event or error")
 	}
 }
+
+// A parent blocked on its required subtasks leaves the inbox; when the last
+// one completes it waits on the Agent again with no new commit of its own,
+// and that re-entry wakes the Agent to deliver.
+func TestReturningToTheInboxWakesWithoutNewCommits(t *testing.T) {
+	f := newFake()
+	f.set(func() { f.inbox = []pending{{TaskID: "P", NextActor: "assignee"}} })
+	p := newTestPlatform(t, f)
+	next(t, p, 1)
+	f.set(func() { f.inbox = []pending{{TaskID: "P", WaitingOnSubtasks: true}} })
+	f.commit("P", "bot", "plan.changed", "split")
+	if _, text := next(t, p, 2); text != "" {
+		t.Fatalf("woke while blocked: %q", text)
+	}
+	f.set(func() {
+		f.inbox = []pending{{TaskID: "P", NextActor: "assignee"}}
+		f.events = append(f.events, change{TaskID: "P", Kind: "task.changed"})
+	})
+	if _, text := next(t, p, 2); !strings.Contains(text, "任务 P") {
+		t.Fatalf("return to the inbox did not wake: %q", text)
+	}
+	f.set(func() { f.events = append(f.events, change{TaskID: "P", Kind: "task.changed"}) })
+	if _, text := next(t, p, 2); text != "" {
+		t.Fatalf("woke again while still waiting: %q", text)
+	}
+}

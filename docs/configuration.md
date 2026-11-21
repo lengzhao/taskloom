@@ -28,7 +28,7 @@ SQL resource 由 server 打开和关闭。支持范围以实际编入并验证�
 
 ## 文件存储配置
 
-`blobs`（storage/fs）的 `dir` 是文件字节目录，默认 `taskloom-files`（相对工作目录），由 server 作为 resource 打开（创建目录）；Docker 镜像放在 `/data/files`。`files.config.maxBytes` 是单个文件上限（默认 104857600，即 100MiB），`file-api.config.transferTimeout` 是一次上传或下载的读写时限（默认 10m）。一个目录只由一个进程打开，打开时清理上次中断留下的临时文件。与数据库的一致性及备份要求见[文件与链接](core-contracts.md#文件与链接)。S3 适配尚未实现，届时以同一 `cap/blob` 接口替换 `blobs` 节点。
+`blobs`（storage/fs）的 `dir` 是文件字节目录，默认 `taskloom-files`（相对工作目录），由 server 作为 resource 打开（创建目录）；Docker 镜像放在 `/data/files`。`files.config.maxBytes` 是单个文件上限（默认 104857600，即 100MiB），`file-api.config.transferTimeout` 是一次上传或下载的读写时限（默认 10m）。一个目录只由一个进程打开，打开时清理上次中断留下的临时文件。与数据库的一致性及备份要求见[文件与链接](core-contracts.md#文件与链接)。改用 S3 兼容存储时以同一 `cap/blob` 接口整节点替换 `blobs`，见[开发说明](development.md#文件存储)。
 
 `http.config.origin`、loginTenant、Cookie 与生产 HTTPS 配置见 [API](api.md#通用约定)。
 

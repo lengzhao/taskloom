@@ -20,6 +20,25 @@ type Create struct {
 	Required                                   bool   `json:",omitempty"`
 }
 
+// Handover makes Owner, an active person, responsible for the task. It pins
+// SeenOwner, the owner the caller saw, so two handovers cannot both apply.
+type Handover struct {
+	TaskID, Owner, SeenOwner, Reason string
+}
+
+// KindOwnerChanged is the timeline commit of a handover; its body is the
+// JSON of OwnerChange.
+const KindOwnerChanged = "task.owner"
+
+type OwnerChange struct {
+	From, To, Reason string
+}
+
+// Ownership hands a task over to another responsible person.
+type Ownership interface {
+	Handover(ctx context.Context, credential, idempotencyKey string, value Handover) (Ref, error)
+}
+
 // ProjectMove only re-files a task; the last move wins and pins no version.
 type ProjectMove struct{ TaskID, ProjectID string }
 
@@ -28,6 +47,7 @@ type Edit struct {
 	TaskID, Title, Goal, Criteria string
 	BasisVersion                  int64
 }
+
 // Comment may carry files of the same task and links; Body may then be empty.
 type Comment struct {
 	TaskID, Body, RefID string
@@ -68,6 +88,7 @@ type Viewer struct {
 	Tenant, Subject, Kind string
 	CanAdmin              bool
 }
+
 // PeoplePage is one page of the member directory; Next, when set, is the
 // After of the following page.
 type PeoplePage struct {

@@ -51,9 +51,11 @@ type MemberOption struct{ Subject, Kind, OwnerID string }
 // MemberQuery narrows and pages the active member directory, which is ordered
 // by subject. Search matches part of the subject; Kind is human, agent or empty
 // for both; After is the last subject of the previous page; Limit 0 lists all.
+// MemberQuery filters active members. Subject matches one member exactly;
+// Search matches any part of the subject.
 type MemberQuery struct {
-	Search, Kind, After string
-	Limit               int
+	Subject, Search, Kind, After string
+	Limit                        int
 }
 
 // MemberDirectory is the read-only capability needed by task member selectors.

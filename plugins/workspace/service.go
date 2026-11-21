@@ -129,7 +129,7 @@ func (s *Service) Create(ctx context.Context, token, key string, in api.Create) 
 		if e != nil {
 			return nil, e
 		}
-		if e := s.projectOpen(tx, p.Tenant, in.ProjectID); e != nil {
+		if e := s.projectOpen(tx, p, in.ProjectID); e != nil {
 			return nil, e
 		}
 		t := task.Task{ProjectID: in.ProjectID, Tenant: p.Tenant, ID: id(), Title: in.Title, Goal: in.Goal, Criteria: in.Criteria, Owner: owner, BasisVersion: 1}
@@ -198,14 +198,12 @@ func (s *Service) creation(ctx context.Context, p identity.Principal, in api.Cre
 	if in.Owner == "" {
 		return owner, held, nil
 	}
-	people, e := s.d.Members.ListActiveMembers(ctx, p.Tenant, az.MemberQuery{Search: in.Owner, Kind: "human"})
+	people, e := s.d.Members.ListActiveMembers(ctx, p.Tenant, az.MemberQuery{Subject: in.Owner, Kind: "human"})
 	if e != nil {
 		return "", nil, e
 	}
-	for _, m := range people {
-		if m.Subject == in.Owner {
-			return in.Owner, held, nil
-		}
+	if len(people) == 1 {
+		return in.Owner, held, nil
 	}
 	return "", nil, fault.ErrInput
 }
@@ -499,23 +497,30 @@ func (s *Service) Members(ctx context.Context, token string) ([]az.DirectoryMemb
 	return out, e
 }
 
-func (s *Service) projectOpen(ctx context.Context, tenant, id string) error {
+// projectOpen checks that p may file a task under project id: the project is
+// not archived, and access allows project.file (filing shares the task with
+// the project's people).
+func (s *Service) projectOpen(ctx context.Context, p identity.Principal, id string) error {
 	if id == "" {
 		return nil
 	}
-	p, e := s.d.Catalog.GetProject(ctx, tenant, id)
+	project, e := s.d.Catalog.GetProject(ctx, p.Tenant, id)
 	if e != nil {
 		return e
 	}
-	if p.Archived {
+	if project.Archived {
 		return fault.ErrConflict
 	}
-	return nil
+	return s.d.Authorization.Check(ctx, p, "project.file", id)
 }
 
 func (s *Service) SetProject(ctx context.Context, token, key string, in api.ProjectMove) error {
 	_, e := command.Run(ctx, s.d.Commands, capcommand.Request{Token: token, Key: key, Operation: "task.project", Resource: in.TaskID}, in, func(tx context.Context, p identity.Principal) ([]byte, error) {
-		if e := s.projectOpen(tx, p.Tenant, in.ProjectID); e != nil {
+		if e := s.projectOpen(tx, p, in.ProjectID); e != nil {
+			return nil, e
+		}
+		before, e := s.d.Tasks.GetTask(tx, p.Tenant, in.TaskID)
+		if e != nil {
 			return nil, e
 		}
 		t, e := s.d.Tasks.SetProject(tx, p.Tenant, in.TaskID, in.ProjectID)
@@ -524,6 +529,12 @@ func (s *Service) SetProject(ctx context.Context, token, key string, in api.Proj
 		}
 		if _, e = s.append(tx, p, t, "task.project", in.ProjectID, ""); e != nil {
 			return nil, e
+		}
+		// Leaving a project may take the task away from its people, which a
+		// per-task change cannot tell them, so everyone re-reads access. Filing
+		// only adds readers, and the task change reaches them once they can read.
+		if before.ProjectID != "" && before.ProjectID != t.ProjectID {
+			return nil, s.d.Events.AppendEvent(tx, record.Event{Tenant: t.Tenant, Resource: t.ID, Kind: record.EventAccessChanged})
 		}
 		return nil, s.event(tx, t)
 	})

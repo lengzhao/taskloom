@@ -139,7 +139,7 @@ ul.attachments.chosen li { margin: 2px 0 }
 <body>
 <header>
   <h1>Taskloom <span>/</span> 工作台</h1>
-  <div class="actions" style="margin:0"><button id="account-password" hidden>修改密码</button><button id="logout" hidden>退出</button></div>
+  <div class="actions" style="margin:0"><button id="desktop-notify" hidden>开启桌面通知</button><button id="account-password" hidden>修改密码</button><button id="logout" hidden>退出</button></div>
 </header>
 <div id="notice" role="status" aria-live="polite"></div>
 
@@ -197,6 +197,7 @@ ul.attachments.chosen li { margin: 2px 0 }
   <label>项目名称<input id="project-name" required maxlength="200"></label>
   <label>项目目标与说明<textarea id="project-description" maxlength="20000"></textarea></label>
   <label>项目负责人<select id="project-owner" required></select></label>
+  <fieldset id="project-members-box" style="border:1px solid var(--line);border-radius:var(--radius);padding:8px 12px"><legend class="small">项目成员（可读项目内全部任务并留言、提问；可以是用户或 Agent）</legend><div id="project-members"></div></fieldset>
   <div class="actions"><button class="primary">保存项目</button></div>
  </form>
 </dialog>
@@ -238,7 +239,7 @@ const REASON_LABEL = {
 };
 const execLabel = (ex, pos) => pos && pos.Status !== 'active' ? '任务已结束' : ex.Writable ? '进行中' : '已失效（不能再写入）';
 const OUTCOME_LABEL = { pending: '待验收', approved: '已通过', rejected: '未通过' };
-const KIND_LABEL = { comment: '留言', result: '结果', question: '提问', answer: '回答', 'review.approved': '验收通过', 'review.rejected': '验收退回', 'task.created': '创建任务', 'task.basis': '修改约定', 'plan.changed': '调整子任务', 'question.closed': '关闭问题' };
+const KIND_LABEL = { 'task.owner': '移交负责人', comment: '留言', result: '结果', question: '提问', answer: '回答', 'review.approved': '验收通过', 'review.rejected': '验收退回', 'task.created': '创建任务', 'task.basis': '修改约定', 'plan.changed': '调整子任务', 'question.closed': '关闭问题' };
 
 // ---------- State ----------
 const $ = id => document.getElementById(id);
@@ -302,7 +303,9 @@ async function api(path, method = 'GET', data, headers = {}) {
     headers: { 'Content-Type': 'application/json', 'X-Taskloom-Request': '1', ...(method === 'GET' ? {} : { 'Idempotency-Key': requestKey }), ...headers },
     ...(data ? { body: JSON.stringify(data) } : {}),
   });
-  return answer(r, fingerprint);
+  const out = await answer(r, fingerprint);
+  if (method !== 'GET') wrote(path, out);
+  return out;
 }
 // upload sends one file's raw bytes; the same file keeps its key until answered.
 async function upload(path, file) {
@@ -352,6 +355,7 @@ function showLogin() {
   $('members-dialog').close();
   $('members-content').replaceChildren();
   selected = ''; cursor = ''; inboxIDs = new Set(); blockedMine = new Set();
+  freshIDs = new Set(); ownWrites = new Set(); inboxSeen = false; $('desktop-notify').hidden = true;
   $('detail').replaceChildren(h('div', 'panel empty', '选择左侧任务，或新建一个任务。'));
   $('tasks').replaceChildren();
   $('work').hidden = true; $('login').hidden = false; $('logout').hidden = true;
@@ -366,14 +370,63 @@ async function start() {
   view = (await api('/inbox')).length ? 'mine' : 'all';
   await list();
   $('work').hidden = false; $('login').hidden = true; $('logout').hidden = false;
+  $('desktop-notify').hidden = !('Notification' in window) || Notification.permission !== 'default';
+  // A shared link opens one task directly: /v1/app?task=<ID>.
+  const linked = new URLSearchParams(location.search).get('task');
+  if (linked) await openTask(linked);
 }
+
+// ---------- New work arriving ----------
+// Nothing is stored for this: the inbox is derived on the server, and a task
+// that enters it between two reads is new. Tasks this page itself just wrote
+// to are skipped on the next read of them, so nobody is told about their own move.
+let freshIDs = new Set(), ownWrites = new Set(), inboxSeen = false;
+const ARRIVAL_LABEL = { owner: '等你安排', assignee: '分配给你处理', reviewer: '等你验收', addressee: '有人向你提问' };
+function wrote(path, out) {
+  const m = path.match(/^\/tasks\/([^/?]+)/);
+  const id = m ? decodeURIComponent(m[1]) : out?.Task?.ID || out?.TaskID;
+  if (id) ownWrites.add(id);
+}
+// read lists the task IDs this inbox read covered; null means all of them.
+function arrivals(before, read) {
+  const covered = id => !read || read.includes(id);
+  const own = new Set([...ownWrites].filter(covered));
+  for (const id of own) ownWrites.delete(id);
+  if (!inboxSeen) { inboxSeen = true; return }
+  const fresh = [];
+  for (const [id, actor] of inboxMap) {
+    if (before.get(id) === actor || own.has(id) || (id === selected && !document.hidden)) continue;
+    freshIDs.add(id); fresh.push([id, actor]);
+  }
+  for (const id of freshIDs) if (!inboxMap.has(id)) freshIDs.delete(id);
+  if (!fresh.length) return;
+  const title = id => taskCache.find(d => d.Task.ID === id)?.Task.Title || '任务 ' + id;
+  notice('新的待处理：' + fresh.map(([id, a]) => '「' + title(id) + '」' + (ARRIVAL_LABEL[a] || '')).join('，'));
+  if (!('Notification' in window) || Notification.permission !== 'granted') return;
+  for (const [id, a] of fresh.slice(0, 3)) {
+    const n = new Notification('Taskloom · ' + (ARRIVAL_LABEL[a] || '等你处理'), { body: title(id), tag: 'taskloom-' + id + '-' + a });
+    n.onclick = () => { window.focus(); n.close(); handle(() => openTask(id))() };
+  }
+}
+async function openTask(id) {
+  await list();
+  if (!taskCache.some(d => d.Task.ID === id)) { notice('该任务不存在或你已无权查看'); return }
+  selected = id; render(); await show();
+}
+$('desktop-notify').onclick = handle(async () => {
+  const r = await Notification.requestPermission();
+  $('desktop-notify').hidden = true;
+  notice(r === 'granted' ? '已开启桌面通知：页面打开期间，有任务新开始等你时会弹出提醒。' : '浏览器未允许桌面通知。');
+});
 
 let spaceInfo=null, projects=[], projectID='', taskCache=[], inboxMap=new Map(), overview=new Map(), editingProject=null;
 // ---------- Task list ----------
 async function list() {
  const [tasks,inbox,ps,sp,ov]=await Promise.all([api('/tasks'),api('/inbox'),api('/projects'),api('/space'),api('/overview')]);
+ const before=inboxMap;
  taskCache=tasks;overview=new Map(ov.map(x=>[x.TaskID,x]));projects=ps;spaceInfo=sp;inboxMap=new Map(inbox.filter(x=>!x.WaitingOnSubtasks).map(x=>[x.TaskID,x.NextActor]));inboxIDs=new Set(inboxMap.keys());blockedMine=new Set(inbox.filter(x=>x.WaitingOnSubtasks).map(x=>x.TaskID));
  pendingIDs.clear();
+ arrivals(before, null);
  render();
 }
 // refresh re-reads only the named tasks (at most 100) and merges them; a task
@@ -381,12 +434,14 @@ async function list() {
 async function refresh(ids) {
  const q=ids.map(id=>'id='+encodeURIComponent(id)).join('&');
  const [tasks,inbox,ov]=await Promise.all([api('/tasks?'+q),api('/inbox?'+q),api('/overview?'+q)]);
+ const before=new Map(inboxMap);
  const gone=new Set(ids);
  taskCache=taskCache.filter(d=>!gone.has(d.Task.ID)).concat(tasks).sort((a,b)=>a.Task.ID<b.Task.ID?-1:a.Task.ID>b.Task.ID?1:0);
  for(const id of ids){overview.delete(id);inboxMap.delete(id);blockedMine.delete(id)}
  for(const x of ov)overview.set(x.TaskID,x);
  for(const x of inbox){if(x.WaitingOnSubtasks)blockedMine.add(x.TaskID);else inboxMap.set(x.TaskID,x.NextActor)}
  inboxIDs=new Set(inboxMap.keys());
+ arrivals(before, ids);
  render();
 }
 function render() {
@@ -405,6 +460,7 @@ function projectOptions(select,filter=false,current=''){
  const none=el('option','未归属项目');none.value=filter?'none':'';select.append(none);
  for(const p of projects.filter(p=>filter||!p.Archived||p.ID===current)){const o=el('option',p.Name+(p.Archived?'（已归档）':''));o.value=p.ID;select.append(o)}
 }
+const memberText=p=>'成员 '+((p.Members||[]).join('、')||'无');
 function counts(id){const ts=taskCache.filter(d=>d.Task.ProjectID===id);const done=ts.filter(d=>d.Position.Status==='completed').length;const cancelled=ts.filter(d=>d.Position.Status==='cancelled').length;return `可见任务 ${ts.length} · 完成 ${done} · 未完成 ${ts.length-done-cancelled} · 取消 ${cancelled}`}
 function renderBrowse(){
  const root=$('catalog-content');root.replaceChildren();$('task-area').hidden=view==='projects'||view==='space';
@@ -428,17 +484,17 @@ function renderBrowse(){
   const grid=h('div','project-grid');root.append(grid);
   for(const p of projects.filter(p=>showArchived||!p.Archived)){
    const card=button('',async()=>{view='project';projectID=p.ID;selected='';await list() },'project-card');
-   card.append(el('strong',p.Name+(p.Archived?' · 已归档':'')),el('p',p.Description||'尚未填写项目说明','muted small'),el('p','负责人 '+p.Owner,'small'),el('p',counts(p.ID),'small'));grid.append(card)
+   card.append(el('strong',p.Name+(p.Archived?' · 已归档':'')),el('p',p.Description||'尚未填写项目说明','muted small'),el('p','负责人 '+p.Owner+' · '+memberText(p),'small'),el('p',counts(p.ID),'small'));grid.append(card)
   }
   if(!grid.children.length)grid.append(el('p','还没有项目。你也可以直接在“全部任务”中创建任务。','empty'));
   return;
  }
  if(view==='project'){
   const p=projects.find(p=>p.ID===projectID);if(!p){view='projects';renderBrowse();return}
-  $('page-title').textContent=p.Name;root.append(el('p',p.Description||'尚未填写项目说明','muted'),el('p','负责人 '+p.Owner+' · '+counts(p.ID),'small'));
+  $('page-title').textContent=p.Name;root.append(el('p',p.Description||'尚未填写项目说明','muted'),el('p','负责人 '+p.Owner+' · '+memberText(p)+' · '+counts(p.ID),'small'));
   const actions=h('div','actions',button('← 所有项目',async()=>{view='projects';projectID='';await list()}));root.append(actions);
   if(viewer.CanAdmin||p.Owner===viewer.Subject){
-   actions.append(button('编辑项目',()=>openProject(p)),button(p.Archived?'恢复项目':'归档项目',()=>confirmThen(p.Archived?'恢复后可以向项目添加任务。继续？':'归档后不能新增或移入任务，已有任务及历史保留。继续？',async()=>{await api('/projects/'+p.ID,'PATCH',{Name:p.Name,Description:p.Description,Owner:p.Owner,Archived:!p.Archived,ExpectedVersion:p.Version});await list()})))
+   actions.append(button('编辑项目',()=>openProject(p)),button(p.Archived?'恢复项目':'归档项目',()=>confirmThen(p.Archived?'恢复后可以向项目添加任务。继续？':'归档后不能新增或移入任务，已有任务及历史保留。继续？',async()=>{await api('/projects/'+p.ID,'PATCH',{Name:p.Name,Description:p.Description,Owner:p.Owner,Members:p.Members||[],Archived:!p.Archived,ExpectedVersion:p.Version});await list()})))
   }
   if(p.Archived){root.append(el('p','项目已归档，已有任务仍可处理。','muted'));$('create-box').hidden=true}
  }
@@ -461,7 +517,7 @@ function renderTasks(){
   const project=projects.find(p=>p.ID===d.Task.ProjectID);
   const state=stateOf(d.Position,o.Assignee);
   const facts=[project?.Name||'未归属项目','处理人 '+(o.Assignee||'—'),o.UpdatedAt?'最近动态 '+ago(o.UpdatedAt):null].filter(Boolean).join(' · ');
-  b.append(el('strong',d.Task.Title),h('span','meta',pill(state),d.Position.WaitingOnSubtasks?el('span','阻塞：等待子任务','pill blocked'):null,inboxIDs.has(d.Task.ID)?el('span','等你：'+ACTOR_LABEL[inboxMap.get(d.Task.ID)],'pill mine'):null),
+  b.append(el('strong',d.Task.Title),h('span','meta',pill(state),d.Position.WaitingOnSubtasks?el('span','阻塞：等待子任务','pill blocked'):null,inboxIDs.has(d.Task.ID)?el('span','等你：'+ACTOR_LABEL[inboxMap.get(d.Task.ID)],'pill mine'):null,freshIDs.has(d.Task.ID)?el('span','新','pill mine'):null),
    el('p',facts,'muted small'));
   if(titles.has(o.ParentID))b.append(el('p','属于「'+titles.get(o.ParentID)+'」','muted small'));
   if(board)lanes.get(state.key).append(b);else nav.append(b);
@@ -471,16 +527,23 @@ function renderTasks(){
 async function openProject(p=null){
  editingProject=p;const people=await directory();$('project-form').reset();$('project-notice').textContent='';$('project-title').textContent=p?'编辑项目':'新建项目';$('project-name').value=p?.Name||'';$('project-description').value=p?.Description||'';
  const owner=$('project-owner');owner.replaceChildren();for(const m of people.filter(m=>m.Kind==='human')){const o=el('option',m.Subject);o.value=m.Subject;owner.append(o)}owner.value=p?.Owner||viewer.Subject;
+ const box=$('project-members');box.replaceChildren();const current=new Set(p?.Members||[]);
+ for(const m of people){const c=el('input');c.type='checkbox';c.value=m.Subject;c.checked=current.has(m.Subject);c.style.width='auto';const l=el('label','',null);l.style.display='inline-flex';l.style.gap='4px';l.style.marginRight='14px';l.append(c,document.createTextNode(m.Subject+(m.Kind==='agent'?' · Agent':'')));box.append(l)}
+ // The owner already belongs to the project, so their own box is hidden (and
+ // left out on save); a tick survives switching the owner back and forth.
+ const sync=()=>{for(const c of box.querySelectorAll('input'))c.parentElement.hidden=c.value===owner.value};
+ owner.onchange=sync;sync();
  $('project-dialog').showModal();
 }
 $('project-close').onclick=()=>$('project-dialog').close();
-$('project-form').onsubmit=handle(async()=>{const p=editingProject;const result=await api(p?'/projects/'+p.ID:'/projects',p?'PATCH':'POST',{Name:$('project-name').value,Description:$('project-description').value,Owner:$('project-owner').value,Archived:p?.Archived||false,ExpectedVersion:p?.Version||0});$('project-dialog').close();projectID=result.ID;view='project';selected='';await list();notice('项目已保存')});
+$('project-form').onsubmit=handle(async()=>{const p=editingProject;const result=await api(p?'/projects/'+p.ID:'/projects',p?'PATCH':'POST',{Name:$('project-name').value,Description:$('project-description').value,Owner:$('project-owner').value,Members:[...$('project-members').querySelectorAll('input:checked')].map(c=>c.value).filter(v=>v!==$('project-owner').value),Archived:p?.Archived||false,ExpectedVersion:p?.Version||0});$('project-dialog').close();projectID=result.ID;view='project';selected='';await list();notice('项目已保存')});
 for(const id of ['task-search','status-filter','project-filter','task-layout'])$(id).addEventListener(id==='task-search'?'input':'change',()=>renderTasks());
 for(const name of ['mine','all','projects','space'])$('tab-'+name).onclick=handle(async()=>{view=name;projectID='';selected='';await list()});
 $('detail-back').onclick=handle(async()=>{selected='';await list()});
 
 // ---------- Task detail ----------
 async function show() {
+  freshIDs.delete(selected);
   const path = '/tasks/' + encodeURIComponent(selected);
   const [d, w, files] = await Promise.all([api(path), api(path + '/workflow'), api(path + '/files')]);
   let commits = d.Commits || [];
@@ -777,6 +840,10 @@ function basisText(c) {
   return ['标题：' + (v.Title || ''), '目标：' + (v.Goal || '（空）'), '验收标准：' + (v.Criteria || '（空）')].join('\n');
 }
 
+// ownerText turns a task.owner body into words.
+function ownerText(c) {
+  try { const v = JSON.parse(c.Body); return v.From + ' → ' + v.To + (v.Reason ? '：' + v.Reason : '') } catch { return c.Body }
+}
 // planText turns a plan.changed body into words; titles come only from subtasks this viewer can read.
 function planText(c, d, w) {
   let v;
@@ -811,7 +878,7 @@ function renderTimeline({ d, w, path, files }, commits) {
     const li = h('li', c.Kind === 'result' ? 'result' : '',
       el('div', (KIND_LABEL[c.Kind] || c.Kind) + ' · ' + c.Author + ' · ' + time(c.CreatedAt), 'who'),
       (c.Kind === 'answer' || c.Kind === 'question.closed') && byID.has(c.RefID) ? el('div', (c.Kind === 'answer' ? '回答：' : '关闭的问题：') + byID.get(c.RefID).Body, 'muted small') : null,
-      c.Kind === 'result' ? (c.Body ? folded(c.Body) : null) : c.Body || c.Kind !== 'comment' ? el('p', c.Kind === 'plan.changed' ? planText(c, d, w) : c.Kind === 'task.basis' ? basisText(c) : c.Body) : null,
+      c.Kind === 'result' ? (c.Body ? folded(c.Body) : null) : c.Body || c.Kind !== 'comment' ? el('p', c.Kind === 'plan.changed' ? planText(c, d, w) : c.Kind === 'task.basis' ? basisText(c) : c.Kind === 'task.owner' ? ownerText(c) : c.Body) : null,
       attachmentsView(c, files, path),
       c.RefID && c.Kind === 'comment' ? el('code', '更正引用 ' + c.RefID, 'muted') : null);
     if (d.CanComment && c.Kind === 'comment' && c.Author === viewer?.Subject) {
@@ -963,10 +1030,24 @@ function renderParticipants({ d, w, path, candidates }) {
 // Cancelling is the only control on active work: results go back by review,
 // people change by reassigning, requirements by editing the basis.
 function renderManage(ctx) {
-  const { w, active, send } = ctx;
-  if (!w.CanManage || !active) return null;
-  return h('div', 'panel', el('h3', '任务控制'),
-    h('div', 'actions', button('取消任务', () => confirmThen('取消后当前执行立即失效，不能再写入；之后可重开为新一轮。继续？', () => send('/cancel', {})), 'danger')));
+  const { d, w, active, send, path, candidates } = ctx;
+  if (!w.CanManage) return null;
+  const panel = h('div', 'panel', el('h3', '任务控制'));
+  if (active) panel.append(h('div', 'actions', button('取消任务', () => confirmThen('取消后当前执行立即失效，不能再写入；之后可重开为新一轮。继续？', () => send('/cancel', {})), 'danger')));
+  // Handover: responsibility and review move to another person; the handler and work stay.
+  const people = (candidates || []).filter(m => m.Kind === 'human' && m.Subject !== d.Task.Owner);
+  if (people.length) {
+    const to = memberSelect(people, '选择新的负责人'), reason = el('input');
+    reason.placeholder = '移交原因（可选）'; reason.maxLength = 2000;
+    const form = h('form', null, field('移交负责人', to), field('原因', reason), h('div', 'actions', el('button', '移交')));
+    form.onsubmit = handle(() => confirmThen('移交后，' + to.value + ' 成为负责人并负责验收；你仍可查看任务。继续？', async () => {
+      await api(path + '/owner', 'POST', { Owner: to.value, SeenOwner: d.Task.Owner, Reason: reason.value });
+      await list(); if (taskCache.some(x => x.Task.ID === selected)) await show();
+      notice('已移交给 ' + to.value);
+    }));
+    panel.append(form);
+  }
+  return panel;
 }
 
 

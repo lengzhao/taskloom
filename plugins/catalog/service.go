@@ -168,14 +168,37 @@ func (s *Service) SaveProject(ctx context.Context, token, key string, in api.Pro
 		if e != nil {
 			return nil, e
 		}
-		found := false
+		kinds := map[string]string{}
 		for _, m := range members {
-			if m.Subject == owner && m.Kind == "human" {
-				found = true
-			}
+			kinds[m.Subject] = m.Kind
 		}
-		if !found {
+		if kinds[owner] != "human" {
 			return nil, fault.ErrInput
+		}
+		// Members may be people or Agents; the owner is already included.
+		if len(in.Members) > api.MaxMembers {
+			return nil, fault.ErrInput
+		}
+		// A member who has since left the tenant drops out on the next save,
+		// so a client resending the list it read is not refused; naming
+		// someone new who is not an active member still is.
+		listed := map[string]bool{}
+		for _, m := range old.Members {
+			listed[m] = true
+		}
+		included := []string{}
+		seen := map[string]bool{owner: true}
+		for _, m := range in.Members {
+			if kinds[m] == "" {
+				if listed[m] {
+					continue
+				}
+				return nil, fault.ErrInput
+			}
+			if !seen[m] {
+				seen[m] = true
+				included = append(included, m)
+			}
 		}
 		id := in.ID
 		if id == "" {
@@ -185,7 +208,7 @@ func (s *Service) SaveProject(ctx context.Context, token, key string, in api.Pro
 			}
 			id = hex.EncodeToString(b[:])
 		}
-		project := api.Project{Tenant: p.Tenant, ID: id, Name: strings.TrimSpace(in.Name), Description: in.Description, Owner: owner, Archived: in.Archived, Version: old.Version + 1}
+		project := api.Project{Tenant: p.Tenant, ID: id, Name: strings.TrimSpace(in.Name), Description: in.Description, Owner: owner, Members: included, Archived: in.Archived, Version: old.Version + 1}
 		if e = s.d.Store.SaveProject(tx, project); e != nil {
 			return nil, e
 		}

@@ -63,6 +63,9 @@ func (s *Store) ListActiveMembers(ctx context.Context, tenant string, q az.Membe
 		db = db.Table("member_rows AS m").Select("m.subject, p.kind, p.owner_id").
 			Joins("JOIN principal_rows AS p ON p.tenant = m.tenant AND p.subject = m.subject").
 			Where("m.tenant = ? AND m.active = ? AND m.role IN ? AND p.kind IN ?", tenant, true, []string{"member", "admin"}, kinds)
+		if q.Subject != "" {
+			db = db.Where("m.subject = ?", q.Subject)
+		}
 		if q.Search != "" {
 			db = db.Where("LOWER(m.subject) LIKE ? ESCAPE '\\'", "%"+likeEscape(strings.ToLower(q.Search))+"%")
 		}

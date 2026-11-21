@@ -5,6 +5,7 @@ go 1.27.3
 require (
 	github.com/lengzhao/agentkit v0.4.45
 	github.com/lengzhao/pluginkit v0.1.6
+	github.com/minio/minio-go/v7 v7.0.90
 	gopkg.in/yaml.v3 v3.0.1
 	gorm.io/driver/mysql v1.6.0
 	gorm.io/driver/postgres v1.6.0
@@ -19,10 +20,12 @@ require (
 	github.com/coder/acp-go-sdk v0.13.5 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/getkin/kin-openapi v0.149.0 // indirect
+	github.com/go-ini/ini v1.67.0 // indirect
 	github.com/go-logr/logr v1.4.4 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-openapi/jsonpointer v1.0.0 // indirect
 	github.com/go-sql-driver/mysql v1.8.1 // indirect
+	github.com/goccy/go-json v0.10.5 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/google/jsonschema-go v0.4.3 // indirect
 	github.com/google/uuid v1.6.0 // indirect
@@ -36,15 +39,20 @@ require (
 	github.com/jackc/puddle/v2 v2.2.2 // indirect
 	github.com/jinzhu/inflection v1.0.0 // indirect
 	github.com/jinzhu/now v1.1.5 // indirect
+	github.com/klauspost/compress v1.18.0 // indirect
+	github.com/klauspost/cpuid/v2 v2.2.10 // indirect
 	github.com/larksuite/oapi-sdk-go/v3 v3.11.0 // indirect
 	github.com/mark3labs/mcp-go v1.0.0 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/mattn/go-sqlite3 v1.14.22 // indirect
+	github.com/minio/crc64nvme v1.0.1 // indirect
+	github.com/minio/md5-simd v1.1.2 // indirect
 	github.com/ncruces/go-strftime v0.1.9 // indirect
 	github.com/oasdiff/yaml v0.1.1 // indirect
 	github.com/oasdiff/yaml3 v0.0.14 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/rogpeppe/go-internal v1.16.0 // indirect
+	github.com/rs/xid v1.6.0 // indirect
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3 // indirect
 	github.com/sashabaranov/go-openai v1.42.0 // indirect
 	github.com/slack-go/slack v0.29.0 // indirect
@@ -59,6 +67,7 @@ require (
 	go.opentelemetry.io/otel/sdk v1.47.0 // indirect
 	go.opentelemetry.io/otel/trace v1.47.0 // indirect
 	go.opentelemetry.io/proto/otlp v1.11.0 // indirect
+	golang.org/x/crypto v0.57.0 // indirect
 	golang.org/x/exp v0.0.0-20230315142452-642cacee5cc0 // indirect
 	golang.org/x/image v0.46.0 // indirect
 	golang.org/x/net v0.59.0 // indirect

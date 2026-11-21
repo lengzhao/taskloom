@@ -161,7 +161,6 @@ func toolList() []tool {
 		{"close_question", "撤回你提的、已不再需要回答的问题（open_questions 中 asked_by 为你的那条），须写明理由；撤回后它不再阻止任务完成。", schema([]string{"task_id", "question_id", "reason"}, map[string]string{"task_id": descTask, "question_id": "问题 ID（open_questions 中的 id）", "reason": "为什么不再需要回答"})},
 		{"submit_result", "明确提交本轮的正式结果（交付物），可带文件和链接。需要已认领执行；再次提交会替换当前结果。result、files、links 至少一项。", schema([]string{"task_id", "basis"}, map[string]string{"task_id": descTask, "basis": descBasis, "result": "结果正文", "files": descFiles, "links": descLinks})},
 		{"upload_file", "把一个文件上传到任务，返回 file_id，供 submit_result 或 post_message 的 files 引用；只上传不会出现在时间线中。text 与 content_base64 二选一。经本工具上传的内容上限约 700KB，更大的文件用 HTTP POST /v1/tasks/{id}/files 上传（同一凭据）。", schema([]string{"task_id", "name"}, map[string]string{"task_id": descTask, "name": "文件名，如 report.md", "text": "文本文件的内容（UTF-8）", "content_base64": "二进制文件内容的 base64", "media_type": "可选：如 text/markdown、image/png；留空按文件名推断"})},
-		{"delete_file", "删除你自己上传、但还没被任何留言或结果引用的文件（例如传错了）。已被引用的文件随记录永久保留，不能删除。", schema([]string{"task_id", "file_id"}, map[string]string{"task_id": descTask, "file_id": "文件 ID（upload_file 返回的 file_id）"})},
 		{"read_file", "读取任务中的一个文件（read_task 的 files 中列出）。UTF-8 文本直接返回内容，其他文件返回 base64；超过 512KB 时只返回元数据和 HTTP 下载路径。", schema([]string{"task_id", "file_id"}, map[string]string{"task_id": descTask, "file_id": "文件 ID"})},
 	}
 }
@@ -254,18 +253,6 @@ func (m *Module) call(ctx context.Context, c call, name string, rawArgs json.Raw
 		return "已撤回问题。", nil
 	case "upload_file":
 		return m.uploadFile(ctx, c, args)
-	case "delete_file":
-		if err := required(args, "task_id", "file_id"); err != nil {
-			return "", err
-		}
-		err := m.d.Files.Delete(ctx, c.token, c.key(name, args), args["task_id"], args["file_id"])
-		if errors.Is(err, fault.ErrConflict) {
-			return "", invalid("该文件已被留言或结果引用，随记录永久保留，不能删除。")
-		}
-		if err != nil {
-			return "", err
-		}
-		return "已删除。", nil
 	case "read_file":
 		if err := required(args, "task_id", "file_id"); err != nil {
 			return "", err

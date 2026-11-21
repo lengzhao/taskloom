@@ -27,7 +27,6 @@ claude mcp add --transport http taskloom http://localhost:8899/v1/mcp \
 | close_question | QuestionCommands.Close | 撤回自己提的、已不需要回答的问题（须写理由），撤回后不再阻止完成 |
 | submit_result | ResultCommands.Submit | 明确提交结果；result、files、links 至少一项 |
 | upload_file | file.Commands.Upload | 上传 text 或 content_base64（MCP 请求上限 1MiB，约 700KB 内容），返回 file_id；只上传不进入时间线，更大的文件用 HTTP `POST /v1/tasks/{id}/files` |
-| delete_file | file.Commands.Delete | 撤回自己上传、尚未被引用的文件；已被引用的返回"永久保留，不能删除" |
 | read_file | file.Queries.Open | 读取文件：UTF-8 文本直接返回，其他 base64；超过 512KB 只返回元数据与下载路径 |
 
 分配、验收、取消与重开不对模型开放：插件以局部窄接口注入，只拿到上表能力，这些都属于人。

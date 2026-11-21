@@ -8,14 +8,12 @@
 package s3
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"io"
 	"net/http"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/lengzhao/pluginkit"
 	"github.com/lengzhao/taskloom/cap/fault"
@@ -32,18 +30,8 @@ type Config struct {
 	Bucket   string `json:"bucket"`
 	// Prefix is prepended to every object name, so one bucket can be shared.
 	Prefix string `json:"prefix"`
-	// PartSize is the chunk buffered per upload (bytes, 5MiB..5GiB): a body
-	// up to this size is one PUT, a larger one a multipart upload.
-	PartSize uint64 `json:"partSize"`
 }
 
-const DefaultPartSize = 16 << 20
-
-func (c *Config) SetDefaults() {
-	if c.PartSize == 0 {
-		c.PartSize = DefaultPartSize
-	}
-}
 func (c *Config) Validate() error {
 	if c.Endpoint == "" || strings.Contains(c.Endpoint, "/") {
 		return errors.New("s3 endpoint must be host[:port] without scheme")
@@ -53,9 +41,6 @@ func (c *Config) Validate() error {
 	}
 	if c.Insecure && !loopback(c.Endpoint) {
 		return errors.New("s3 insecure allowed only for a loopback endpoint")
-	}
-	if c.PartSize < 5<<20 || c.PartSize > 5<<30 {
-		return errors.New("s3 partSize must be 5MiB..5GiB")
 	}
 	for _, r := range c.Prefix {
 		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || strings.ContainsRune("-_./", r)) {
@@ -85,7 +70,6 @@ func init() { pluginkit.Register("storage/s3", New) }
 
 // New only prepares the client; it opens no connection.
 func New(c Config) (*Store, error) {
-	c.SetDefaults()
 	if err := c.Validate(); err != nil {
 		return nil, err
 	}
@@ -102,8 +86,9 @@ func New(c Config) (*Store, error) {
 
 // Open checks that the bucket is reachable with the configured credentials.
 // Uploads that failed midway are aborted by the client; parts left by a
-// crashed process are removed by the bucket's lifecycle rule for incomplete
-// multipart uploads, which the deployment must configure.
+// cancelled request (whose abort runs on the cancelled context) or a crashed
+// process are removed by the bucket's lifecycle rule for incomplete multipart
+// uploads, which the deployment must configure.
 func (s *Store) Open(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -145,11 +130,9 @@ func (s *Store) object(key string) (string, error) {
 	return s.c.Prefix + key[:2] + "/" + key, nil
 }
 
-// Put buffers one part at a time. A body that fits in one part is a single
-// PUT; a larger one is a multipart upload that becomes visible only when it
-// completes and is aborted on any failure. Both the PUT and the completion ask
-// the service not to replace an existing object (If-None-Match: *), which AWS
-// S3 and MinIO honour; keys are random 128-bit IDs besides.
+// Put streams the body with the client's multipart upload, which buffers one
+// part at a time, becomes visible only when it completes and is aborted on any
+// failure. Keys are fresh random 128-bit IDs, so no existing object is replaced.
 func (s *Store) Put(ctx context.Context, key string, r io.Reader) error {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -160,7 +143,8 @@ func (s *Store) Put(ctx context.Context, key string, r io.Reader) error {
 	if err != nil {
 		return err
 	}
-	if err = s.put(ctx, name, r); err == nil {
+	_, err = s.client.PutObject(ctx, s.c.Bucket, name, r, -1, minio.PutObjectOptions{ContentType: "application/octet-stream"})
+	if err == nil {
 		return nil
 	}
 	if ctx.Err() != nil {
@@ -172,57 +156,7 @@ func (s *Store) Put(ctx context.Context, key string, r io.Reader) error {
 			return known
 		}
 	}
-	if code := minio.ToErrorResponse(err).StatusCode; code == http.StatusPreconditionFailed || code == http.StatusConflict {
-		return fault.ErrConflict
-	}
 	return fault.ErrUnavailable
-}
-
-func (s *Store) put(ctx context.Context, name string, r io.Reader) error {
-	core := minio.Core{Client: s.client}
-	plain := minio.PutObjectOptions{ContentType: "application/octet-stream"}
-	guarded := plain
-	guarded.SetMatchETagExcept("*")
-	buf := make([]byte, s.c.PartSize)
-	n, err := io.ReadFull(r, buf)
-	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
-		_, err = core.PutObject(ctx, s.c.Bucket, name, bytes.NewReader(buf[:n]), int64(n), "", "", guarded)
-		return err
-	}
-	if err != nil {
-		return err
-	}
-	id, err := core.NewMultipartUpload(ctx, s.c.Bucket, name, plain)
-	if err != nil {
-		return err
-	}
-	var parts []minio.CompletePart
-	defer func() {
-		if id != "" {
-			abort, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
-			_ = core.AbortMultipartUpload(abort, s.c.Bucket, name, id)
-			cancel()
-		}
-	}()
-	for {
-		p, err := core.PutObjectPart(ctx, s.c.Bucket, name, id, len(parts)+1, bytes.NewReader(buf[:n]), int64(n), minio.PutObjectPartOptions{})
-		if err != nil {
-			return err
-		}
-		parts = append(parts, minio.CompletePart{PartNumber: p.PartNumber, ETag: p.ETag})
-		n, err = io.ReadFull(r, buf)
-		if errors.Is(err, io.EOF) {
-			break
-		}
-		if err != nil && !errors.Is(err, io.ErrUnexpectedEOF) {
-			return err
-		}
-	}
-	if _, err = core.CompleteMultipartUpload(ctx, s.c.Bucket, name, id, parts, guarded); err != nil {
-		return err
-	}
-	id = ""
-	return nil
 }
 
 // Get opens the object; a missing object is reported before returning, so a

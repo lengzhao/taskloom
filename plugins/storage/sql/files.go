@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"sort"
-	"time"
 
 	"github.com/lengzhao/taskloom/cap/fault"
 	"github.com/lengzhao/taskloom/cap/file"
@@ -30,38 +29,13 @@ type fileRefRow struct {
 	Key string `gorm:"primaryKey;size:64;column:row_key"`
 }
 
-// pendingBlobRow records a blob key whose bytes no fileRow owns: an upload
-// in progress (reserved before its bytes are written) or bytes left by a
-// failed upload or a deleted file. Claimed marks a key handed to cleanup; a
-// claimed reservation can no longer be registered.
-type pendingBlobRow struct {
-	Key       string    `gorm:"primaryKey;size:128;column:row_key"`
-	CreatedAt time.Time `gorm:"not null;index"`
-	Claimed   bool      `gorm:"not null"`
-}
-
 // visible keeps the files a viewer may see: referenced, or its own upload.
 func visible(db *gorm.DB, viewer string) *gorm.DB {
 	return db.Where("uploader = ? OR EXISTS (SELECT 1 FROM file_ref_rows r WHERE r.row_key = file_rows.row_key)", viewer)
 }
 
-func (s *Store) ReserveBlob(ctx context.Context, blobKey string) error {
-	return s.use(ctx, true, func(db *gorm.DB) error {
-		return db.Create(&pendingBlobRow{Key: blobKey, CreatedAt: time.Now().UTC()}).Error
-	})
-}
-
-// RegisterFile consumes the key's unclaimed reservation: without one the bytes
-// may already be deleted, so registering them would expose a missing file.
 func (s *Store) RegisterFile(ctx context.Context, f file.File) error {
 	return s.use(ctx, true, func(db *gorm.DB) error {
-		res := db.Where("row_key = ? AND claimed = ?", f.ID, false).Delete(&pendingBlobRow{})
-		if res.Error != nil {
-			return res.Error
-		}
-		if res.RowsAffected != 1 {
-			return fault.ErrConflict
-		}
 		var parent taskRow
 		if err := db.Select("row_key").First(&parent, "row_key = ?", key(f.Tenant, f.TaskID)).Error; err != nil {
 			return err
@@ -73,55 +47,6 @@ func (s *Store) RegisterFile(ctx context.Context, f file.File) error {
 		return db.Omit("Task").Create(&fileRow{Key: key(f.Tenant, f.TaskID, "file", f.ID), TaskKey: parent.Key, Uploader: f.Uploader, Data: b}).Error
 	})
 }
-
-// DeleteFile removes uploader's own unreferenced file and records its key as
-// pending in the same transaction. A reference written by a concurrent commit
-// is serialized with it by the write transaction: one of them fails.
-func (s *Store) DeleteFile(ctx context.Context, tenant, taskID, id, uploader string) error {
-	return s.use(ctx, true, func(db *gorm.DB) error {
-		k := key(tenant, taskID, "file", id)
-		var row fileRow
-		if err := visible(db.Omit("Task"), uploader).Select("row_key").First(&row, "row_key = ?", k).Error; err != nil {
-			return err
-		}
-		var refs int64
-		if err := db.Model(&fileRefRow{}).Where("row_key = ?", k).Count(&refs).Error; err != nil {
-			return err
-		}
-		if refs > 0 {
-			// Visible to every task reader and kept with its commits.
-			return fault.ErrConflict
-		}
-		if err := db.Delete(&fileRow{}, "row_key = ?", k).Error; err != nil {
-			return err
-		}
-		return db.Create(&pendingBlobRow{Key: id, CreatedAt: time.Now().UTC()}).Error
-	})
-}
-
-func (s *Store) ClaimBlobs(ctx context.Context, before time.Time, limit int) ([]string, error) {
-	if limit < 1 {
-		return nil, fault.ErrInput
-	}
-	var keys []string
-	err := s.use(ctx, true, func(db *gorm.DB) error {
-		if err := db.Model(&pendingBlobRow{}).Where("created_at < ?", before.UTC()).Order("created_at").Limit(limit).Pluck("row_key", &keys).Error; err != nil {
-			return err
-		}
-		if len(keys) == 0 {
-			return nil
-		}
-		return db.Model(&pendingBlobRow{}).Where("row_key IN ?", keys).Update("claimed", true).Error
-	})
-	return keys, err
-}
-
-func (s *Store) ForgetBlob(ctx context.Context, blobKey string) error {
-	return s.use(ctx, true, func(db *gorm.DB) error {
-		return db.Delete(&pendingBlobRow{}, "row_key = ?", blobKey).Error
-	})
-}
-
 func (s *Store) GetFile(ctx context.Context, tenant, taskID, id, viewer string) (file.File, error) {
 	var f file.File
 	err := s.use(ctx, false, func(db *gorm.DB) error {

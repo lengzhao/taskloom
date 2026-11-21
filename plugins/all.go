@@ -23,7 +23,6 @@ import (
 	_ "github.com/lengzhao/taskloom/plugins/storage/s3"
 	_ "github.com/lengzhao/taskloom/plugins/storage/sql"
 	_ "github.com/lengzhao/taskloom/plugins/transport/http"
-	_ "github.com/lengzhao/taskloom/plugins/worker/blobsweep"
 	_ "github.com/lengzhao/taskloom/plugins/workflow"
 	_ "github.com/lengzhao/taskloom/plugins/workspace"
 )

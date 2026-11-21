@@ -27,7 +27,6 @@ type fixture struct {
 	srv                 *httptest.Server
 	dir                 string
 	owner, agent, other string
-	graph               *build.Result
 }
 
 // setup serves the real default graph with a 64-byte upload limit.
@@ -40,8 +39,6 @@ func setup(t *testing.T) *fixture {
 		"sql":   map[string]any{"config": map[string]any{"dsn": filepath.Join(dir, "db")}},
 		"blobs": map[string]any{"config": map[string]any{"dir": filepath.Join(dir, "files")}},
 		"files": map[string]any{"config": map[string]any{"maxBytes": 64}},
-		// The sweeper is not started; tests call Sweep, which claims at once.
-		"blob-sweep": map[string]any{"config": map[string]any{"grace": "1ms"}},
 	})
 	if e := os.WriteFile(overlay, raw, 0600); e != nil {
 		t.Fatal(e)
@@ -68,7 +65,7 @@ func setup(t *testing.T) *fixture {
 	if e != nil {
 		t.Fatal(e)
 	}
-	f := &fixture{t: t, srv: srv, dir: filepath.Join(dir, "files"), owner: issued.Secret, graph: graph}
+	f := &fixture{t: t, srv: srv, dir: filepath.Join(dir, "files"), owner: issued.Secret}
 	for i, name := range []string{"agent", "other"} {
 		if e = sec.Create(ctx, f.owner, "create-"+name, identity.Principal{Tenant: "t", ID: name, Kind: "agent", OwnerID: "owner"}); e != nil {
 			t.Fatal(e)

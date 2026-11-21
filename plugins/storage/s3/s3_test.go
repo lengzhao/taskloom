@@ -17,7 +17,6 @@ import (
 
 func TestConfigValidation(t *testing.T) {
 	ok := Config{Endpoint: "s3.amazonaws.com", Bucket: "b", Prefix: "taskloom/files/"}
-	ok.SetDefaults()
 	if err := ok.Validate(); err != nil {
 		t.Fatal(err)
 	}
@@ -25,17 +24,14 @@ func TestConfigValidation(t *testing.T) {
 		"scheme":        {Endpoint: "https://s3.amazonaws.com", Bucket: "b"},
 		"no bucket":     {Endpoint: "s3.amazonaws.com"},
 		"insecure":      {Endpoint: "s3.example.com", Bucket: "b", Insecure: true},
-		"small part":    {Endpoint: "s3.amazonaws.com", Bucket: "b", PartSize: 1 << 20},
 		"prefix escape": {Endpoint: "s3.amazonaws.com", Bucket: "b", Prefix: "a b"},
 	} {
-		c.SetDefaults()
 		if c.Validate() == nil {
 			t.Fatalf("%s: accepted", name)
 		}
 	}
 	for _, e := range []string{"127.0.0.1:9000", "localhost:9000", "[::1]:9000"} {
 		c := Config{Endpoint: e, Bucket: "b", Insecure: true}
-		c.SetDefaults()
 		if err := c.Validate(); err != nil {
 			t.Fatalf("%s: %v", e, err)
 		}
@@ -77,7 +73,7 @@ func TestService(t *testing.T) {
 		t.Skip("TASKLOOM_S3_TEST_ENDPOINT/TASKLOOM_S3_TEST_BUCKET not set")
 	}
 	ctx := context.Background()
-	s, err := New(Config{Endpoint: endpoint, Insecure: loopback(endpoint), Bucket: bucket, Prefix: "test-" + randomKey()[:8] + "/", PartSize: 5 << 20})
+	s, err := New(Config{Endpoint: endpoint, Insecure: loopback(endpoint), Bucket: bucket, Prefix: "test-" + randomKey()[:8] + "/"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,7 +113,7 @@ func TestService(t *testing.T) {
 	}
 	roundTrip(0)
 	roundTrip(1234)
-	roundTrip(12<<20 + 7) // three parts
+	roundTrip(40<<20 + 7) // several parts of the client's 16MiB default
 
 	// Deleting a missing key succeeds, so compensation can be retried.
 	if err = s.Delete(ctx, randomKey()); err != nil {
@@ -126,7 +122,7 @@ func TestService(t *testing.T) {
 
 	// A reader rejection (the upload size limit) keeps its category and
 	// leaves no object, also after a part was already uploaded.
-	for _, size := range []int{100, 6 << 20} {
+	for _, size := range []int{100, 20 << 20} {
 		k := randomKey()
 		err = s.Put(ctx, k, io.MultiReader(bytes.NewReader(make([]byte, size)), failing{fault.ErrTooLarge}))
 		if !errors.Is(err, fault.ErrTooLarge) {
@@ -137,24 +133,8 @@ func TestService(t *testing.T) {
 		}
 	}
 
-	// An interrupted upload (cancelled request) leaves no object.
-	k := randomKey()
-	cctx, cancel := context.WithCancel(ctx)
-	pr, pw := io.Pipe()
-	go func() {
-		_, _ = pw.Write(make([]byte, 6<<20))
-		cancel()
-		_ = pw.CloseWithError(context.Canceled)
-	}()
-	if err = s.Put(cctx, k, pr); err == nil {
-		t.Fatal("interrupted put succeeded")
-	}
-	if _, err = s.Get(ctx, k); !errors.Is(err, fault.ErrNotFound) {
-		t.Fatalf("interrupted object: %v", err)
-	}
-
-	// Failed multipart uploads were aborted: no parts are left behind. The
-	// probe upload shows the listing does report incomplete uploads.
+	// Uploads rejected by the reader were aborted: no parts are left behind.
+	// The probe upload shows the listing does report incomplete uploads.
 	core := minio.Core{Client: s.client}
 	probe, err := core.NewMultipartUpload(ctx, bucket, s.c.Prefix+"probe", minio.PutObjectOptions{})
 	if err != nil {
@@ -169,32 +149,22 @@ func TestService(t *testing.T) {
 		t.Fatalf("incomplete uploads besides the probe: %+v", uploads.Uploads)
 	}
 
-	// An existing key is not replaced (conditional write), by a single PUT or
-	// a completed multipart upload. Some S3-compatible services (SeaweedFS)
-	// ignore If-None-Match; TASKLOOM_S3_TEST_NO_CONDITIONAL=1 skips this.
-	if os.Getenv("TASKLOOM_S3_TEST_NO_CONDITIONAL") == "1" {
-		t.Log("conditional write not checked")
-		return
+	// An interrupted upload (cancelled request) leaves no object. Its abort
+	// runs on the cancelled context and may fail, so parts can remain until
+	// the bucket's lifecycle rule removes them, like after a crash.
+	k := randomKey()
+	cctx, cancel := context.WithCancel(ctx)
+	pr, pw := io.Pipe()
+	go func() {
+		_, _ = pw.Write(make([]byte, 20<<20))
+		cancel()
+		_ = pw.CloseWithError(context.Canceled)
+	}()
+	if err = s.Put(cctx, k, pr); err == nil {
+		t.Fatal("interrupted put succeeded")
 	}
-	for _, size := range []int{5, 6 << 20} {
-		k = randomKey()
-		first := bytes.Repeat([]byte("1"), size)
-		if err = s.Put(ctx, k, bytes.NewReader(first)); err != nil {
-			t.Fatal(err)
-		}
-		if err = s.Put(ctx, k, bytes.NewReader(bytes.Repeat([]byte("2"), size))); !errors.Is(err, fault.ErrConflict) {
-			t.Errorf("overwrite %d: %v", size, err)
-		}
-		r, err := s.Get(ctx, k)
-		if err != nil {
-			t.Fatal(err)
-		}
-		got, _ := io.ReadAll(r)
-		_ = r.Close()
-		if !bytes.Equal(got, first) {
-			t.Errorf("object of %d replaced", size)
-		}
-		_ = s.Delete(ctx, k)
+	if _, err = s.Get(ctx, k); !errors.Is(err, fault.ErrNotFound) {
+		t.Fatalf("interrupted object: %v", err)
 	}
 }
 

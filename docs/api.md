@@ -96,7 +96,6 @@
 | POST /files?name=<文件名> | 请求体为文件原始字节，`Content-Type` 作为媒体类型（缺省 application/octet-stream）；需要评论资格与 Idempotency-Key，同键同字节返回原文件，同键不同字节 409；超过 `files.config.maxBytes`（默认 100MiB）返回 413。响应为文件元数据 `{ID, Name, MediaType, Size, Digest, Uploader, CreatedAt…}`；只上传不进入时间线 |
 | GET /files | 调用者可见的本任务文件元数据（已被引用的，以及自己尚未引用的上传），按上传时间排序 |
 | GET /files/{fid} | 下载字节，一律 `Content-Disposition: attachment`，CSP sandbox |
-| DELETE /files/{fid} | 撤回自己尚未被引用的上传，需要评论资格与 Idempotency-Key（重放仍返回成功）；已被引用 409，他人未引用的上传或已删除的文件 404。响应 `{TaskID, FileID}` |
 
 `GET /v1/files/limits`（不在任务下，只需登录）返回 `{MaxBytes, MaxFiles, MaxLinks}`：单个上传上限（即 `files.config.maxBytes`）与每条 commit 的文件、链接数量上限，供客户端在发送前拒绝必然失败的请求；服务端照常校验。
 

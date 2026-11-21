@@ -78,12 +78,11 @@ func (c *Config) Validate() error {
 // Nothing is persisted: after a restart every task in the inbox is woken once
 // and the Agent continues from read_task.
 type taskState struct {
-	seen      int64 // last timeline sequence already reported to the Agent
-	woken     bool  // woken at least once since this process started
-	assignee  bool  // the Agent was the assignee when last woken
-	busy      bool  // a turn of this task's session is running
-	stopping  bool  // a stop was requested for the running turn
-	routeKeys map[agentkit.SessionID]bool
+	seen     int64 // last timeline sequence already reported to the Agent
+	woken    bool  // woken at least once since this process started
+	assignee bool  // the Agent was the assignee when last woken
+	busy     bool  // a turn of this task's session is running
+	stopping bool  // a stop was requested for the running turn
 }
 
 type Platform struct {
@@ -192,7 +191,7 @@ func (p *Platform) step(ctx context.Context) error {
 	}
 	page, err := p.api.changes(ctx, p.cursor)
 	if err != nil {
-		if isBadCursor(err) {
+		if errors.Is(err, errBadCursor) {
 			// The cursor does not belong to this database any more (restored
 			// or replaced). Resynchronize from the inbox instead of guessing.
 			slog.Warn("taskloom cursor rejected, resynchronizing", "err", err)
@@ -292,7 +291,7 @@ func (p *Platform) review(ctx context.Context, ids map[string]bool, all bool) er
 func (p *Platform) state(id string) *taskState {
 	st := p.tasks[id]
 	if st == nil {
-		st = &taskState{routeKeys: map[agentkit.SessionID]bool{}}
+		st = &taskState{}
 		p.tasks[id] = st
 	}
 	return st
@@ -331,7 +330,6 @@ func (p *Platform) wakeIfNew(ctx context.Context, it pending) error {
 		st.assignee = true // an addressee wake keeps what an earlier wake knew
 	}
 	ev := p.event(it.TaskID, wakeText(it, title, others, first))
-	st.routeKeys[routeKey(ev)] = true
 	p.routes[routeKey(ev)] = it.TaskID
 	p.mu.Unlock()
 	slog.Info("taskloom wake", "task", it.TaskID, "next_actor", it.NextActor, "first", first, "new_commits", len(others))
@@ -437,10 +435,6 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return string(r[:n]) + "…"
-}
-
-func isBadCursor(err error) bool {
-	return err != nil && strings.Contains(err.Error(), "/changes") && strings.Contains(err.Error(), ": 400 ")
 }
 
 func sleepContext(ctx context.Context, d time.Duration) error {

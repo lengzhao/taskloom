@@ -5,7 +5,7 @@ server:
     shutdownTimeout: 10s
   deps:
     resources: [sql, blobs]
-    components: [http, blob-sweep]
+    components: [http]
 http:
   use: transport/http
   config:
@@ -193,18 +193,6 @@ files:
     identity: identity
     authorization: access
     files: sql
-    blobs: blobs
-# Deletes bytes no registered file owns (interrupted uploads, failed cleanup,
-# deleted files); grace exceeds file-api transferTimeout.
-blob-sweep:
-  use: workers/blob-sweep
-  config:
-    interval: 10m
-    grace: 1h
-    batch: 100
-  deps:
-    transactions: sql
-    pending: sql
     blobs: blobs
 file-api:
   use: api/file

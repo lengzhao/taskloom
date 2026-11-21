@@ -181,7 +181,7 @@ func TestAgentWorksATaskThroughMCP(t *testing.T) {
 	if init["protocolVersion"] != "2025-06-18" || !strings.Contains(init["instructions"].(string), "submit_result") || f.session == "" {
 		t.Fatal("initialize", init, f.session)
 	}
-	if n := len(f.rpc("tools/list", nil)["tools"].([]any)); n != 12 {
+	if n := len(f.rpc("tools/list", nil)["tools"].([]any)); n != 11 {
 		t.Fatal("tools", n)
 	}
 
@@ -356,20 +356,11 @@ func TestAgentDeliversFilesThroughMCP(t *testing.T) {
 	up := f.ok("upload_file", map[string]string{"task_id": id, "name": "report.md", "text": "# 报告\n完成"})
 	fileID := up["file_id"].(string)
 	bin := f.ok("upload_file", map[string]string{"task_id": id, "name": "x.bin", "content_base64": "AAEC/w=="})
-	// A mistaken upload is withdrawn before anything references it.
-	wrong := f.ok("upload_file", map[string]string{"task_id": id, "name": "wrong.txt", "text": "oops"})["file_id"].(string)
-	f.ok("delete_file", map[string]string{"task_id": id, "file_id": wrong})
-	if text, isErr := f.tool("read_file", map[string]string{"task_id": id, "file_id": wrong}); !isErr {
-		t.Fatal("deleted file readable", text)
-	}
 	if text, isErr := f.tool("submit_result", map[string]string{"task_id": id, "basis": basis, "files": "0123456789abcdef0123456789abcdef"}); !isErr || !strings.Contains(text, "不存在") {
 		t.Fatal("unknown file accepted", text)
 	}
 	f.ok("submit_result", map[string]string{"task_id": id, "basis": basis, "files": fileID + "," + bin["file_id"].(string), "links": "https://example.com/doc 设计文档"})
 
-	if text, isErr := f.tool("delete_file", map[string]string{"task_id": id, "file_id": fileID}); !isErr || !strings.Contains(text, "永久保留") {
-		t.Fatal("delivered file deleted", text)
-	}
 	task := f.ok("read_task", map[string]string{"task_id": id})
 	result := task["current_result"].(map[string]any)
 	files := result["files"].([]any)

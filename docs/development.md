@@ -73,9 +73,7 @@ go run ./cmd/taskloom
 
 ## 文件存储
 
-默认 `blobs` 是本地目录（`storage/fs`），与数据库一起备份。改用 S3 兼容存储时按[示例](../examples/storage/s3.config.yaml)在 config.yaml 中整节点替换 `blobs`（`use: storage/s3`，配置 endpoint、region、bucket、可选 prefix 与 partSize，默认 16MiB）。凭据只从 `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`（可选 `AWS_SESSION_TOKEN`）或实例 IAM 角色读取，不写进配置；`insecure`（明文 HTTP）只允许回环地址。启动时检查桶可访问；不超过一段的文件单次 PUT，更大的走分段上传，失败即中止，进程崩溃遗留的未完成分段须由桶生命周期规则清理（例如 1 天后中止）。
-
-不归任何文件的字节由 `blob-sweep` 组件清理（默认每 10m，宽限 1h，每批 100）；宽限期须长于 `file-api.config.transferTimeout`，否则仍在传输的慢上传会被认领并以 409 失败。
+默认 `blobs` 是本地目录（`storage/fs`），与数据库一起备份。改用 S3 兼容存储时按[示例](../examples/storage/s3.config.yaml)在 config.yaml 中整节点替换 `blobs`（`use: storage/s3`，配置 endpoint、region、bucket、可选 prefix）。凭据只从 `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`（可选 `AWS_SESSION_TOKEN`）或实例 IAM 角色读取，不写进配置；`insecure`（明文 HTTP）只允许回环地址。启动时检查桶可访问；上传由 minio-go 流式分段（小文件单次 PUT），失败即中止，进程崩溃遗留的未完成分段须由桶生命周期规则清理（例如 1 天后中止）。补偿删除失败或崩溃留下的孤立字节不自动清理，见[文件与链接](core-contracts.md#文件与链接)。
 
 S3 集成测试默认跳过，需要可写的 S3 兼容服务：
 
@@ -83,7 +81,7 @@ S3 集成测试默认跳过，需要可写的 S3 兼容服务：
 AWS_ACCESS_KEY_ID=… AWS_SECRET_ACCESS_KEY=… TASKLOOM_S3_TEST_ENDPOINT=127.0.0.1:18333 TASKLOOM_S3_TEST_BUCKET=taskloom-test go test ./plugins/storage/s3/ -run TestService -v -count=1
 ```
 
-桶不存在时测试会创建，对象写在随机前缀下并删除。不支持 `If-None-Match` 的服务可设 `TASKLOOM_S3_TEST_NO_CONDITIONAL=1` 跳过覆盖检查。
+桶不存在时测试会创建，对象写在随机前缀下并删除。
 
 ## 验证范围与已知限制
 
@@ -92,7 +90,7 @@ AWS_ACCESS_KEY_ID=… AWS_SECRET_ACCESS_KEY=… TASKLOOM_S3_TEST_ENDPOINT=127.0.
 - 存储：持久化、跨仓储回滚、嵌套错误/panic 的 rollback-only、迁移校验和拒绝、事件顺序。
 - 安全：并发幂等与冲突、撤权后重放、跨租户、未知操作、初始化一次性、离线恢复、凭据签发不重复泄密、Agent 不继承所属人、管理员审计查询、Origin/CSRF、会话失效。
 - 任务与流程：信息不足、评论不改依据、更正引用、commit 分页、依据版本冲突、并发认领、换凭据重新认领、取消与旧写入（含旧 Agent 实例留言与提问被拒，人和未执行过的 Agent 不受影响）、执行中改依据、结果替换、取消后重开、活跃与完成任务拒绝重开、未答问题阻止完成、人工处理与转交、无验收配置、变化补拉重新鉴权、写入失败整体回滚、新 API 模块路由冲突启动前拒绝。
-- 文件：本地目录存储的原子写入与拒绝覆盖、路径穿越键拒绝、打开时清理残留临时文件；未引用上传只对上传者可见；上传超限 413、幂等重放与同键不同字节冲突且均不留下字节或待清理记录、客户端中途断开不留下文件/字节/记录且同键可重试、撤回自己未引用的上传（他人 404、已引用 409、重放成功）、引用与删除并发 20 轮恰有一方成功且字节与登记一致、移出参与者或停用成员后不能列出/下载历史文件、崩溃遗留字节由清理组件删除、清理认领后慢上传登记 409 且不留字节、清理组件分批/宽限期/失败保留与启停、非参与者不能上传或读取、跨任务读取与引用拒绝、不能引用他人未引用的上传、评论/结果只带文件或链接、引用缺失文件时结果整体回滚、相同交付不重复登记、MCP 上传/提交/读取与下载头。
+- 文件：本地目录存储的原子写入与拒绝覆盖、路径穿越键拒绝、打开时清理残留临时文件；未引用上传只对上传者可见；上传超限 413、幂等重放与同键不同字节冲突且均不留下字节、客户端中途断开不留下文件与字节且同键可重试、移出参与者或停用成员后不能列出/下载历史文件、非参与者不能上传或读取、跨任务读取与引用拒绝、不能引用他人未引用的上传、评论/结果只带文件或链接、引用缺失文件时结果整体回滚、相同交付不重复登记、MCP 上传/提交/读取与下载头。
 - 工作台：内置浏览器在独立临时库中验证过创建、分配、认领、提交、验收、项目与看板等主路径（最近几轮界面改动只做了脚本语法检查）。
 
 真实 Agent 联调（2026-11-20，`taskloom:local` 独立实例 + `deploy/agent` 镜像 + deepseek-v4.1-flash，worker-1 一个实例）：
@@ -103,6 +101,6 @@ AWS_ACCESS_KEY_ID=… AWS_SECRET_ACCESS_KEY=… TASKLOOM_S3_TEST_ENDPOINT=127.0.
 - 新旧实例并存（同一 Agent 两个凭据同时运行）：被换下的旧实例仍按分配给本 Agent 的任务重新认领，反过来失效新实例并提交结果；隔离本身成立（谁被换下谁的写入 409），但两个实例会互相抢回执行。运行多个实例须各用不同 Agent，或停掉旧实例后再换凭据。
 - 未验证：多 Agent 实例并发、慢客户端、长时间运行与会话压缩、Codex/Claude Code 等其他 Harness。
 
-S3 适配（2026-11-21）：`storage/s3` 在本机 SeaweedFS（`chrislusf/seaweedfs` 容器的 S3 网关）上真实通过[文件存储](#文件存储)的集成测试：空/小/三段对象往返、缺失键 404 与删除幂等、读取方拒绝（超限）与请求取消后不留对象且未完成分段已中止、单段与多段条件写拒绝覆盖。MinIO 官方镜像与二进制在本机均无法获取，未用 MinIO；未连真实 AWS S3、未验证 IAM 角色凭据与桶生命周期规则；Taskloom 整体以 S3 为 blobs 的端到端运行未做，文件命令端到端测试使用本地目录存储。
+S3 适配（2026-11-21）：`storage/s3` 在本机 SeaweedFS（`chrislusf/seaweedfs` 容器的 S3 网关）上真实通过[文件存储](#文件存储)的集成测试：空/小/多段（40MiB）对象往返、缺失键 404 与删除幂等、读取方拒绝（超限）后不留对象且未完成分段已中止、请求取消后不留对象。取消时 minio-go 在已取消的上下文上中止分段会失败，实测留下未完成分段，由桶生命周期规则清理，与进程崩溃同样处理。MinIO 官方镜像与二进制在本机均无法获取，未用 MinIO；未连真实 AWS S3、未验证 IAM 角色凭据与桶生命周期规则；Taskloom 整体以 S3 为 blobs 的端到端运行未做，文件命令端到端测试使用本地目录存储。
 
 尚未验证：Agent 进程外部工具的清理（本示例 Agent 没有 shell/文件工具）、MySQL/PostgreSQL 真实服务、生产负载、WebSocket、真实 AWS S3。本地测试不能表述为生产可用。

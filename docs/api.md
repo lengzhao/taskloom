@@ -52,7 +52,7 @@
 | GET /people | 有效成员目录（Subject、Kind、OwnerID），任一有效成员（含 Agent）可读；`?q=` 按 Subject 片段搜索、`kind=human\|agent`、按 Subject 分页（`after`，`limit` 默认 50、最多 200），返回 `{Items, Next}`；供选项目负责人、处理人、参与者和被提问人，不按任务过滤 |
 | GET/POST /tasks | 当前可读任务列表；创建（Title、Goal、Criteria、可选 ProjectID；可选 ParentID 与 Required 直接建为子任务，同一事务内创建并放置，需父任务调整子任务的资格，任一步失败都不留下任务；只传 Required 不传 ParentID 返回 400），响应为调用者此刻读到的任务详情 |
 | GET/PATCH /tasks/{id} | 详情与 commit 分页（`?after=<Sequence>`，每页 100）；修改约定（Title、Goal、Criteria、BasisVersion），响应为当前任务详情 |
-| POST /tasks/{id}/commits | 评论或更正（Body、可选 RefID，只能引用自己的评论；可选 Files、Links，见[文件](#文件)，三者至少一项）；响应为 `{TaskID, CommitID}`，重放返回同一 CommitID |
+| POST /tasks/{id}/commits | 评论或更正（Body、可选 RefID，只能引用自己的评论；可选 Files、Links，见[文件](#文件)，三者至少一项）；响应为 `{TaskID, CommitID}`，重放返回同一 CommitID；已失效执行的 Agent 实例返回 409，见[写入隔离](core-contracts.md#执行与写入隔离) |
 | POST /tasks/{id}/participants | 负责人或管理员加入/移出参与者（Subject、Present） |
 | POST /tasks/{id}/project | 移入/移出项目（ProjectID，空为移出）；不固定版本，并发移动以后写为准；与子任务关系无关 |
 | POST /tasks/{id}/parent | 放置子任务 {id}：ParentID（必填，不支持解除；祖先链超过 64 层视为冲突）、Required、SeenParentID、SeenRequired（所见当前关系，命令只固定它；父任务的其他变化不冲突）。挂接、切换必需、重挂需要父任务和子任务的负责人或管理员资格，只切换必需只需父任务资格；规则见[任务拆分](core-contracts.md#任务拆分)。新建子任务用带 ParentID 的 POST /tasks |
@@ -70,7 +70,7 @@
 | POST /review | CommitID（当前结果 commit）、Outcome（approved/rejected）、Reason（退回必填） |
 | POST /cancel | 无字段 |
 | POST /restart | RoundID；重开已取消的任务为新一轮；活跃与已完成任务返回冲突（活跃任务用验收退回、转交或修改约定） |
-| POST /questions | RoundID、Body、可选 Addressee（空为负责人；可为任一有效成员，不在任务中时同事务加为参与者，使其可读任务并回答） |
+| POST /questions | RoundID、Body、可选 Addressee（空为负责人；可为任一有效成员，不在任务中时同事务加为参与者，使其可读任务并回答）；已失效执行的 Agent 实例返回 409，同评论 |
 | POST /questions/{qid}/answer | Body；仅被提问人回答当前轮问题 |
 | POST /questions/{qid}/close | Reason（必填）；提问人撤回或负责人关闭当前轮未答问题，写 `question.closed` commit 并视同已结，不再阻止完成；被提问人用回答，不能关闭 |
 

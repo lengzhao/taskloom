@@ -94,38 +94,41 @@ func (m *Module) Upload(ctx context.Context, token, key string, in api.Upload, b
 		return api.File{}, err
 	}
 	in.Name, in.MediaType = name, mediaType
-	// Check access before accepting bytes; the command checks it again.
+	// Check access before accepting bytes; the command checks it again. The
+	// key is reserved first, so bytes this upload leaves behind are recorded.
+	id := newID()
 	var caller identity.Principal
 	err = m.d.Transactions.Do(ctx, func(tx context.Context) error {
 		var e error
-		caller, e = m.principal(tx, token, "file.upload", in.TaskID)
-		return e
+		if caller, e = m.principal(tx, token, "file.upload", in.TaskID); e != nil {
+			return e
+		}
+		return m.d.Files.ReserveBlob(tx, id)
 	})
 	if err != nil {
 		return api.File{}, err
 	}
-	id := newID()
+	applied := false
+	defer func() {
+		if !applied {
+			// The bytes are unregistered (failure or interruption) or duplicate
+			// the original upload (replay). A failed cleanup keeps the pending
+			// record for the sweeper.
+			m.discard(ctx, id)
+		}
+	}()
 	counted := &counter{r: body, max: m.c.MaxBytes, h: sha256.New()}
 	if err = m.d.Blobs.Put(ctx, id, counted); err != nil {
 		return api.File{}, err
 	}
 	in2 := pinned{Upload: in, Size: counted.n, Digest: hex.EncodeToString(counted.h.Sum(nil))}
-	applied := false
 	b, err := command.Run(ctx, m.d.Commands, capcommand.Request{Token: token, Key: key, Operation: "file.upload", Resource: in.TaskID}, in2, func(tx context.Context, p identity.Principal) ([]byte, error) {
 		f := api.File{Tenant: p.Tenant, TaskID: in.TaskID, ID: id, Name: name, MediaType: mediaType, Size: in2.Size, Digest: in2.Digest, Uploader: p.ID, OwnerID: p.OwnerID, CreatedAt: time.Now().UTC()}
 		if e := m.d.Files.RegisterFile(tx, f); e != nil {
 			return nil, e
 		}
-		applied = true
 		return json.Marshal(ref{TaskID: in.TaskID, FileID: id})
 	})
-	if err != nil || !applied {
-		// Compensate: these bytes are unregistered (failure) or a duplicate of
-		// the original upload (replay). A failed delete leaves unreachable bytes.
-		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-		_ = m.d.Blobs.Delete(cleanup, id)
-		cancel()
-	}
 	if err != nil {
 		return api.File{}, err
 	}
@@ -133,9 +136,42 @@ func (m *Module) Upload(ctx context.Context, token, key string, in api.Upload, b
 	if err = json.Unmarshal(b, &r); err != nil {
 		return api.File{}, err
 	}
+	applied = r.FileID == id
 	// The command authenticated the same credential: same tenant and uploader,
 	// and a replay's receipt belongs to that same subject.
 	return m.d.Files.GetFile(ctx, caller.Tenant, r.TaskID, r.FileID, caller.ID)
+}
+
+// Delete withdraws the caller's own unreferenced upload: the row goes and its
+// key becomes pending in one transaction, then the bytes are deleted.
+func (m *Module) Delete(ctx context.Context, token, key, taskID, fileID string) error {
+	if taskID == "" || fileID == "" || key == "" || len(key) > 128 {
+		return fault.ErrInput
+	}
+	_, err := command.Run(ctx, m.d.Commands, capcommand.Request{Token: token, Key: key, Operation: "file.delete", Resource: taskID}, ref{TaskID: taskID, FileID: fileID}, func(tx context.Context, p identity.Principal) ([]byte, error) {
+		if e := m.d.Files.DeleteFile(tx, p.Tenant, taskID, fileID, p.ID); e != nil {
+			return nil, e
+		}
+		return json.Marshal(ref{TaskID: taskID, FileID: fileID})
+	})
+	if err != nil {
+		return err
+	}
+	// A replay repeats the cleanup: deleting missing bytes and forgetting a
+	// forgotten key both succeed.
+	m.discard(ctx, fileID)
+	return nil
+}
+
+// discard deletes bytes no File row owns, then their pending record. It
+// survives the request's cancellation; whatever fails stays for the sweeper.
+func (m *Module) discard(ctx context.Context, id string) {
+	cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	if m.d.Blobs.Delete(cleanup, id) != nil {
+		return
+	}
+	_ = m.d.Transactions.Do(cleanup, func(tx context.Context) error { return m.d.Files.ForgetBlob(tx, id) })
 }
 
 func (m *Module) List(ctx context.Context, token, taskID string) ([]api.File, error) {

@@ -65,6 +65,7 @@ func (m *Module) Routes() []httpapi.Route {
 		{Method: "POST", Path: "/tasks/{id}/files", Operation: "file.upload", Handler: http.HandlerFunc(m.upload)},
 		{Method: "GET", Path: "/tasks/{id}/files", Operation: "file.list", Handler: http.HandlerFunc(m.list)},
 		{Method: "GET", Path: "/tasks/{id}/files/{fid}", Operation: "file.read", Handler: http.HandlerFunc(m.download)},
+		{Method: "DELETE", Path: "/tasks/{id}/files/{fid}", Operation: "file.delete", Handler: http.HandlerFunc(m.remove)},
 		{Method: "GET", Path: "/files/limits", Operation: "file.limits", Handler: http.HandlerFunc(m.limits)},
 	}
 }
@@ -84,6 +85,16 @@ func (m *Module) upload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.Write(w, f)
+}
+
+// remove withdraws the caller's own upload that no commit references yet.
+func (m *Module) remove(w http.ResponseWriter, r *http.Request) {
+	taskID, fileID := r.PathValue("id"), r.PathValue("fid")
+	if err := m.d.Files.Delete(r.Context(), httpx.Credential(r), r.Header.Get("Idempotency-Key"), taskID, fileID); err != nil {
+		httpx.Fail(w, err)
+		return
+	}
+	httpx.Write(w, struct{ TaskID, FileID string }{taskID, fileID})
 }
 func (m *Module) limits(w http.ResponseWriter, r *http.Request) {
 	l, err := m.d.Files.Limits(r.Context(), httpx.Credential(r))

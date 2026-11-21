@@ -59,11 +59,6 @@ type taskDetail struct {
 	Commits []commitView
 }
 
-type snapshot struct {
-	Assignee string
-	Position struct{ Status string }
-}
-
 func (c *client) me(ctx context.Context) (viewer, error) {
 	var v viewer
 	return v, c.get(ctx, "/me", &v)
@@ -88,11 +83,6 @@ var errBadRequest = errors.New("bad request")
 func (c *client) inbox(ctx context.Context) ([]pending, error) {
 	var out []pending
 	return out, c.get(ctx, "/inbox", &out)
-}
-
-func (c *client) workflow(ctx context.Context, taskID string) (snapshot, error) {
-	var s snapshot
-	return s, c.get(ctx, "/tasks/"+url.PathEscape(taskID)+"/workflow", &s)
 }
 
 // commitsAfter pages through the task timeline after a sequence. The server

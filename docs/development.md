@@ -15,7 +15,7 @@
 | plugins/transport/http | 路由挂载、监听及受管模块启停 |
 | plugins/api/health | 进程存活检查 |
 | plugins/all.go | 当前已实现插件的集中注册入口 |
-| harness/agentkit | Agent 层适配：AgentKit 平台插件 `platform/taskloom`，只读业务 API 决定唤醒/steer/停止，见[MCP 接入](mcp-adapter.md#示例agentkit-常驻执行-agent) |
+| harness/agentkit | Agent 层适配：AgentKit 平台插件 `platform/taskloom`，只读业务 API 决定唤醒与 steer，见[MCP 接入](mcp-adapter.md#示例agentkit-常驻执行-agent) |
 | cmd/taskloom-agent | AgentKit 原生 runner 加上述插件的二进制，镜像见 deploy/agent |
 
 构造函数不打开连接；根从 resources 顺序 Open 后运行 components，退出先 Stop 组件、再逆序 Close 资源。失败的 Open 自行清理部分状态。HTTP 独占其模块生命周期，模块不能重复列入根 resources。退出时限内组件应配合取消，Go 无法强制终止不合作的 goroutine。
@@ -95,8 +95,8 @@ AWS_ACCESS_KEY_ID=… AWS_SECRET_ACCESS_KEY=… TASKLOOM_S3_TEST_ENDPOINT=127.0.
 
 真实 Agent 联调（2026-11-20，`taskloom:local` 独立实例 + `deploy/agent` 镜像 + deepseek-v4.1-flash，worker-1 一个实例）：
 
-- 真实通过：分配后约 2 秒唤醒，认领→说明计划→提交→验收完成；验收退回后带退回原因唤醒并重新提交；运行中负责人留言被 steer 进当前 turn 且结果采纳；Agent 提问后负责人普通留言不唤醒、回答后一次唤醒并带上两条新动态；被提问（addressee）时只回答不认领；运行中取消或改派给另一 Agent 后 1–2 秒内停止该 turn；Taskloom 停机 40 秒期间按 3/6/12/24 秒退避且不调用模型，恢复后沿用原游标；Agent 容器运行中重启后自动唤醒并沿用原执行提交；撤销凭据后报错并按 60 秒退避；空闲时不调用模型；每个任务独立会话（`taskloom:<任务ID>`），Agent 自己的写入不唤醒自己。
-- 仅单测（harness/agentkit）：失去读取权限时停止、游标被拒后从 inbox 重新同步、人类凭据被拒、上下文取消退出。
+- 真实通过：分配后约 2 秒唤醒，认领→说明计划→提交→验收完成；验收退回后带退回原因唤醒并重新提交；运行中负责人留言被 steer 进当前 turn 且结果采纳；Agent 提问后负责人普通留言不唤醒、回答后一次唤醒并带上两条新动态；被提问（addressee）时只回答不认领；运行中取消或改派给另一 Agent 后旧执行的写入被拒（2026-11-21 起适配插件不再主动停止 turn，由 Agent 遇到拒绝后自行 finish，此路径尚未重新真实联调）；Taskloom 停机 40 秒期间按 3/6/12/24 秒退避且不调用模型，恢复后沿用原游标；Agent 容器运行中重启后自动唤醒并沿用原执行提交；撤销凭据后报错并按 60 秒退避；空闲时不调用模型；每个任务独立会话（`taskloom:<任务ID>`），Agent 自己的写入不唤醒自己。
+- 仅单测（harness/agentkit）：任务离开收件箱后不再发送任何消息、游标被拒后从 inbox 重新同步、人类凭据被拒、上下文取消退出。
 - C08 真实验证（2026-11-21，修复后的 `taskloom:local` 独立实例 + 真实 Agent worker-1 认领，旧执行写入用同一凭据经 HTTP 发出）：取消后旧执行留言 409 且不留 commit、负责人仍可留言；改派给 worker-2 后，新处理人认领前后旧执行留言与提问均 409、新处理人留言成功；同一凭据依据变更后重新认领可留言；换新凭据认领后旧凭据留言 409、新凭据留言成功；从未执行的 Agent 参与者与负责人留言不受影响。
 - 新旧实例并存（同一 Agent 两个凭据同时运行）：被换下的旧实例仍按分配给本 Agent 的任务重新认领，反过来失效新实例并提交结果；隔离本身成立（谁被换下谁的写入 409），但两个实例会互相抢回执行。运行多个实例须各用不同 Agent，或停掉旧实例后再换凭据。
 - 未验证：多 Agent 实例并发、慢客户端、长时间运行与会话压缩、Codex/Claude Code 等其他 Harness。

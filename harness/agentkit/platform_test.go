@@ -17,19 +17,17 @@ import (
 
 // fakeTaskloom serves the read endpoints the adapter uses from mutable state.
 type fakeTaskloom struct {
-	mu       sync.Mutex
-	down     bool
-	events   []change
-	inbox    []pending
-	commits  map[string][]commitView
-	status   map[string]string
-	assignee map[string]string
-	gone     map[string]bool
-	auth     string
+	mu      sync.Mutex
+	down    bool
+	events  []change
+	inbox   []pending
+	commits map[string][]commitView
+	gone    map[string]bool
+	auth    string
 }
 
 func newFake() *fakeTaskloom {
-	return &fakeTaskloom{commits: map[string][]commitView{}, status: map[string]string{}, assignee: map[string]string{}, gone: map[string]bool{}, auth: "Bearer s"}
+	return &fakeTaskloom{commits: map[string][]commitView{}, gone: map[string]bool{}, auth: "Bearer s"}
 }
 
 func (f *fakeTaskloom) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -63,15 +61,6 @@ func (f *fakeTaskloom) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		write(changePage{Changes: f.events[from:], Cursor: strconv.Itoa(len(f.events))})
 	case path == "/inbox":
 		write(f.inbox)
-	case strings.HasSuffix(path, "/workflow"):
-		id := strings.Split(path, "/")[2]
-		if f.gone[id] {
-			w.WriteHeader(http.StatusNotFound)
-			return
-		}
-		s := snapshot{Assignee: f.assignee[id]}
-		s.Position.Status = f.status[id]
-		write(s)
 	case strings.HasPrefix(path, "/tasks/"):
 		id := strings.Split(path, "/")[2]
 		if f.gone[id] {
@@ -140,11 +129,6 @@ func next(t *testing.T, p *Platform, polls int) (agentkit.MessageEvent, string) 
 	return ev, ev.Message.Content[0].Text
 }
 
-func turn(p *Platform, ev agentkit.MessageEvent, typ agentkit.EventType) {
-	env := rctx.ResolveEnvelope(ev, rctx.RoutePolicy{})
-	_ = p.Send(context.Background(), rctx.OutboundFromEnvelope(env, typ, nil))
-}
-
 func TestWakesOncePerTaskAndIgnoresOwnCommits(t *testing.T) {
 	f := newFake()
 	f.commit("A", "alice", "comment", "please do A")
@@ -194,7 +178,7 @@ func TestCommitsWhileNotWaitingAreReportedWhenItReturns(t *testing.T) {
 	}
 }
 
-func TestEachTaskHasItsOwnSessionAndRunningTurnsAreTracked(t *testing.T) {
+func TestEachTaskHasItsOwnSession(t *testing.T) {
 	f := newFake()
 	f.set(func() {
 		f.inbox = []pending{{TaskID: "A", NextActor: "assignee"}, {TaskID: "B", NextActor: "addressee"}}
@@ -210,71 +194,19 @@ func TestEachTaskHasItsOwnSessionAndRunningTurnsAreTracked(t *testing.T) {
 	if ca == "" || ca == cb {
 		t.Fatalf("tasks share a session: %q %q", ca, cb)
 	}
-	turn(p, a, agentkit.EventTurnStart)
-	p.mu.Lock()
-	busyA, busyB := p.tasks["A"].busy, p.tasks["B"].busy
-	p.mu.Unlock()
-	if !busyA || busyB {
-		t.Fatalf("busy A=%v B=%v", busyA, busyB)
-	}
-	turn(p, a, agentkit.EventTurnEnd)
-	if p.tasks["A"].busy {
-		t.Fatal("turn end not tracked")
-	}
 }
 
-func TestStopsRunningTurnOnCancelReplaceOrLostAccess(t *testing.T) {
-	for _, tc := range []struct {
-		name  string
-		apply func(f *fakeTaskloom)
-	}{
-		{"cancel", func(f *fakeTaskloom) { f.status["A"] = "cancelled" }},
-		{"replace", func(f *fakeTaskloom) { f.assignee["A"] = "other" }},
-		{"access", func(f *fakeTaskloom) { f.gone["A"] = true }},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			f := newFake()
-			f.set(func() {
-				f.inbox = []pending{{TaskID: "A", NextActor: "assignee"}}
-				f.status["A"], f.assignee["A"] = "active", "bot"
-			})
-			p := newTestPlatform(t, f)
-			a, _ := next(t, p, 1)
-			turn(p, a, agentkit.EventTurnStart)
-
-			// Waiting on someone else while running is not a reason to stop.
-			f.set(func() { f.inbox = nil })
-			f.commit("A", "bot", "result", "done")
-			if _, text := next(t, p, 2); text != "" {
-				t.Fatalf("stopped a finishing turn: %q", text)
-			}
-
-			f.set(func() { tc.apply(f) })
-			f.set(func() { f.events = append(f.events, change{TaskID: "A", Kind: "task.changed"}) })
-			ev, text := next(t, p, 2)
-			if text != "/stop" {
-				t.Fatalf("want /stop, got %q", text)
-			}
-			if rctx.ResolveEnvelope(ev, rctx.RoutePolicy{}).Conversation != rctx.ResolveEnvelope(a, rctx.RoutePolicy{}).Conversation {
-				t.Fatal("stop addressed another session")
-			}
-			f.set(func() { f.events = append(f.events, change{TaskID: "A", Kind: "task.changed"}) })
-			if _, text := next(t, p, 2); text != "" {
-				t.Fatalf("stop repeated before turn end: %q", text)
-			}
-		})
-	}
-}
-
-func TestIdleTaskIsNotStopped(t *testing.T) {
+// A cancelled or lost task leaves the inbox: nothing is sent to its session,
+// whether or not a turn is running; Taskloom fences the writes.
+func TestLeavingTheInboxSendsNothing(t *testing.T) {
 	f := newFake()
 	f.set(func() { f.inbox = []pending{{TaskID: "A", NextActor: "assignee"}} })
 	p := newTestPlatform(t, f)
 	next(t, p, 1)
-	f.set(func() { f.inbox, f.status["A"] = nil, "cancelled" })
+	f.set(func() { f.inbox, f.gone["A"] = nil, true })
 	f.commit("A", "alice", "cancel", "")
 	if _, text := next(t, p, 2); text != "" {
-		t.Fatalf("idle session got %q", text)
+		t.Fatalf("session got %q", text)
 	}
 }
 

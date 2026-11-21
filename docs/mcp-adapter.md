@@ -26,6 +26,7 @@ claude mcp add --transport http taskloom http://localhost:8899/v1/mcp \
 | answer_question | QuestionCommands.Answer | 回答别人向自己提的问题（open_questions 中 for_you 为 true） |
 | close_question | QuestionCommands.Close | 撤回自己提的、已不需要回答的问题（须写理由），撤回后不再阻止完成 |
 | submit_result | ResultCommands.Submit | 明确提交结果；result、files、links 至少一项 |
+| create_subtask | workspace.Create | 把自己正在执行的任务拆出子任务：title 必填，可带 goal、criteria、required（true/false）、owner（有效用户，默认本任务负责人）；自己成为子任务参与者，必需子任务不使自己的执行失效，见[任务拆分](core-contracts.md#任务拆分) |
 | upload_file | file.Commands.Upload | 上传 text 或 content_base64（MCP 请求上限 1MiB，约 700KB 内容），返回 file_id；只上传不进入时间线，更大的文件用 HTTP `POST /v1/tasks/{id}/files` |
 | read_file | file.Queries.Open | 读取文件：UTF-8 文本直接返回，其他 base64；超过 512KB 只返回元数据与下载路径 |
 
@@ -47,7 +48,7 @@ claude mcp add --transport http taskloom http://localhost:8899/v1/mcp \
 `platform/taskloom` 是 Agent 层的适配，不是 Taskloom 服务端插件，也不新增 Taskloom 接口：它用该 Agent 自己的业务凭据只读 `GET /v1/changes`、`/v1/inbox` 与 `/v1/tasks/{id}`，决定何时唤醒或 steer AgentKit 会话：
 
 - **按任务分会话**：每个任务是一个 channel（会话 ID 含任务 ID），历史与 steer 互不影响；`runner.maxConcurrentTurns` 控制并行任务数。
-- **唤醒**：任务首次出现在 inbox（下一步等这个 Agent）时唤醒一次，之后只在其他人写入该任务时再唤醒，消息里带上这些新 commit 摘要；Agent 自己的写入从不唤醒自己（避免自回复）。等别人期间（问负责人、待验收）他人写入不唤醒，回到 inbox 时一并带上。阻塞任务（等待必需子任务）不唤醒。
+- **唤醒**：任务进入 inbox（下一步等这个 Agent）时唤醒一次：本进程首次看到，或停止等待 Agent 后再次等待（如必需子任务全部完成、父任务回到等处理人），即使没有新 commit；留在 inbox 期间只在其他人写入时再唤醒，消息里带上这些新 commit 摘要；Agent 自己的写入从不唤醒自己（避免自回复）。等别人期间（问负责人、待验收）他人写入不唤醒，回到 inbox 时一并带上。阻塞任务（等待必需子任务）不唤醒。
 - **运行中新消息**：任务会话正在运行时的唤醒由 AgentKit runner 折叠进当前 turn（steer）。
 - **不主动停止**：任务被取消、改派或失去读取权限时不发送 `/stop`。Taskloom 已让该执行失去写资格，示例 Agent 只有 Taskloom 工具，后续写入都会被拒，由 Agent 按提示词读任务后 finish；给 Agent 开放外部工具时须重新评估。
 - **断线与重启**：Taskloom 不可达时按 pollSeconds 起指数退避（上限 maxBackoffSeconds），不调用模型，恢复后用原游标补拉；游标被拒（换库/恢复备份）时从 inbox 重新同步。进程重启不保存任何状态：inbox 中每个任务唤醒一次，Agent 用同一凭据 read_task 继续原执行。凭据被拒按最大退避记错误日志，需运维换凭据后重启。

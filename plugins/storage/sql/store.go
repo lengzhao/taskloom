@@ -241,3 +241,16 @@ func normalize(ctx context.Context, err error) error {
 	}
 	return fault.ErrUnavailable // Never expose DSNs, values or SQL in errors.
 }
+
+// nextSequence advances the global counter that orders tasks, commits and
+// events. Commands hold the coordination lock, so the value is the commit order.
+func nextSequence(db *gorm.DB) (int64, error) {
+	if err := db.Model(&coordination{}).Where("id = ?", 1).UpdateColumn("sequence", gorm.Expr("sequence + 1")).Error; err != nil {
+		return 0, err
+	}
+	var c coordination
+	if err := db.First(&c, 1).Error; err != nil {
+		return 0, err
+	}
+	return c.Sequence, nil
+}

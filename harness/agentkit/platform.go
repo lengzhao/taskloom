@@ -7,8 +7,10 @@
 // in Taskloom.
 //
 // What the adapter decides (Agent-layer concerns, see AGENTS.md):
-//   - wake: a task enters the Agent's inbox, or someone else wrote to it while
-//     it is there; the Agent's own commits never wake it (no self-reply);
+//   - wake: a task enters the Agent's inbox (first seen, or back after it
+//     stopped waiting on the Agent, e.g. its required subtasks completed), or
+//     someone else wrote to it while it is there; the Agent's own commits never
+//     wake it (no self-reply);
 //   - steer: a wake for a task whose turn is running is folded into that turn
 //     by the AgentKit runner.
 //
@@ -80,6 +82,10 @@ func (c *Config) Validate() error {
 type taskState struct {
 	seen  int64 // last timeline sequence already reported to the Agent
 	woken bool  // woken at least once since this process started
+	// waiting is whether the task waited on the Agent at the last review that
+	// covered it. A task that stops waiting and later waits again re-enters the
+	// inbox and is woken, even when nobody else wrote to it.
+	waiting bool
 }
 
 type Platform struct {
@@ -245,8 +251,19 @@ func (p *Platform) review(ctx context.Context, ids map[string]bool, all bool) er
 	if err != nil {
 		return err
 	}
+	// Blocked entries (NextActor empty) have nothing to do yet.
+	waiting := map[string]bool{}
 	for _, it := range inbox {
-		// Blocked entries (NextActor empty) have nothing to do yet.
+		if it.NextActor != "" {
+			waiting[it.TaskID] = true
+		}
+	}
+	for id, st := range p.tasks {
+		if (all || ids[id]) && !waiting[id] {
+			st.waiting = false
+		}
+	}
+	for _, it := range inbox {
 		if it.NextActor == "" || !all && !ids[it.TaskID] {
 			continue
 		}
@@ -266,8 +283,8 @@ func (p *Platform) state(id string) *taskState {
 	return st
 }
 
-// wakeIfNew wakes the task's session the first time it is seen waiting, and
-// afterwards only when someone other than the Agent wrote to it.
+// wakeIfNew wakes the task's session when it enters the inbox, and while it
+// stays there only when someone other than the Agent wrote to it.
 func (p *Platform) wakeIfNew(ctx context.Context, it pending) error {
 	st := p.state(it.TaskID)
 	title, commits, err := p.api.commitsAfter(ctx, it.TaskID, st.seen)
@@ -284,12 +301,13 @@ func (p *Platform) wakeIfNew(ctx context.Context, it pending) error {
 			others = append(others, c)
 		}
 	}
-	first := !st.woken
-	if !first && len(others) == 0 {
+	first, entered := !st.woken, !st.waiting
+	st.waiting = true
+	if !entered && len(others) == 0 {
 		return nil
 	}
 	st.woken = true
-	slog.Info("taskloom wake", "task", it.TaskID, "next_actor", it.NextActor, "first", first, "new_commits", len(others))
+	slog.Info("taskloom wake", "task", it.TaskID, "next_actor", it.NextActor, "first", first, "entered", entered, "new_commits", len(others))
 	p.queue = append(p.queue, p.event(it.TaskID, wakeText(it, title, others, first)))
 	return nil
 }

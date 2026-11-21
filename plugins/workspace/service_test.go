@@ -16,6 +16,7 @@ import (
 	"time"
 
 	az "github.com/lengzhao/taskloom/cap/authorization"
+	"github.com/lengzhao/taskloom/cap/execution"
 	"github.com/lengzhao/taskloom/cap/fault"
 	"github.com/lengzhao/taskloom/cap/identity"
 	api "github.com/lengzhao/taskloom/cap/workspace"
@@ -28,12 +29,17 @@ import (
 	"github.com/lengzhao/taskloom/runtime/command"
 )
 
-// noProgress stands in for the execution module; these tests cover human comments.
-type noProgress struct{}
+// noExecutor stands in for the execution module; these tests cover human
+// comments and create no subtasks.
+type noExecutor struct{}
 
-func (noProgress) RecordProgress(context.Context, identity.Principal, string, string) error {
+func (noExecutor) RecordProgress(context.Context, identity.Principal, string, string) error {
 	return nil
 }
+func (noExecutor) Hold(context.Context, identity.Principal, string, string) (execution.Execution, error) {
+	return execution.Execution{}, fault.ErrConflict
+}
+func (noExecutor) Follow(context.Context, execution.Execution) error { return fault.ErrConflict }
 
 // noPlacer stands in for the plan module; these tests create no subtasks.
 type noPlacer struct{}
@@ -90,7 +96,7 @@ func fixtureWithStore(t *testing.T) (readBack, *security.Service, string, *store
 	if e != nil {
 		t.Fatal(e)
 	}
-	inner, e := workspace.New(workspace.Deps{Catalog: s, Transactions: s, Tasks: s, Commits: s, Flow: f, Identity: id, Authorization: az, Commands: r, Events: s, Members: s, Participants: s, Progress: noProgress{}, Placer: noPlacer{}})
+	inner, e := workspace.New(workspace.Deps{Catalog: s, Transactions: s, Tasks: s, Commits: s, Flow: f, Identity: id, Authorization: az, Commands: r, Events: s, Members: s, Participants: s, Executor: noExecutor{}, Placer: noPlacer{}})
 	if e != nil {
 		t.Fatal(e)
 	}

@@ -109,14 +109,11 @@ func (s *Store) ListAudit(ctx context.Context, tenant string, limit int) ([]reco
 }
 func (s *Store) AppendEvent(ctx context.Context, e record.Event) error {
 	return s.use(ctx, true, func(db *gorm.DB) error {
-		if err := db.Model(&coordination{}).Where("id = ?", 1).UpdateColumn("sequence", gorm.Expr("sequence + 1")).Error; err != nil {
+		seq, err := nextSequence(db)
+		if err != nil {
 			return err
 		}
-		var c coordination
-		if err := db.First(&c, 1).Error; err != nil {
-			return err
-		}
-		return db.Create(&eventRow{Sequence: c.Sequence, Tenant: e.Tenant, Resource: e.Resource, Kind: e.Kind}).Error
+		return db.Create(&eventRow{Sequence: seq, Tenant: e.Tenant, Resource: e.Resource, Kind: e.Kind}).Error
 	})
 }
 func (s *Store) ReadEvents(ctx context.Context, tenant string, after int64, limit int) ([]record.Event, error) {

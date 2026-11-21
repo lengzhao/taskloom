@@ -208,6 +208,14 @@ func TestPlacementGuards(t *testing.T) {
 	if e := place("cycle", plan.Placement{ChildID: a.Task.ID, ParentID: c.Task.ID}); !errors.Is(e, fault.ErrConflict) {
 		t.Fatal("cycle accepted", e)
 	}
+	// A child must be newer than its parent, even where no cycle would form.
+	newer := f.named(t, "newer")
+	if e := place("older-under-newer", plan.Placement{ChildID: a.Task.ID, ParentID: newer.Task.ID}); !errors.Is(e, fault.ErrConflict) {
+		t.Fatal("older task placed under a newer parent", e)
+	}
+	if e := place("newer-under-older", plan.Placement{ChildID: newer.Task.ID, ParentID: b.Task.ID}); e != nil {
+		t.Fatal(e)
+	}
 	if e := place("unseen", plan.Placement{ChildID: c.Task.ID, ParentID: a.Task.ID}); !errors.Is(e, fault.ErrConflict) {
 		t.Fatal("placement on an unseen relation", e)
 	}

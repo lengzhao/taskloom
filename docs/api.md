@@ -21,7 +21,7 @@
 | 任务负责人（有效人类） | 读写约定、追加 commit、管理参与者、分配、取消、重开、验收、调整子任务 |
 | 当前人工处理人（仍参与） | 提交结果并转交；不取得负责人或验收资格 |
 | 任务参与者 | 读取、评论（只能更正自己的评论）、提问（可问任一有效成员，被问者随之成为参与者） |
-| Agent | 不继承所属人任何权限；须显式参与任务（被分配或被提问）；只能认领分配给自己的任务；可读成员目录 |
+| Agent | 不继承所属人任何权限；须显式参与任务（被分配或被提问）；只能认领分配给自己的任务；持有当前执行时可在该任务下新建子任务；可读成员目录 |
 | 停用或不存在的成员 | 无任何访问，即使保留负责人/参与历史 |
 
 资源始终按认证租户查询；每次读写和幂等重放都检查当前关系。任务写权限一律包含该任务的读权限，命令不再单独检查读取（由 access 测试固定）。成员或参与关系变更与业务写共用全局写锁，先提交者生效。停用不删除历史，重新启用恢复仍保留的任务关系。
@@ -50,12 +50,12 @@
 | GET/PATCH /space | 读取；管理员更新 Name、Description、ExpectedVersion，响应为当前空间 |
 | GET/POST /projects、PATCH /projects/{id} | 目录、创建（Name、Description、Owner）与编辑/归档（另带 Archived、ExpectedVersion）；管理员或项目负责人可编辑；写入响应为该项目当前状态，回执只存项目 ID |
 | GET /people | 有效成员目录（Subject、Kind、OwnerID），任一有效成员（含 Agent）可读；`?q=` 按 Subject 片段搜索、`kind=human\|agent`、按 Subject 分页（`after`，`limit` 默认 50、最多 200），返回 `{Items, Next}`；供选项目负责人、处理人、参与者和被提问人，不按任务过滤 |
-| GET/POST /tasks | 当前可读任务列表（不含时间线；可用 `?id=` 限定，见[变化补拉](#变化补拉)）；创建（Title、Goal、Criteria、可选 ProjectID；可选 ParentID 与 Required 直接建为子任务，同一事务内创建并放置，需父任务调整子任务的资格，任一步失败都不留下任务；只传 Required 不传 ParentID 返回 400），响应为调用者此刻读到的任务详情 |
+| GET/POST /tasks | 当前可读任务列表（不含时间线；可用 `?id=` 限定，见[变化补拉](#变化补拉)）；创建（Title、Goal、Criteria、可选 ProjectID；可选 ParentID、Required 与 Owner 直接建为子任务，同一事务内创建并放置，需父任务调整子任务的资格，Agent 则需持有父任务当前可写执行，任一步失败都不留下任务；Owner 为空间内有效人类成员，空时人为本人、Agent 为父任务负责人；只传 Required 或 Owner 不传 ParentID 返回 400，Owner 不是有效人类成员返回 400），响应为调用者此刻读到的任务详情 |
 | GET/PATCH /tasks/{id} | 详情与 commit 分页（`?after=<Sequence>`，每页 100）；修改约定（Title、Goal、Criteria、BasisVersion），响应为当前任务详情 |
 | POST /tasks/{id}/commits | 评论或更正（Body、可选 RefID，只能引用自己的评论；可选 Files、Links，见[文件](#文件)，三者至少一项）；响应为 `{TaskID, CommitID}`，重放返回同一 CommitID；已失效执行的 Agent 实例返回 409，见[写入隔离](core-contracts.md#执行与写入隔离) |
 | POST /tasks/{id}/participants | 负责人或管理员加入/移出参与者（Subject、Present） |
 | POST /tasks/{id}/project | 移入/移出项目（ProjectID，空为移出）；不固定版本，并发移动以后写为准；与子任务关系无关 |
-| POST /tasks/{id}/parent | 放置子任务 {id}：ParentID（必填，不支持解除；祖先链超过 64 层视为冲突）、Required、SeenParentID、SeenRequired（所见当前关系，命令只固定它；父任务的其他变化不冲突）。挂接、切换必需、重挂需要父任务和子任务的负责人或管理员资格，只切换必需只需父任务资格；规则见[任务拆分](core-contracts.md#任务拆分)。新建子任务用带 ParentID 的 POST /tasks |
+| POST /tasks/{id}/parent | 放置子任务 {id}：ParentID（必填，不支持解除；子任务须比父任务新，否则冲突）、Required、SeenParentID、SeenRequired（所见当前关系，命令只固定它；父任务的其他变化不冲突）。挂接、切换必需、重挂需要父任务和子任务的负责人或管理员资格，只切换必需只需父任务资格；规则见[任务拆分](core-contracts.md#任务拆分)。新建子任务用带 ParentID 的 POST /tasks |
 
 ## 执行、交付与验收
 

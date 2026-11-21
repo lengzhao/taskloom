@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -181,7 +182,7 @@ func TestAgentWorksATaskThroughMCP(t *testing.T) {
 	if init["protocolVersion"] != "2025-06-18" || !strings.Contains(init["instructions"].(string), "submit_result") || f.session == "" {
 		t.Fatal("initialize", init, f.session)
 	}
-	if n := len(f.rpc("tools/list", nil)["tools"].([]any)); n != 11 {
+	if n := len(f.rpc("tools/list", nil)["tools"].([]any)); n != 12 {
 		t.Fatal("tools", n)
 	}
 
@@ -386,4 +387,38 @@ func TestAgentDeliversFilesThroughMCP(t *testing.T) {
 	if resp.StatusCode != 200 || string(body) != "# 报告\n完成" || !strings.HasPrefix(resp.Header.Get("Content-Disposition"), "attachment") || !strings.Contains(resp.Header.Get("Content-Security-Policy"), "sandbox") {
 		t.Fatal("download", resp.StatusCode, string(body), resp.Header)
 	}
+}
+
+// An executing Agent splits its task through MCP: the subtask is created
+// under it and the Agent's execution and basis stay usable.
+func TestAgentSplitsATaskThroughMCP(t *testing.T) {
+	f := setup(t)
+	var created struct{ Task struct{ ID string } }
+	f.ownerCall("POST", "/tasks", map[string]string{"Title": "报告", "Goal": "写报告", "Criteria": "完整"}, &created)
+	id := created.Task.ID
+	if text, isErr := f.tool("create_subtask", map[string]string{"task_id": id, "title": "资料"}); !isErr || !strings.Contains(text, "无权") {
+		t.Fatal("split before taking part", text)
+	}
+	f.ownerCall("POST", "/tasks/"+id+"/execution/assign", map[string]any{"Subject": "agent"}, nil)
+	basis := f.ok("read_task", map[string]string{"task_id": id})["basis"].(string)
+	basis = f.ok("start_work", map[string]string{"task_id": id, "basis": basis})["basis"].(string)
+	if text, isErr := f.tool("create_subtask", map[string]string{"task_id": id, "title": "资料", "required": "yes"}); !isErr || !strings.Contains(text, "required") {
+		t.Fatal("bad required accepted", text)
+	}
+	out := f.ok("create_subtask", map[string]string{"task_id": id, "title": "资料", "goal": "收集资料", "required": "true"})
+	sub, _ := out["subtask_id"].(string)
+	if sub == "" || !strings.Contains(out["message"].(string), "必需") {
+		t.Fatal("create_subtask", out)
+	}
+	task := f.ok("read_task", map[string]string{"task_id": id})
+	if !strings.Contains(fmt.Sprint(task["subtasks"]), sub) {
+		t.Fatal("subtask not listed under the task", task["subtasks"])
+	}
+	if text, isErr := f.tool("submit_result", map[string]string{"task_id": id, "basis": basis, "result": "太早"}); !isErr || !strings.Contains(text, "read_task") {
+		t.Fatal("submitted before the required subtask", text)
+	}
+	if _, isErr := f.tool("post_message", map[string]string{"task_id": id, "text": "继续写正文"}); isErr {
+		t.Fatal("execution fenced by the Agent's own split")
+	}
+	f.ok("read_task", map[string]string{"task_id": sub})
 }

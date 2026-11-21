@@ -144,6 +144,47 @@ func (m *ExecutionModule) start(ctx context.Context, t task.Task, pos flow.Posit
 	return m.d.Executions.OpenExecution(ctx, v)
 }
 
+// Hold implements execution.Executor.
+func (m *ExecutionModule) Hold(ctx context.Context, p identity.Principal, tenant, taskID string) (execution.Execution, error) {
+	t, e := m.d.Tasks.GetTask(ctx, tenant, taskID)
+	if e != nil {
+		return execution.Execution{}, e
+	}
+	pos, e := m.d.Flow.Read(ctx, t)
+	if e != nil {
+		return execution.Execution{}, e
+	}
+	v, e := m.d.Executions.Current(ctx, tenant, taskID)
+	if errors.Is(e, fault.ErrNotFound) {
+		return execution.Execution{}, fault.ErrConflict
+	}
+	if e != nil {
+		return execution.Execution{}, e
+	}
+	if pos.Status != flow.PhaseActive || !v.Writable || !ownExecution(p, v) || v.RoundID != pos.RoundID || v.BasisVersion != t.BasisVersion {
+		return execution.Execution{}, fault.ErrConflict
+	}
+	return v, nil
+}
+
+// Follow implements execution.Executor. Only the task's current writable
+// execution can follow; anything else was fenced and stays so.
+func (m *ExecutionModule) Follow(ctx context.Context, v execution.Execution) error {
+	current, e := m.d.Executions.Current(ctx, v.Tenant, v.TaskID)
+	if e != nil {
+		return e
+	}
+	if current.ID != v.ID || !current.Writable {
+		return fault.ErrConflict
+	}
+	t, e := m.d.Tasks.GetTask(ctx, v.Tenant, v.TaskID)
+	if e != nil {
+		return e
+	}
+	current.BasisVersion, current.ProgressAt = t.BasisVersion, time.Now()
+	return m.d.Executions.SaveExecution(ctx, current)
+}
+
 // RecordProgress implements execution.Progress. Callers invoke it inside their
 // own command transaction; it never changes the flow or emits a task change.
 func (m *ExecutionModule) RecordProgress(ctx context.Context, p identity.Principal, tenant, taskID string) error {

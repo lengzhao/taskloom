@@ -1,30 +1,27 @@
 # AgentKit L1 overlay: a resident Taskloom executor Agent.
 #
-# It wakes on a fixed interval, reads its Taskloom inbox through the MCP endpoint
-# and works the tasks assigned to it. Only Taskloom MCP tools plus todo/finish
-# are exposed: no shell, files, web or sub-agents. Business rules stay in
-# Taskloom; this file only wires an existing Agent runtime to it.
+# platform/taskloom (harness/agentkit) follows the Agent's Taskloom change feed
+# and wakes one session per task only when that task waits on this Agent; a
+# change to a task whose turn is running is steered into it, and a turn is
+# stopped when its task is cancelled or reassigned. No model call happens
+# while nothing waits. Only Taskloom MCP tools plus todo/finish are exposed:
+# no shell, files, web or sub-agents. Business rules stay in Taskloom.
 
 runner.default:
   config:
-    maxConcurrentTurns: 1
+    # Each task is its own session (sessionScope channel, channel = task id),
+    # so independent tasks may run side by side; one session stays in order.
+    maxConcurrentTurns: 2
   deps:
     schedules: []
     init: []
 
 platform.default:
-  use: platform/timer
+  use: platform/taskloom
   config:
-    everySeconds: 60
-    immediate: true
-    maxRuns: 0
-    sessionMode: fresh
-    sessionId: taskloom
-    output: text
-    stream: false
-    prompt: |
-      检查 Taskloom 中等你处理的任务并推进它们：先调用 inbox。
-      没有任务就直接调用 finish（status=completed，summary 写“无待处理任务”）。
+    baseUrl: ${var:TASKLOOM_API_URL}
+    authorizationEnv: TASKLOOM_AUTHORIZATION
+    pollSeconds: 3
 
 loop.default:
   deps:
@@ -50,9 +47,8 @@ agent.taskloom:
     compaction:
       - compaction.pipeline.taskloom
 
-# AgentKit v0.4.45 timer ticks in "fresh" mode share one session per process
-# (delivery ids taskloom:<start>:run-N collapse to taskloom:<start>), so the
-# history grows with every wake. Bound it by summarising past ~40k tokens.
+# A task session lives as long as the task, so bound its history by
+# summarising past ~40k tokens.
 hooks.taskloom:
   use: hooks/runtime
   deps:
@@ -116,24 +112,25 @@ prompt.persona.taskloom:
       你是 Taskloom 任务系统里的执行 Agent。人是任务负责人，你负责把分配给你的任务做完并正式交付。
       Taskloom 工具名带 taskloom__ 前缀。
 
-      每次被唤醒：
-      0. inbox 中 next_actor 为 addressee 的任务是别人在问你：read_task 找到 open_questions 里 for_you 为 true 的问题，
-         用 answer_question 回答，不要认领或提交。
-      1. 调用 inbox。对列出的每个任务调用 read_task，仔细读 goal、criteria、timeline（包括人的留言和对问题的回答）、
+      每条唤醒消息只对应一个任务（消息里给出 task_id），这个会话只处理这个任务：
+      1. 先 read_task，仔细读 goal、criteria、timeline（包括人的留言和对问题的回答）、open_questions、
          current_result 及其 review_reason。
-      2. can.start_work 为 true 时调用 start_work 认领；已有自己的执行（can.submit_result 为 true）就直接继续。
-      3. 开始前用 post_message 简短说明你的理解和计划；工作较长时中途用 post_message 汇报进度。
-      4. 要求不清楚、需要人决定或需要某位参与者协助时，用 ask_owner 提问（写明问题、可选方案和你的建议；
-         默认问负责人，需要别人时先用 list_members 找到对方再填 to），然后不要提交，
-         这个任务本轮到此为止；下次唤醒 read_task 看到回答后再继续。
-      5. 自己完成交付物（写作、整理、分析等都由你直接写出），确认满足 criteria 后调用 submit_result 提交完整结果。
-      6. 结果被验收退回时，按 review_reason 和留言修改后重新提交。
-      7. 写操作都要带 read_task 或上一次写操作返回的 basis；遇到冲突先重新 read_task。
-      8. 写入被拒绝且 read_task 显示你已不是处理人、任务已取消或已完成时，停止处理该任务，不要留言。
-      全部处理完后调用 finish，summary 列出处理了哪些任务和结果。
+      2. next_actor 为 addressee 且 open_questions 里有 for_you 为 true 的问题：这是别人在问你，
+         用 answer_question 回答，不要认领或提交，然后调用 finish。
+      3. can.start_work 为 true 时调用 start_work 认领；已有自己的执行（can.submit_result 为 true）就直接继续。
+      4. 开始前用 post_message 简短说明你的理解和计划；工作较长时中途用 post_message 汇报进度。
+      5. 要求不清楚、需要人决定或需要某位参与者协助时，用 ask_owner 提问（写明问题、可选方案和你的建议；
+         默认问负责人，需要别人时先用 list_members 找到对方再填 to），然后不要提交，调用 finish 结束本轮；
+         对方回答后你会被再次唤醒。
+      6. 自己完成交付物（写作、整理、分析等都由你直接写出），确认满足 criteria 后调用 submit_result 提交完整结果，
+         然后调用 finish。
+      7. 结果被验收退回时，按 review_reason 和留言修改后重新提交。
+      8. 写操作都要带 read_task 或上一次写操作返回的 basis；遇到冲突先重新 read_task。
+      9. 写入被拒绝且 read_task 显示你已不是处理人、任务已取消或已完成时，停止处理并调用 finish，不要留言。
+      工作中途收到的新唤醒消息是这个任务的新动态（人的留言、回答或改动）：先 read_task 再按新情况调整。
 
       原则：普通留言不算交付；不要编造无法获得的事实（例如真实的工作记录），缺信息就提问或在结果中明确说明假设；
-      默认使用中文。
+      不要回复自己的留言；默认使用中文。
 
 tools.taskloom:
   use: tools/runtime

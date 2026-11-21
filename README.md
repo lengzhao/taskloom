@@ -8,14 +8,14 @@
 
 ## 当前状态
 
-- 已实现（本地 SQLite）：存储、事务、幂等与审计；人与 Agent 身份、密码登录与凭据；任务与 commit 时间线；分配、认领、提交、验收（通过/退回）、取消与重开；提问与回答；空间与项目；变化补拉；MCP 接入；内嵌工作台。
-- 未实现：真实 Agent/Harness 联调（下一步 M06）、WebSocket、S3 适配（文件当前存本地目录）、任务树、提醒与历史恢复。本地测试不代表生产可用，详见[开发说明](docs/development.md#验证范围与已知限制)。
+- 已实现（本地 SQLite）：存储、事务、幂等与审计；人与 Agent 身份、密码登录与凭据；任务与 commit 时间线；分配、认领、提交、验收（通过/退回）、取消与重开；提问与回答；空间与项目；变化补拉；MCP 接入；内嵌工作台；AgentKit 适配插件（按任务唤醒/steer/停止，已真实联调）。
+- 未实现：M06 剩余的运维、备份恢复与就绪检查、WebSocket、S3 适配（文件当前存本地目录）、任务树、提醒与历史恢复。本地测试不代表生产可用，详见[开发说明](docs/development.md#验证范围与已知限制)。
 
 ## 运行
 
 - 本地：先用 `taskloom-admin` 初始化管理员并设置密码，再 `go run ./cmd/taskloom`，打开 `http://127.0.0.1:8080/v1/app`，步骤见[开发说明](docs/development.md#初始化与-agent-登记)。healthz 只表示进程存活。
 - Docker：`docker build -t taskloom:local .`，再 `docker run -d --name taskloom -p 8899:8899 -v taskloom-data:/data taskloom:local`，访问 `http://localhost:8899/v1/app`。端口由 `TASKLOOM_PORT`（默认 8899）决定，Origin 默认 `http://localhost:端口`，可用 `TASKLOOM_ORIGIN` 覆盖；非 localhost 访问须走 HTTPS。首次启动前用同一数据卷执行 `docker run --rm -i -v taskloom-data:/data taskloom:local taskloom-admin -base /app/base.yaml -config /app/config.yaml -mode bootstrap -password-stdin ...`，从 stdin 输入管理员密码；不会生成管理员凭据文件。需要内部 Go 模块代理时传 `--build-arg GOPROXY="$(go env GOPROXY)" --build-arg GOSUMDB="$(go env GOSUMDB)"`（也支持 `GOPRIVATE`）；离线构建可先 `go mod vendor`。
-- Agent：服务内置 MCP 端点 `POST /v1/mcp`，Agent 只需配置 URL 和凭据，见 [MCP 接入](docs/mcp-adapter.md)。
+- Agent：服务内置 MCP 端点 `POST /v1/mcp`，Agent 只需配置 URL 和凭据，见 [MCP 接入](docs/mcp-adapter.md)；常驻 AgentKit 执行 Agent 见 `deploy/agent`。
 - 检查：`sh scripts/check.sh all`、`sh scripts/check.sh race`。
 
 ## 文档

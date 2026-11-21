@@ -32,6 +32,10 @@ type Store interface {
 	Reader
 	OpenExecution(ctx context.Context, value Execution) (Execution, error)
 	SaveExecution(ctx context.Context, value Execution) error
+	// CredentialBound reports whether any execution of the task, current or
+	// fenced, was bound to the credential: the only way Taskloom recognizes a
+	// write from an old Agent instance.
+	CredentialBound(ctx context.Context, tenant, taskID, credentialID string) (bool, error)
 }
 
 // ResultAccess lets result submission record progress on its execution in the same transaction.
@@ -40,9 +44,12 @@ type ResultAccess interface {
 	SaveExecution(ctx context.Context, value Execution) error
 }
 
-// Progress stamps the caller's own writable execution with the time it
-// recorded progress (a comment or question) on the task, inside the caller's
-// transaction. It is a no-op for anyone else and for fenced executions.
+// Progress is called inside the transaction of a comment or question on the
+// task. It stamps the caller's own writable execution with the time, and
+// refuses with fault.ErrConflict a write from an Agent instance (credential)
+// that executed the task but no longer holds a writable execution: a fenced
+// execution may not comment or ask. People, and Agent instances that never
+// executed the task, write as participants and are unaffected.
 type Progress interface {
 	RecordProgress(ctx context.Context, p identity.Principal, tenant, taskID string) error
 }

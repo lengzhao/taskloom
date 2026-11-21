@@ -95,3 +95,7 @@ func (s *Store) updateTask(ctx context.Context, tenant, taskID string, change fu
 	})
 	return out, e
 }
+
+func (s *Store) SetOwner(ctx context.Context, tenant, taskID, owner string) (task.Task, error) {
+	return s.updateTask(ctx, tenant, taskID, func(t *task.Task) { t.Owner = owner })
+}

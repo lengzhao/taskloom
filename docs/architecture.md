@@ -21,18 +21,19 @@ Taskloom 是人与 Agent 协作的任务系统，采用模块化单体：公共�
 | server、http（transport/http） | 资源/组件生命周期；路由挂载与 API 模块启停 | 2、1 |
 | sql（storage/sql） | GORM 连接、迁移与全部仓储，不含业务判断 | 0 |
 | blobs（storage/fs 或 storage/s3） | 文件字节存储（cap/blob）：默认本地目录；S3 兼容存储以[覆盖示例](../examples/storage/s3.config.yaml)整节点替换 | 0 |
-| identity（identity/local）、access（access/default） | 凭据认证；按成员/负责人/参与关系授权 | 1、2 |
+| identity（identity/local）、access（access/default） | 凭据认证；按成员/负责人/参与/项目成员关系授权 | 1、3 |
 | command-runtime（commands/runtime） | 命令事务、幂等回执、审计 | 5 |
 | flow（task/flow） | 阶段/轮次唯一写入者，步骤由事实推导（含直接必需子任务） | 6 |
 | workspace（workspace/tasks） | 任务创建（含原子建为子任务、执行中的 Agent 拆分本任务）/依据修改/评论/参与者/项目归属/变化补拉 | 13 |
 | execution-commands、result-commands、question-commands、flow-commands | 分配与认领；提交与验收；提问与回答；取消与开新轮 | 8、7、8、5 |
+| ownership-commands（commands/ownership） | 负责人移交：同事务改负责人、原负责人留为参与者、写 `task.owner` commit、按新验收人重推导完成并发事件 | 8 |
 | plan-commands（commands/plan） | 子任务放置：挂接、切换必需、重挂（不解除），同事务递增父依据；同一规则以 Placer 供任务创建在其事务内调用 | 7 |
 | workflow-query（query/workflow） | 只读快照（含可读父/子任务）、可用操作原因、收件箱 | 11 |
 | security（commands/security）、catalog（catalog/projects） | 身份/成员/凭据/密码管理；空间与项目 | 9、6 |
 | files（commands/file） | 文件上传、列出与读取，规则见[文件与链接](core-contracts.md#文件与链接) | 6 |
-| workspace-api、workflow-api、plan-api、file-api、mcp-api、audit-api、health | HTTP 与 MCP 协议适配、管理员审计查询、存活检查；Origin/CSRF 由 http 对所有路由统一检查 | 6、5、1、1、8、4、0 |
+| workspace-api、workflow-api、plan-api、ownership-api、file-api、mcp-api、audit-api、health | HTTP 与 MCP 协议适配、管理员审计查询、存活检查；Origin/CSRF 由 http 对所有路由统一检查 | 6、5、1、1、1、8、4、0 |
 
-超过 5 个 Deps 的模块都是同一命令事务内的协调边界：每个字段是一个独立能力接口（命令生命周期、各领域事实、事件），不是服务定位器；拆开只会把同一事务协调挪到别处。workspace 的 13 项是工作台纵向切片的历史边界（第 13 项 Placer 只为让创建与放置成为一个原子命令，放置规则仍只在 plan 模块），新增执行/验收/拆分能力都放入独立命令模块，不再向它堆积。执行中的 Agent 拆分本任务没有新增字段：原有的执行进展依赖改为 `executor`（execution.Executor），由执行模块检查调用者持有当前执行（Hold）并在其自己的计划变更后让执行跟随新依据（Follow），执行规则仍只在执行模块。flow 增加的关系读取是同一完成规则的事实输入，提交检查和父任务事件也复用它，命令模块因此无需各自读取关系。files 的 6 项是上传命令（命令生命周期、文件登记、字节存储）与读取（事务、认证、授权）共用的同一授权边界。评论与结果引用文件时不新增依赖：文件属于本任务这一引用完整性由 commit 仓储在追加时检查，与 RefID 相同。
+超过 5 个 Deps 的模块都是同一命令事务内的协调边界：每个字段是一个独立能力接口（命令生命周期、各领域事实、事件），不是服务定位器；拆开只会把同一事务协调挪到别处。workspace 的 13 项是工作台纵向切片的历史边界（第 13 项 Placer 只为让创建与放置成为一个原子命令，放置规则仍只在 plan 模块），新增执行/验收/拆分能力都放入独立命令模块，不再向它堆积。执行中的 Agent 拆分本任务没有新增字段：原有的执行进展依赖改为 `executor`（execution.Executor），由执行模块检查调用者持有当前执行（Hold）并在其自己的计划变更后让执行跟随新依据（Follow），执行规则仍只在执行模块。flow 增加的关系读取是同一完成规则的事实输入，提交检查和父任务事件也复用它，命令模块因此无需各自读取关系。ownership 的 8 项都是移交这一个事务内写入或检查的事实（负责人、新负责人成员资格、原负责人参与、时间线、新验收人下的完成、事件）加命令生命周期与它自己的授权（让做出移交的原负责人能重试已生效的移交），拆开只会把同一事务挪到别处。files 的 6 项是上传命令（命令生命周期、文件登记、字节存储）与读取（事务、认证、授权）共用的同一授权边界。评论与结果引用文件时不新增依赖：文件属于本任务这一引用完整性由 commit 仓储在追加时检查，与 RefID 相同。
 
 命令模块不依赖查询模块：各模块持有自己声明的 Deps，共享步骤是只接收窄接口的包级函数，不存在跨模块共用的依赖并集。
 

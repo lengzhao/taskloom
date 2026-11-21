@@ -296,6 +296,7 @@ access:
   deps:
     store: sql
     tasks: sql
+    projects: sql
 probe:
   use: test/security-probe
   deps:

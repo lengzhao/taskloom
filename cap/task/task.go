@@ -81,6 +81,12 @@ type BasisAdvancer interface {
 	AdvanceBasis(ctx context.Context, tenant, taskID string) (Task, error)
 }
 
+// OwnerSetter changes who is responsible for a task; it alters no basis.
+type OwnerSetter interface {
+	Reader
+	SetOwner(ctx context.Context, tenant, taskID, owner string) (Task, error)
+}
+
 // Store is the task use-case consumer's cohesive read/write capability.
 type Store interface {
 	SetProject(ctx context.Context, tenant, taskID, projectID string) (Task, error)

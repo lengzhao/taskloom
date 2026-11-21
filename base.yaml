@@ -14,7 +14,7 @@ http:
     # The one browser origin allowed; plain http only for a loopback host.
     origin: http://127.0.0.1:8080
   deps:
-    modules: [health, workspace-api, workflow-api, plan-api, file-api, mcp-api, audit-api]
+    modules: [health, workspace-api, workflow-api, plan-api, file-api, mcp-api, audit-api, ownership-api]
 health:
   use: api/health
 
@@ -38,6 +38,7 @@ access:
   deps:
     store: sql
     tasks: sql
+    projects: sql
 flow:
   use: task/flow
   config:
@@ -183,6 +184,22 @@ plan-api:
   use: api/plan
   deps:
     plan: plan-commands
+# Task handover: the owner or an administrator names another responsible person.
+ownership-commands:
+  use: commands/ownership
+  deps:
+    commands: command-runtime
+    authorization: access
+    tasks: sql
+    members: sql
+    participants: sql
+    commits: sql
+    flow: flow
+    events: sql
+ownership-api:
+  use: api/ownership
+  deps:
+    ownership: ownership-commands
 files:
   use: commands/file
   config:

@@ -82,7 +82,7 @@ func fixtureWithStore(t *testing.T) (readBack, *security.Service, string, *store
 	}
 	t.Cleanup(func() { s.Close(context.Background()) })
 	id, _ := local.New(local.Deps{Store: s})
-	az, _ := access.New(access.Deps{Store: s, Tasks: s})
+	az, _ := access.New(access.Deps{Store: s, Tasks: s, Projects: s})
 	r, _ := command.New(command.Deps{Transactions: s, Identity: id, Authorization: az, Requests: s, Audit: s})
 	sec := security.New(security.Deps{Passwords: s, Commands: r, Transactions: s, Principals: s, Credentials: s, Bootstrap: s, Members: s, Audit: s, Events: s})
 	if e := sec.Bootstrap(context.Background(), security.AdminInput{Tenant: "t", Subject: "u", Operator: "test", Reason: "test", Password: "AdminPassword123!"}); e != nil {

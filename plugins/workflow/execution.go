@@ -154,9 +154,23 @@ func (m *ExecutionModule) RecordProgress(ctx context.Context, p identity.Princip
 	if e != nil {
 		return e
 	}
-	if !v.Writable || !ownExecution(p, v) {
+	if v.Writable && ownExecution(p, v) {
+		v.ProgressAt = time.Now()
+		return m.d.Executions.SaveExecution(ctx, v)
+	}
+	// Only the current execution can be writable, so a credential bound to any
+	// execution of this task is now fenced. A person is not an instance: their
+	// comment is their own whatever happened to their manual work.
+	credential := agentCredential(p)
+	if credential == "" {
 		return nil
 	}
-	v.ProgressAt = time.Now()
-	return m.d.Executions.SaveExecution(ctx, v)
+	bound, e := m.d.Executions.CredentialBound(ctx, tenant, taskID, credential)
+	if e != nil {
+		return e
+	}
+	if bound {
+		return fault.ErrConflict
+	}
+	return nil
 }

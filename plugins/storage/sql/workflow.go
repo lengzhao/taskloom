@@ -79,6 +79,29 @@ func (s *Store) SaveExecution(ctx context.Context, v execution.Execution) error 
 		return nil
 	})
 }
+// CredentialBound scans the task's executions; a task has only a handful, one
+// per claim, so no credential column or index is kept for it.
+func (s *Store) CredentialBound(ctx context.Context, tenant, taskID, credentialID string) (bool, error) {
+	var found bool
+	e := s.use(ctx, false, func(db *gorm.DB) error {
+		var rows []executionRow
+		if e := db.Where("task_key = ?", key(tenant, taskID)).Find(&rows).Error; e != nil {
+			return e
+		}
+		for _, r := range rows {
+			var v execution.Execution
+			if e := json.Unmarshal(r.Data, &v); e != nil {
+				return e
+			}
+			if v.CredentialID == credentialID {
+				found = true
+				return nil
+			}
+		}
+		return nil
+	})
+	return found, e
+}
 func (s *Store) CurrentResult(ctx context.Context, tenant, taskID, round string) (delivery.Result, error) {
 	var out delivery.Result
 	e := s.use(ctx, false, func(db *gorm.DB) error {

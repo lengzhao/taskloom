@@ -42,7 +42,15 @@ claude mcp add --transport http taskloom http://localhost:8899/v1/mcp \
 
 ## 示例：AgentKit 常驻执行 Agent
 
-`deploy/agent/` 用已有的 AgentKit 运行时（v0.4.45）搭一个常驻执行 Agent：`platform/timer` 每 60 秒唤醒一次，先调 inbox 再处理分配给它的任务；只开放 Taskloom MCP 工具与 todo/finish，没有 shell、文件或网络工具，所有写入仍由 Taskloom 鉴权。模型走 OpenAI 兼容网关（默认 deepseek-v4.1-flash）。
+`deploy/agent/` 用已有的 AgentKit 运行时（版本随 go.mod）搭一个常驻执行 Agent，入口是 `cmd/taskloom-agent`：AgentKit 原生 runner 加上本仓库的平台插件 `platform/taskloom`（[harness/agentkit](../harness/agentkit/platform.go)）。只开放 Taskloom MCP 工具与 todo/finish，没有 shell、文件或网络工具，所有写入仍由 Taskloom 鉴权。模型走 OpenAI 兼容网关（默认 deepseek-v4.1-flash）。
+
+`platform/taskloom` 是 Agent 层的适配，不是 Taskloom 服务端插件，也不新增 Taskloom 接口：它用该 Agent 自己的业务凭据只读 `GET /v1/changes`、`/v1/inbox`、`/v1/tasks/{id}` 与 `/workflow`，决定何时唤醒、steer 或停止 AgentKit 会话：
+
+- **按任务分会话**：每个任务是一个 channel（会话 ID 含任务 ID），历史、steer 与停止互不影响；`runner.maxConcurrentTurns` 控制并行任务数。
+- **唤醒**：任务首次出现在 inbox（下一步等这个 Agent）时唤醒一次，之后只在其他人写入该任务时再唤醒，消息里带上这些新 commit 摘要；Agent 自己的写入从不唤醒自己（避免自回复）。等别人期间（问负责人、待验收）他人写入不唤醒，回到 inbox 时一并带上。阻塞任务（等待必需子任务）不唤醒。
+- **运行中新消息**：任务会话正在运行时的唤醒由 AgentKit runner 折叠进当前 turn（steer）。
+- **停止**：会话运行中任务被取消、处理人被换成别人或 Agent 失去读取权限时发送 `/stop`。Taskloom 此前已让该执行失去写资格；停止只为节省工作，不证明外部工具已停止。等别人或待验收不停止。
+- **断线与重启**：Taskloom 不可达时按 pollSeconds 起指数退避（上限 maxBackoffSeconds），不调用模型，恢复后用原游标补拉；游标被拒（换库/恢复备份）时从 inbox 重新同步。进程重启不保存任何状态：inbox 中每个任务唤醒一次，Agent 用同一凭据 read_task 继续原执行。凭据被拒按最大退避记错误日志，需运维换凭据后重启。
 
 ```sh
 # 1. 让两个容器在同一网络（taskloom 重建时用 --network taskloom-net 启动即可）
@@ -51,14 +59,12 @@ docker network connect taskloom-net taskloom
 # 2. 为 Agent 签发业务凭据（一张凭据即一个运行实例，30 天），写入 git 忽略的 deploy/agent/taskloom.env，不打印
 sh deploy/agent/issue-credential.sh
 # 3. 复制 deploy/agent/.env.example 为 deploy/agent/.env，自行填入模型 Key
-# 4. 构建并启动
+# 4. 在仓库根目录构建并启动
 docker build --build-arg GOPROXY="$(go env GOPROXY)" --build-arg GOSUMDB="$(go env GOSUMDB)" \
-  -f deploy/agent/Dockerfile -t taskloom-agent:local deploy/agent
+  -f deploy/agent/Dockerfile -t taskloom-agent:local .
 docker run -d --name taskloom-agent --restart unless-stopped --network taskloom-net \
   --env-file deploy/agent/.env --env-file deploy/agent/taskloom.env taskloom-agent:local
 docker logs -f taskloom-agent
 ```
 
-入口脚本在容器内按环境变量生成 `~/.agentkit/mcp.json`（AgentKit 的 `${env:X}` 在变量存在时保留为运行期引用 `env:X`，scopedEnv 与 baseUrl 等普通字段不会再解析它；需要直接取值的字段用 `${var:X}`）。验收通过任务立即完成；任务被转交、修改约定或取消时，Agent 的执行立即失效，下次读写时得知并停止处理。
-
-已知限制：AgentKit v0.4.45 的 timer 在 fresh 模式下各次唤醒的投递 ID 为 `taskloom:<启动时间>:run-N`，路由只识别 `:t:`/`:u:` 段，同一进程的所有唤醒会并入同一会话，历史随唤醒增长；示例配置以约 40k token 触发摘要压缩来限界，根治需在 AgentKit 中修正 timer 的会话 ID。空闲时 inbox 为空，每次唤醒只需 inbox→finish 两步。
+入口脚本在容器内按环境变量生成 `~/.agentkit/mcp.json`，并由 `TASKLOOM_MCP_URL` 去掉 `/mcp` 得到适配插件的 API 根 `TASKLOOM_API_URL`（可单独设置）。AgentKit 的 `${env:X}` 在变量存在时保留为运行期引用 `env:X`，普通字段不会再解析它；需要直接取值的字段（如 baseUrl）用 `${var:X}`；凭据只经 `authorizationEnv` 指定的环境变量读取，不进配置。`taskloom-agent -check` 只构建配置图并退出。

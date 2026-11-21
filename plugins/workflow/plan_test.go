@@ -318,7 +318,7 @@ func TestBlockedParentLeavesInboxUntilSubtasksComplete(t *testing.T) {
 		t.Fatal("waiting on subtasks is not a blocked wait", s.Position, s.NextActor)
 	}
 	inbox := func(token string) map[string]api.Pending {
-		items, e := f.query.Inbox(f.ctx, token)
+		items, e := f.query.Inbox(f.ctx, token, nil)
 		if e != nil {
 			t.Fatal(e)
 		}
@@ -390,12 +390,12 @@ func TestCreateUnderParentIsAtomic(t *testing.T) {
 	if _, e = f.controls.Cancel(f.ctx, f.owner, "cancel", api.Cancel{TaskID: parent.Task.ID}); e != nil {
 		t.Fatal(e)
 	}
-	before, _ := f.taskQueries.List(f.ctx, f.owner)
+	before, _ := f.taskQueries.List(f.ctx, f.owner, nil)
 	in.Title = "late"
 	if _, e = f.tasks.Commands.Create(f.ctx, f.owner, "create-late", in); !errors.Is(e, fault.ErrConflict) {
 		t.Fatal("subtask created under a cancelled parent", e)
 	}
-	if after, _ := f.taskQueries.List(f.ctx, f.owner); len(after) != len(before) {
+	if after, _ := f.taskQueries.List(f.ctx, f.owner, nil); len(after) != len(before) {
 		t.Fatal("failed placement left a task behind", len(before), len(after))
 	}
 	if _, e = f.tasks.Commands.Create(f.ctx, f.agent, "agent-create", workspace.Create{Title: "x", ParentID: parent.Task.ID}); e == nil {

@@ -15,8 +15,6 @@
 | plugins/transport/http | 路由挂载、监听及受管模块启停 |
 | plugins/api/health | 进程存活检查 |
 | plugins/all.go | 当前已实现插件的集中注册入口 |
-| harness/agentkit | Agent 层适配：AgentKit 平台插件 `platform/taskloom`，只读业务 API 决定唤醒与 steer，见[MCP 接入](mcp-adapter.md#示例agentkit-常驻执行-agent) |
-| cmd/taskloom-agent | AgentKit 原生 runner 加上述插件的二进制，镜像见 deploy/agent |
 
 构造函数不打开连接；根从 resources 顺序 Open 后运行 components，退出先 Stop 组件、再逆序 Close 资源。失败的 Open 自行清理部分状态。HTTP 独占其模块生命周期，模块不能重复列入根 resources。退出时限内组件应配合取消，Go 无法强制终止不合作的 goroutine。
 
@@ -96,10 +94,10 @@ AWS_ACCESS_KEY_ID=… AWS_SECRET_ACCESS_KEY=… TASKLOOM_S3_TEST_ENDPOINT=127.0.
 - 项目可见性与负责人移交（2026-11-21）：`plugins/access/default/access_test.go` 与 `plugins/workflow/visibility_test.go`（真实配置图）覆盖项目负责人与成员（含 Agent）读、留言而不能管理、移动、移交、验收，非成员不可读，非成员不能建入或移入项目，成员可移入自己的任务，参与者不能再移动，移出成员即失去访问；离开租户的成员在保存时自动移出、归档项目保持成员访问、`project.file` 规则；移交的权限、Agent 拒绝、所见负责人冲突（含首尾空格）、原负责人重试已生效移交得到原结果而新请求 409、非读者不能借重试规则、新负责人验收而原负责人只读、执行不变、管理员移交已完成任务。内置浏览器 + 独立临时实例：lead 在工作台建项目并勾选成员、在项目中建任务，HTTP 实测成员读 200、留言 200、分配 403，非成员读 403；工作台移交给 member 后负责人变更、lead 成为参与者且失去任务控制、时间线显示"lead → member：原因"。
 - 工作台：内置浏览器在独立临时库中验证过创建、分配、认领、提交、验收、项目与看板等主路径；2026-11-21 在独立实例中验证过按变化增量刷新：外部改名、分配、新建只重读变化的任务，取消后移出"等我处理"，项目变化时整表重读（其他最近界面改动只做了脚本语法检查）。
 
-真实 Agent 联调（2026-11-20，`taskloom:local` 独立实例 + `deploy/agent` 镜像 + deepseek-v4.1-flash，worker-1 一个实例）：
+真实 Agent 联调（以下记录时 Agent 代码仍在本仓库 `harness/agentkit` 与 `deploy/agent`，2026-11-22 原样迁入 AgentKit 的 `platform/taskloom`，见 [MCP 接入](mcp-adapter.md#示例agentkit-常驻执行-agent)；2026-11-20，`taskloom:local` 独立实例 + `deploy/agent` 镜像 + deepseek-v4.1-flash，worker-1 一个实例）：
 
 - 真实通过：分配后约 2 秒唤醒，认领→说明计划→提交→验收完成；验收退回后带退回原因唤醒并重新提交；运行中负责人留言被 steer 进当前 turn 且结果采纳；Agent 提问后负责人普通留言不唤醒、回答后一次唤醒并带上两条新动态；被提问（addressee）时只回答不认领；运行中取消或改派给另一 Agent 后旧执行的写入被拒（2026-11-21 起适配插件不再主动停止 turn，由 Agent 遇到拒绝后自行 finish，此路径尚未重新真实联调）；Taskloom 停机 40 秒期间按 3/6/12/24 秒退避且不调用模型，恢复后沿用原游标；Agent 容器运行中重启后自动唤醒并沿用原执行提交；撤销凭据后报错并按 60 秒退避；空闲时不调用模型；每个任务独立会话（`taskloom:<任务ID>`），Agent 自己的写入不唤醒自己。
-- 仅单测（harness/agentkit）：任务离开收件箱后不再发送任何消息、阻塞后重新进入收件箱即唤醒、游标被拒后从 inbox 重新同步、人类凭据被拒、上下文取消退出。
+- 仅单测（现为 AgentKit `runtime/platform/taskloom`）：任务离开收件箱后不再发送任何消息、阻塞后重新进入收件箱即唤醒、游标被拒后从 inbox 重新同步、人类凭据被拒、上下文取消退出。
 - C08 真实验证（2026-11-21，修复后的 `taskloom:local` 独立实例 + 真实 Agent worker-1 认领，旧执行写入用同一凭据经 HTTP 发出）：取消后旧执行留言 409 且不留 commit、负责人仍可留言；改派给 worker-2 后，新处理人认领前后旧执行留言与提问均 409、新处理人留言成功；同一凭据依据变更后重新认领可留言；换新凭据认领后旧凭据留言 409、新凭据留言成功；从未执行的 Agent 参与者与负责人留言不受影响。
 - Agent 拆分本任务（2026-11-21，`taskloom:m08` 独立实例 + `taskloom-agent:m08` + deepseek-v4.1-flash，worker-1 一个实例，两个任务）：Agent 认领后按任务说明调用 `create_subtask` 拆出必需子任务、负责人为指定用户 lead，父任务依据 1→2，Agent 的执行保持可写并跟随到依据 2，随后留言说明进度并结束本轮；lead 能读子任务、读不到父任务（关系不授予访问），子任务参与者为 worker-1；lead 把子任务分配给 worker-1，Agent 在独立会话中完成，lead 验收后父任务回到等处理人，Agent 被唤醒后用最初的执行（未重新认领）在依据 2 上提交汇总结果并验收完成。首轮联调发现适配插件只在"本进程首次看到"或"他人新写入"时唤醒，父任务因必需子任务完成重新进入收件箱时没有唤醒；已改为任务停止等待 Agent 后再次等待即视为重新进入并唤醒，第二个任务在不重启 Agent 的情况下真实通过（日志 `first=false entered=true new_commits=0`）。
 - 新旧实例并存（同一 Agent 两个凭据同时运行）：被换下的旧实例仍按分配给本 Agent 的任务重新认领，反过来失效新实例并提交结果；隔离本身成立（谁被换下谁的写入 409），但两个实例会互相抢回执行。运行多个实例须各用不同 Agent，或停掉旧实例后再换凭据。

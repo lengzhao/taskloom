@@ -43,3 +43,4 @@ taskloom-files/
 
 # Taskloom credential generated for the local AgentKit container
 deploy/agent/taskloom.env
+deploy/agent/mcp.json

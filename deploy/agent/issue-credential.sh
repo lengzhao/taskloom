@@ -24,7 +24,8 @@ secret=$(docker exec "$CONTAINER" cat "$file" | sed -n 's/.*"Secret": *"\([^"]*\
 docker exec "$CONTAINER" rm -f "$file"
 [ -n "$secret" ] || { echo "credential file has no Secret" >&2; exit 1; }
 umask 077
-printf 'TASKLOOM_API_URL=%s\nTASKLOOM_AUTHORIZATION=Bearer %s\n' "$API_URL" "$secret" > "$dir/taskloom.env"
+# Quoted so the file can be sourced by a POSIX shell (the value has a space).
+printf "TASKLOOM_API_URL='%s'\nTASKLOOM_AUTHORIZATION='Bearer %s'\n" "$API_URL" "$secret" > "$dir/taskloom.env"
 cat > "$dir/mcp.json" <<JSON
 {
   "mcpServers": {

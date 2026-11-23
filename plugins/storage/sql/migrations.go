@@ -30,6 +30,7 @@ var migrations = []migration{
 	{"catalog/001", "workspace-and-project-metadata-v1", []any{&spaceRow{}, &projectRow{}}},
 	{"plan/001", "single-parent-task-links-v1", []any{&linkRow{}}},
 	{"file/001", "immutable-task-file-versions-and-references-v1", []any{&fileRow{}, &fileRefRow{}}},
+	{"skill/001", "skill-capabilities-ordered-releases-reviews-current-vectors-v2", []any{&skillCapabilityRow{}, &skillReleaseRow{}, &skillReviewRow{}, &skillVectorRow{}}},
 }
 
 func migrate(ctx context.Context, db *gorm.DB, driver string) error {

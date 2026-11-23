@@ -37,7 +37,7 @@ func fixture(t *testing.T) (*store.Store, *command.Runner, *security.Service, st
 	if err != nil {
 		t.Fatal(err)
 	}
-	az, err := access.New(access.Deps{Store: s, Tasks: s, Projects: s})
+	az, err := access.New(access.Deps{Store: s, Tasks: s, Projects: s, Skills: s})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -297,7 +297,7 @@ func TestOutboxFailureRollsBackFactsAndReceipt(t *testing.T) {
 	ctx := context.Background()
 
 	auth, _ := local.New(local.Deps{Store: s})
-	az, _ := access.New(access.Deps{Store: s, Tasks: s, Projects: s})
+	az, _ := access.New(access.Deps{Store: s, Tasks: s, Projects: s, Skills: s})
 	runner, _ := command.New(command.Deps{Transactions: s, Requests: s, Identity: auth, Authorization: az, Audit: s})
 	events := failingEvents{s}
 	before, err := s.ReadEvents(ctx, "t", 0, 100)

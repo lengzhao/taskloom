@@ -7,6 +7,7 @@ import (
 	"github.com/lengzhao/taskloom/cap/catalog"
 	"github.com/lengzhao/taskloom/cap/fault"
 	"github.com/lengzhao/taskloom/cap/identity"
+	"github.com/lengzhao/taskloom/cap/skills"
 	"github.com/lengzhao/taskloom/cap/task"
 	access "github.com/lengzhao/taskloom/plugins/access/default"
 	"testing"
@@ -26,7 +27,7 @@ func (taskLookup) GetTask(_ context.Context, tenant, id string) (task.Task, erro
 	return task.Task{Tenant: tenant, ID: id, Owner: "owner"}, nil
 }
 func TestReadOnlyProvidersAreSufficient(t *testing.T) {
-	s, e := access.New(access.Deps{Store: relations{}, Tasks: taskLookup{}, Projects: projects{}})
+	s, e := access.New(access.Deps{Store: relations{}, Tasks: taskLookup{}, Projects: projects{}, Skills: skillCaps{}})
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -65,7 +66,7 @@ func TestTaskWritesImplyRead(t *testing.T) {
 	for _, role := range []string{"admin", "member"} {
 		for _, participant := range []bool{false, true} {
 			for _, assigned := range []bool{false, true} {
-				s, e := access.New(access.Deps{Store: fixedRelations{role, participant, assigned}, Tasks: taskLookup{}, Projects: projects{}})
+				s, e := access.New(access.Deps{Store: fixedRelations{role, participant, assigned}, Tasks: taskLookup{}, Projects: projects{}, Skills: skillCaps{}})
 				if e != nil {
 					t.Fatal(e)
 				}
@@ -104,7 +105,7 @@ func (filedTask) GetTask(_ context.Context, tenant, id string) (task.Task, error
 // they read, comment and ask, but neither manage, file elsewhere nor hand over.
 func TestProjectMembersActAsParticipants(t *testing.T) {
 	ctx := context.Background()
-	s, e := access.New(access.Deps{Store: relations{}, Tasks: filedTask{}, Projects: projects{}})
+	s, e := access.New(access.Deps{Store: relations{}, Tasks: filedTask{}, Projects: projects{}, Skills: skillCaps{}})
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -124,7 +125,7 @@ func TestProjectMembersActAsParticipants(t *testing.T) {
 		t.Fatal("non-member reads a filed task", e)
 	}
 	// A participant may comment but no longer re-file the task.
-	s, _ = access.New(access.Deps{Store: fixedRelations{"member", true, false}, Tasks: taskLookup{}, Projects: projects{}})
+	s, _ = access.New(access.Deps{Store: fixedRelations{"member", true, false}, Tasks: taskLookup{}, Projects: projects{}, Skills: skillCaps{}})
 	if e := s.Check(ctx, identity.Principal{Tenant: "t", ID: "other", Kind: "human"}, "task.project", "task"); !errors.Is(e, az.ErrForbidden) {
 		t.Fatal("participant files the task", e)
 	}
@@ -133,7 +134,7 @@ func TestProjectMembersActAsParticipants(t *testing.T) {
 // Filing into a project is for its people and administrators.
 func TestProjectFiling(t *testing.T) {
 	ctx := context.Background()
-	s, e := access.New(access.Deps{Store: relations{}, Tasks: filedTask{}, Projects: projects{}})
+	s, e := access.New(access.Deps{Store: relations{}, Tasks: filedTask{}, Projects: projects{}, Skills: skillCaps{}})
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -145,8 +146,48 @@ func TestProjectFiling(t *testing.T) {
 	if e := s.Check(ctx, identity.Principal{Tenant: "t", ID: "lead", Kind: "human"}, "project.file", "missing"); !errors.Is(e, az.ErrForbidden) {
 		t.Fatal("unknown project", e)
 	}
-	admin, _ := access.New(access.Deps{Store: fixedRelations{"admin", false, false}, Tasks: filedTask{}, Projects: projects{}})
+	admin, _ := access.New(access.Deps{Store: fixedRelations{"admin", false, false}, Tasks: filedTask{}, Projects: projects{}, Skills: skillCaps{}})
 	if e := admin.Check(ctx, identity.Principal{Tenant: "t", ID: "boss", Kind: "human"}, "project.file", "p"); e != nil {
 		t.Fatal("administrator", e)
+	}
+}
+
+// skillCaps knows one capability "c" owned by "owner" with collaborator "helper".
+type skillCaps struct{}
+
+func (skillCaps) GetCapability(_ context.Context, tenant, id string) (skills.Capability, error) {
+	if id != "c" {
+		return skills.Capability{}, fault.ErrNotFound
+	}
+	return skills.Capability{Tenant: tenant, ID: id, Owner: "owner", Collaborators: []string{"helper"}}, nil
+}
+
+func TestSkillOperations(t *testing.T) {
+	member, _ := access.New(access.Deps{Store: fixedRelations{"member", false, false}, Tasks: taskLookup{}, Projects: projects{}, Skills: skillCaps{}})
+	admin, _ := access.New(access.Deps{Store: fixedRelations{"admin", false, false}, Tasks: taskLookup{}, Projects: projects{}, Skills: skillCaps{}})
+	cases := []struct {
+		s       *access.Service
+		p       identity.Principal
+		op, res string
+		allowed bool
+	}{
+		{member, identity.Principal{Tenant: "t", ID: "agent", Kind: "agent"}, "skill.read", "t", true},
+		{member, identity.Principal{Tenant: "t", ID: "agent", Kind: "agent"}, "skill.create", "t", true},
+		{member, identity.Principal{Tenant: "t", ID: "agent", Kind: "agent"}, "skill.read", "other", false},
+		{member, identity.Principal{Tenant: "t", ID: "owner", Kind: "human"}, "skill.manage", "c", true},
+		{member, identity.Principal{Tenant: "t", ID: "helper", Kind: "agent"}, "skill.release", "c", true},
+		{member, identity.Principal{Tenant: "t", ID: "helper", Kind: "agent"}, "skill.manage", "c", false},
+		{member, identity.Principal{Tenant: "t", ID: "stranger", Kind: "human"}, "skill.release", "c", false},
+		{member, identity.Principal{Tenant: "t", ID: "owner", Kind: "human"}, "skill.release", "missing", false},
+		{member, identity.Principal{Tenant: "t", ID: "owner", Kind: "human"}, "skill.review", "t", false},
+		{admin, identity.Principal{Tenant: "t", ID: "boss", Kind: "human"}, "skill.review", "t", true},
+		{admin, identity.Principal{Tenant: "t", ID: "boss", Kind: "human"}, "skill.manage", "c", true},
+		{admin, identity.Principal{Tenant: "t", ID: "bot", Kind: "agent"}, "skill.admin", "t", false},
+	}
+	for _, c := range cases {
+		err := c.s.Check(context.Background(), c.p, c.op, c.res)
+		if (err == nil) != c.allowed {
+			t.Errorf("%s %s on %s: %v", c.p.ID, c.op, c.res, err)
+		}
 	}
 }

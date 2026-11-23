@@ -297,6 +297,7 @@ access:
     store: sql
     tasks: sql
     projects: sql
+    skills: sql
 probe:
   use: test/security-probe
   deps:
@@ -304,6 +305,13 @@ probe:
     authorization: access
 `, "")
 	if _, _, err := cfg.BuildFiles(context.Background(), bp, op); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// The skill overlay adds its nodes to the real default graph.
+func TestSkillsExampleOverlayBuilds(t *testing.T) {
+	if _, _, err := cfg.BuildFiles(context.Background(), "../../base.yaml", "../../examples/skills/skills.config.yaml"); err != nil {
 		t.Fatal(err)
 	}
 }

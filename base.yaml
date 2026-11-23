@@ -39,6 +39,7 @@ access:
     store: sql
     tasks: sql
     projects: sql
+    skills: sql
 flow:
   use: task/flow
   config:

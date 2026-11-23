@@ -62,7 +62,7 @@ func (c *Config) Validate() error {
 // (commands) and registers the release (registry) after storing bytes
 // (blobs); before accepting bytes it authenticates (identity) and resolves
 // the capability (registry) in a read transaction (transactions); after
-// commit it derives the discovery vector (embedder). This mirrors
+// commit it derives the discovery vector (embedder, optional). This mirrors
 // commands/file; splitting would duplicate the same pre-check.
 type Deps struct {
 	Commands     capcommand.Handler     `json:"commands"`
@@ -70,7 +70,7 @@ type Deps struct {
 	Identity     identity.Authenticator `json:"identity"`
 	Registry     skills.Registry        `json:"registry"`
 	Blobs        blob.Store             `json:"blobs"`
-	Embedder     skills.Embedder        `json:"embedder"`
+	Embedder     skills.Embedder        `json:"embedder,omitempty"`
 }
 
 type Module struct {
@@ -87,7 +87,7 @@ func New(c Config, d Deps) (*Module, error) {
 	if err := c.Validate(); err != nil {
 		return nil, err
 	}
-	if d.Commands == nil || d.Transactions == nil || d.Identity == nil || d.Registry == nil || d.Blobs == nil || d.Embedder == nil {
+	if d.Commands == nil || d.Transactions == nil || d.Identity == nil || d.Registry == nil || d.Blobs == nil {
 		return nil, errors.New("skill publication capabilities required")
 	}
 	t, _ := time.ParseDuration(c.EmbedTimeout)
@@ -210,7 +210,7 @@ func (m *Module) Publish(ctx context.Context, token, key string, body io.Reader)
 	if err != nil {
 		return skills.Release{}, err
 	}
-	if applied {
+	if applied && m.d.Embedder != nil {
 		m.index(ctx, r) // best effort; Reindex recovers a failure
 	}
 	return r, nil
@@ -279,6 +279,9 @@ func (m *Module) manage(ctx context.Context, token, key, id, name string, input 
 // transaction, every current release still without a vector, so a replay
 // simply finds whatever is still missing.
 func (m *Module) Reindex(ctx context.Context, token, key string) (int, error) {
+	if m.d.Embedder == nil {
+		return 0, fault.ErrUnavailable
+	}
 	caller, err := m.authenticate(ctx, token)
 	if err != nil {
 		return 0, err

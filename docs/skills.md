@@ -9,7 +9,7 @@ skill 模块组负责 Agent Skill 从发布到交到宿主手里为止：发布�
 | Capability：租户内唯一的语义名、拥有者、可见性（private/tenant）、协作者、归档 | SQL | 拥有者与管理员可改；名字与租户不可改。存储的每个写事务持有全局锁，读改写不需要版本号 |
 | Release：严格递增的 semver 版本、摘要、大小、SKILL.md 声明、发布者、提交顺序 | SQL；字节在 `cap/blob`，键即 `release_ref` | 不可变，纠正只能发新版本 |
 | Review：approved/rejected 加理由与审核人 | SQL | 只追加 |
-| 检索向量 | SQL，只存当前版本的，发布提交后写入 | 派生数据：新版本追加时删除旧向量，reindex 补齐缺失 |
+| 检索向量（仅配置 embedder 时） | SQL，只存当前版本的，发布提交后写入 | 派生数据：新版本追加时删除旧向量，reindex 补齐缺失 |
 | 当前版本、交付判定、trust、诊断 | 不存 | 当前版本是最后追加的版本；判定与 trust 由 Release、最新 Review 和宿主事实推导；诊断由不可变字节确定性重算，预检时给作者看 |
 
 `release_ref` 是不透明的随机 ID，也是字节键；宿主落地后用 `X-Content-SHA256` 自行校验摘要。
@@ -21,22 +21,23 @@ skill 模块组负责 Agent Skill 从发布到交到宿主手里为止：发布�
    - 只提示：缺 `when_to_use`、`not_for`、`success_criteria`、`examples`；联网、shell、破坏性命令、凭据相关的风险标记。正则标记不证明安全与否。
 2. 已有同名 capability 走 `skill.release`（拥有者、协作者、管理员），否则走 `skill.create`（任一有效成员）；先写字节，再在命令事务内创建 capability（首次）并追加版本。
 3. 同版本同字节返回已有版本；同版本不同字节或更低版本拒绝（`version-not-increasing`）。失败、重放和相同重试都删除新写的字节，补偿失败只留下不可达字节。
-4. 提交后在事务外调用 embedding（`name + description`），失败只让该版本暂不参与语义检索；管理员 `reindex` 补齐当前版本缺失的向量；它只经命令生命周期鉴权与审计，回执不存内容，重放时重新计算缺失项。
+4. 配置了 embedder 时，提交后在事务外调用 embedding（`name + description`），失败只让该版本暂不参与语义检索；管理员 `reindex` 补齐当前版本缺失的向量；它只经命令生命周期鉴权与审计，回执不存内容，重放时重新计算缺失项。未配置 embedder 时不生成向量，`reindex` 返回不可用。
 
 预检与发布走同一套检查，只读，不留回执。
 
 ## 发现
 
-`GET /skills/capabilities` 的 `match` 决定方式，权限与可见性先过滤，分数只在单次响应内可比：
+`GET /skills/capabilities` 的 `match` 决定方式，权限与可见性先过滤，分数只在单次响应内可比。部署在 `skill-query` 的 `modes` 中选择启用哪些方式；留空时启用 name、lexical、bm25，接了 embedder 再加 semantic；未启用的方式返回 400，列出 semantic 却未接 embedder 则启动失败。
 
 | match | 做法 |
 | --- | --- |
 | 空 | 按名字浏览，不带查询 |
-| `name` | 前缀命中为 1，否则 trigram 相似度 > 0.3 |
-| `lexical` | 名字精确/前缀/子串/trigram，其次描述包含或分词覆盖；不调用 embedding |
-| `semantic` | 查询向量与当前版本向量的余弦；距离超过 `maxDistance`（默认 0.65）丢弃，文本含全部查询词加 `lexicalBonus`（默认 0.1）；查询 embedding 失败直接报错，不降级 |
+| `name`（模糊） | 前缀命中为 1，否则 trigram 相似度 > 0.3 |
+| `lexical`（关键字） | 名字精确/前缀/子串/trigram，其次描述包含或分词覆盖 |
+| `bm25` | Okapi BM25（k1 1.2、b 0.75），语料为当前可见的版本，名字计两次；词按字母数字切分，中日韩连续字符切成二元组；按本次最高分归一到 1 |
+| `semantic`（需 embedder） | 查询向量与当前版本向量的余弦；距离超过 `maxDistance`（默认 0.65）丢弃，文本含全部查询词加 `lexicalBonus`（默认 0.1）；查询 embedding 失败直接报错，不降级 |
 
-打分在 Go 内存中完成（`domain/skillmatch`），SQLite、MySQL、PostgreSQL 行为一致，不依赖 FTS5 或 pgvector。两个默认参数沿用 Skilla，换模型时须用有代表性的相关与不相关查询重新标定。
+除 semantic 外都不调用外部服务。打分在 Go 内存中完成（`domain/skillmatch`），SQLite、MySQL、PostgreSQL 行为一致，不依赖 FTS5 或 pgvector。两个默认参数沿用 Skilla，换模型时须用有代表性的相关与不相关查询重新标定。
 
 ## 交付判定
 

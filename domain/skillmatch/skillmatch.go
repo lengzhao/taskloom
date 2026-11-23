@@ -1,5 +1,5 @@
 // Package skillmatch scores discovery candidates without a database: name
-// prefix and trigram similarity, lexical overlap, and vector cosine. Scores
+// prefix and trigram similarity, lexical overlap, BM25, and vector cosine. Scores
 // are comparable only within one query.
 package skillmatch
 
@@ -66,6 +66,114 @@ func Lexical(t Text, q string) (float64, bool) {
 // lexical bonus of a semantic match.
 func Mentions(t Text, q string) bool {
 	return tokenCoverage(fold(t.Name+"\n"+t.Description+"\n"+strings.Join(t.Extra, "\n")), fold(q)) == 1
+}
+
+// BM25 parameters (Okapi defaults); the name counts nameWeight times.
+const (
+	bm25K1     = 1.2
+	bm25B      = 0.75
+	nameWeight = 2
+)
+
+// BM25 scores every text against q over the corpus docs, scaled so the
+// best match is 1; 0 means no query term occurs. Terms are words, and runs
+// of CJK characters are split into overlapping bigrams.
+func BM25(docs []Text, q string) []float64 {
+	scores := make([]float64, len(docs))
+	query := map[string]struct{}{}
+	for _, t := range terms(q) {
+		query[t] = struct{}{}
+	}
+	if len(query) == 0 || len(docs) == 0 {
+		return scores
+	}
+	tf := make([]map[string]int, len(docs))
+	lens := make([]int, len(docs))
+	df := map[string]int{}
+	total := 0
+	for i, d := range docs {
+		ts := terms(d.Name)
+		var all []string
+		for range nameWeight {
+			all = append(all, ts...)
+		}
+		all = append(all, terms(d.Description+"\n"+strings.Join(d.Extra, "\n"))...)
+		tf[i] = map[string]int{}
+		for _, t := range all {
+			if tf[i][t] == 0 {
+				df[t]++
+			}
+			tf[i][t]++
+		}
+		lens[i] = len(all)
+		total += len(all)
+	}
+	avg := float64(total) / float64(len(docs))
+	if avg == 0 {
+		return scores
+	}
+	n := float64(len(docs))
+	best := 0.0
+	for i := range docs {
+		for t := range query {
+			f := float64(tf[i][t])
+			if f == 0 {
+				continue
+			}
+			idf := math.Log(1 + (n-float64(df[t])+0.5)/(float64(df[t])+0.5))
+			scores[i] += idf * f * (bm25K1 + 1) / (f + bm25K1*(1-bm25B+bm25B*float64(lens[i])/avg))
+		}
+		best = math.Max(best, scores[i])
+	}
+	if best > 0 {
+		for i := range scores {
+			scores[i] /= best
+		}
+	}
+	return scores
+}
+
+// terms folds s into words, splitting CJK runs into bigrams.
+func terms(s string) []string {
+	var out []string
+	for _, w := range words(fold(s)) {
+		var run, other []rune
+		flush := func() {
+			if len(other) > 0 {
+				out = append(out, string(other))
+				other = nil
+			}
+			switch {
+			case len(run) == 1:
+				out = append(out, string(run))
+			case len(run) > 1:
+				for i := 0; i+2 <= len(run); i++ {
+					out = append(out, string(run[i:i+2]))
+				}
+			}
+			run = nil
+		}
+		for _, r := range w {
+			if cjk(r) {
+				if len(other) > 0 {
+					out = append(out, string(other))
+					other = nil
+				}
+				run = append(run, r)
+			} else {
+				if len(run) > 0 {
+					flush()
+				}
+				other = append(other, r)
+			}
+		}
+		flush()
+	}
+	return out
+}
+
+func cjk(r rune) bool {
+	return unicode.In(r, unicode.Han, unicode.Hiragana, unicode.Katakana, unicode.Hangul)
 }
 
 // Cosine similarity in [-1, 1]; 0 when either vector is empty or sizes differ.

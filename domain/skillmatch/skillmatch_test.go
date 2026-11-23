@@ -48,3 +48,22 @@ func TestSemanticThresholdAndBonus(t *testing.T) {
 		t.Fatal("bonus must be capped at 1", s)
 	}
 }
+
+func TestBM25RanksRareTermsAndNames(t *testing.T) {
+	docs := []skillmatch.Text{
+		{Name: "pdf-notes", Description: "Summarize PDF documents into notes."},
+		{Name: "slide-maker", Description: "Build slides from notes and a PDF outline."},
+		{Name: "sql-helper", Description: "Write database queries."},
+		{Name: "周报", Description: "生成每周工作周报"},
+	}
+	s := skillmatch.BM25(docs, "pdf notes")
+	if s[0] != 1 || !(s[1] > 0 && s[1] < s[0]) || s[2] != 0 {
+		t.Fatal("ranking", s)
+	}
+	if s = skillmatch.BM25(docs, "工作周报"); s[3] != 1 || s[0] != 0 {
+		t.Fatal("cjk bigrams", s)
+	}
+	if s = skillmatch.BM25(docs, "!!"); s[0] != 0 {
+		t.Fatal("no terms", s)
+	}
+}

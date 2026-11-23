@@ -1,20 +1,22 @@
 # Skill delivery control plane: publication, review, discovery and delivery
 # decisions for Agent Skills, sharing Taskloom identity, command lifecycle,
-# SQL and file bytes. Merge into the root config.yaml. Semantic search needs
-# an OpenAI-compatible embeddings endpoint; its token comes only from the
-# environment variable named by tokenEnv, never from this file.
+# SQL and file bytes. Merge into the root config.yaml. Discovery works
+# without embeddings (name, lexical and bm25). Semantic search is optional:
+# uncomment the embedder node and both "embedder: embedder" deps below. It
+# needs an OpenAI-compatible embeddings endpoint; its token comes only from
+# the environment variable named by tokenEnv, never from this file.
 http:
   deps:
     # Lists replace the base list whole: keep every base module.
     modules: [health, workspace-api, workflow-api, plan-api, file-api, mcp-api, audit-api, ownership-api, skills-api]
 
-embedder:
-  use: embedding/openai
-  config:
-    url: http://127.0.0.1:8010/v1/embeddings
-    model: Qwen/Qwen3-Embedding-0.6B
-    dimensions: 1024
-    tokenEnv: TASKLOOM_EMBEDDING_TOKEN
+# embedder:
+#   use: embedding/openai
+#   config:
+#     url: http://127.0.0.1:8010/v1/embeddings
+#     model: Qwen/Qwen3-Embedding-0.6B
+#     dimensions: 1024
+#     tokenEnv: TASKLOOM_EMBEDDING_TOKEN
 
 skills:
   use: commands/skills
@@ -26,7 +28,7 @@ skills:
     identity: identity
     registry: sql
     blobs: blobs
-    embedder: embedder
+    # embedder: embedder
 skill-review:
   use: commands/skill-review
   deps:
@@ -36,16 +38,19 @@ skill-review:
 skill-query:
   use: query/skills
   config:
-    # Tune both against a representative query set for the chosen model.
-    maxDistance: 0.65
-    lexicalBonus: 0.1
+    # Enabled match modes; empty means name, lexical, bm25, and semantic
+    # when an embedder is wired. Listing semantic without one fails to build.
+    modes: [name, lexical, bm25]
+    # Semantic only: tune both against a representative query set for the model.
+    # maxDistance: 0.65
+    # lexicalBonus: 0.1
   deps:
     transactions: sql
     identity: identity
     authorization: access
     catalog: sql
     blobs: blobs
-    embedder: embedder
+    # embedder: embedder
 skills-api:
   use: api/skills
   deps:

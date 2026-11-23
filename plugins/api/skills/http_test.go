@@ -39,7 +39,10 @@ type fixture struct {
 	embedDown           *atomic.Bool
 }
 
-func setup(t *testing.T) *fixture {
+// setup wires the example overlay plus a fake embedder and semantic search.
+func setup(t *testing.T) *fixture { return setupWith(t, true) }
+
+func setupWith(t *testing.T, semantic bool) *fixture {
 	t.Helper()
 	ctx := context.Background()
 	dir := t.TempDir()
@@ -84,7 +87,16 @@ func setup(t *testing.T) *fixture {
 	}
 	overlay["sql"] = map[string]any{"config": map[string]any{"dsn": filepath.Join(dir, "db")}}
 	overlay["blobs"] = map[string]any{"config": map[string]any{"dir": filepath.Join(dir, "files")}}
-	overlay["embedder"].(map[string]any)["config"] = map[string]any{"url": embedder.URL + "/v1/embeddings", "model": "fake", "dimensions": 4}
+	if semantic {
+		overlay["embedder"] = map[string]any{"use": "embedding/openai", "config": map[string]any{"url": embedder.URL + "/v1/embeddings", "model": "fake", "dimensions": 4}}
+		for _, id := range []string{"skills", "skill-query"} {
+			node := overlay[id].(map[string]any)
+			node["deps"].(map[string]any)["embedder"] = "embedder"
+			if id == "skill-query" {
+				node["config"] = map[string]any{} // default modes: all four
+			}
+		}
+	}
 	b, _ := json.Marshal(overlay)
 	path := filepath.Join(dir, "config.yaml")
 	if err = os.WriteFile(path, b, 0600); err != nil {
@@ -443,6 +455,27 @@ func TestEmbeddingFailureAndReindex(t *testing.T) {
 	}
 	if _, p := f.search(f.agent, "match=semantic&q=pdf+pages"); p.Total != 1 || p.Items[0].ID != rel.CapabilityID {
 		t.Fatal("reindexed", p)
+	}
+}
+
+func TestWithoutEmbedder(t *testing.T) {
+	f := setupWith(t, false)
+	code, rel, _ := f.publish(f.agent, "p", skill(t, "pdf-tools", "1.0.0", "Splits PDF files into pages."))
+	if code != 200 {
+		t.Fatal("publish without embedder", code)
+	}
+	f.publish(f.agent, "q", skill(t, "sql-helper", "1.0.0", "Writes database queries."))
+	if _, p := f.search(f.agent, "match=bm25&q=pdf+pages"); p.Total != 1 || p.Items[0].ID != rel.CapabilityID || p.Items[0].Score != 1 {
+		t.Fatal("bm25", p)
+	}
+	if _, p := f.search(f.agent, "match=name&q=pdf-tool"); p.Total != 1 {
+		t.Fatal("name", p)
+	}
+	if code, _ := f.search(f.agent, "match=semantic&q=pdf+pages"); code != 400 {
+		t.Fatal("semantic is not enabled", code)
+	}
+	if code := f.json("POST", "/admin/reindex", f.owner, "x", nil, nil); code == 200 {
+		t.Fatal("reindex without embedder", code)
 	}
 }
 

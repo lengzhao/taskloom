@@ -192,7 +192,8 @@ type Commands interface {
 	SetVisibility(ctx context.Context, token, key, capabilityID, visibility string) (Capability, error)
 	SetCollaborators(ctx context.Context, token, key, capabilityID string, subjects []string) (Capability, error)
 	SetArchived(ctx context.Context, token, key, capabilityID string, archived bool) (Capability, error)
-	// Reindex embeds current releases that have no vector and reports how many.
+	// Reindex embeds current releases that have no vector and reports how
+	// many; without an embedder it is fault.ErrUnavailable.
 	Reindex(ctx context.Context, token, key string) (int, error)
 }
 
@@ -201,10 +202,12 @@ type ReviewCommands interface {
 	Review(ctx context.Context, token, key, ref, verdict, reason string) (Review, error)
 }
 
-// Match modes of discovery. Empty browses by name.
+// Match modes of discovery. Empty browses by name; a deployment enables
+// the others it wants, and semantic needs an embedder.
 const (
-	MatchName     = "name"     // prefix or trigram on the name
-	MatchLexical  = "lexical"  // names, description and declared use; no vectors
+	MatchName     = "name"     // fuzzy: prefix or trigram on the name
+	MatchLexical  = "lexical"  // keyword: names, description and declared use
+	MatchBM25     = "bm25"     // Okapi BM25 over names, description and declared use
 	MatchSemantic = "semantic" // vector similarity plus a lexical bonus
 )
 

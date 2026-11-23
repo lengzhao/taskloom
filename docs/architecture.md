@@ -32,7 +32,7 @@ Taskloom 是人与 Agent 协作的任务系统，采用模块化单体：公共�
 | security（commands/security）、catalog（catalog/projects） | 身份/成员/凭据/密码管理；空间与项目 | 9、6 |
 | files（commands/file） | 文件上传、列出与读取，规则见[文件与链接](core-contracts.md#文件与链接) | 6 |
 | workspace-api、workflow-api、plan-api、ownership-api、file-api、mcp-api、audit-api、health | HTTP 与 MCP 协议适配、管理员审计查询、存活检查；Origin/CSRF 由 http 对所有路由统一检查 | 6、5、1、1、1、8、4、0 |
-| skills、skill-review、skill-query、skills-api、embedder（仅[覆盖示例](../examples/skills/skills.config.yaml)） | skill 发布与管理、独立审核、检索与交付判定、HTTP 适配、OpenAI 兼容 embedding；规则见 [Skill 交付控制面](skills.md) | 6、3、6、3、0 |
+| skills、skill-review、skill-query、skills-api、embedder（可选；均仅[覆盖示例](../examples/skills/skills.config.yaml)） | skill 发布与管理、独立审核、检索与交付判定、HTTP 适配、OpenAI 兼容 embedding；规则见 [Skill 交付控制面](skills.md) | 6（embedder 可选）、3、6（embedder 可选）、3、0 |
 
 超过 5 个 Deps 的模块都是同一命令事务内的协调边界：每个字段是一个独立能力接口（命令生命周期、各领域事实、事件），不是服务定位器；拆开只会把同一事务协调挪到别处。workspace 的 13 项是工作台纵向切片的历史边界（第 13 项 Placer 只为让创建与放置成为一个原子命令，放置规则仍只在 plan 模块），新增执行/验收/拆分能力都放入独立命令模块，不再向它堆积。执行中的 Agent 拆分本任务没有新增字段：原有的执行进展依赖改为 `executor`（execution.Executor），由执行模块检查调用者持有当前执行（Hold）并在其自己的计划变更后让执行跟随新依据（Follow），执行规则仍只在执行模块。flow 增加的关系读取是同一完成规则的事实输入，提交检查和父任务事件也复用它，命令模块因此无需各自读取关系。ownership 的 8 项都是移交这一个事务内写入或检查的事实（负责人、新负责人成员资格、原负责人参与、时间线、新验收人下的完成、事件）加命令生命周期与它自己的授权（让做出移交的原负责人能重试已生效的移交），拆开只会把同一事务挪到别处。files 的 6 项是上传命令（命令生命周期、文件登记、字节存储）与读取（事务、认证、授权）共用的同一授权边界。skills 与 skill-query 的 6 项沿用 files 的理由：上传前预检（事务、认证）、先写字节再登记、事务外派生向量；读取共用同一认证与可见性检查，再在事务外读字节或编码查询。评论与结果引用文件时不新增依赖：文件属于本任务这一引用完整性由 commit 仓储在追加时检查，与 RefID 相同。
 

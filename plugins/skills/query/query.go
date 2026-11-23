@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -25,6 +26,9 @@ import (
 )
 
 type Config struct {
+	// Modes are the enabled match modes besides browsing; empty enables
+	// name, lexical and bm25, plus semantic when an embedder is wired.
+	Modes []string `json:"modes"`
 	// MaxDistance drops semantic matches whose cosine distance exceeds it.
 	MaxDistance float64 `json:"maxDistance"`
 	// LexicalBonus is added to a semantic score when the text names every query token.
@@ -60,26 +64,34 @@ func (c *Config) Validate() error {
 	if d, err := time.ParseDuration(c.EmbedTimeout); err != nil || d <= 0 {
 		return errors.New("embedTimeout must be a positive duration")
 	}
+	for _, mode := range c.Modes {
+		if !slices.Contains(allModes, mode) {
+			return errors.New("modes: unknown match mode " + mode)
+		}
+	}
 	return nil
 }
+
+var allModes = []string{skills.MatchName, skills.MatchLexical, skills.MatchBM25, skills.MatchSemantic}
 
 // Deps has six fields, reviewed: every read authenticates (identity) and
 // checks membership and administrator relations (authorization) in a read
 // transaction (transactions) over the catalog (catalog); artifact reads then
-// open bytes (blobs) and semantic search encodes the query (embedder), both
-// outside the transaction. Splitting reads by kind would duplicate the check.
+// open bytes (blobs) and semantic search encodes the query (embedder, optional),
+// both outside the transaction. Splitting reads by kind would duplicate the check.
 type Deps struct {
 	Transactions  unitofwork.Manager     `json:"transactions"`
 	Identity      identity.Authenticator `json:"identity"`
 	Authorization az.Authorizer          `json:"authorization"`
 	Catalog       skills.Catalog         `json:"catalog"`
 	Blobs         blob.Store             `json:"blobs"`
-	Embedder      skills.Embedder        `json:"embedder"`
+	Embedder      skills.Embedder        `json:"embedder,omitempty"`
 }
 type Module struct {
 	c     Config
 	d     Deps
 	embed time.Duration
+	modes []string
 }
 
 func init() { pluginkit.Register("query/skills", New) }
@@ -88,11 +100,21 @@ func New(c Config, d Deps) (*Module, error) {
 	if err := c.Validate(); err != nil {
 		return nil, err
 	}
-	if d.Transactions == nil || d.Identity == nil || d.Authorization == nil || d.Catalog == nil || d.Blobs == nil || d.Embedder == nil {
+	if d.Transactions == nil || d.Identity == nil || d.Authorization == nil || d.Catalog == nil || d.Blobs == nil {
 		return nil, errors.New("skill query capabilities required")
 	}
+	modes := c.Modes
+	if len(modes) == 0 {
+		modes = []string{skills.MatchName, skills.MatchLexical, skills.MatchBM25}
+		if d.Embedder != nil {
+			modes = append(modes, skills.MatchSemantic)
+		}
+	}
+	if slices.Contains(modes, skills.MatchSemantic) && d.Embedder == nil {
+		return nil, errors.New("semantic match mode needs an embedder")
+	}
 	t, _ := time.ParseDuration(c.EmbedTimeout)
-	return &Module{c: c, d: d, embed: t}, nil
+	return &Module{c: c, d: d, embed: t, modes: modes}, nil
 }
 
 // reader is the authenticated caller and whether it administers the tenant.
@@ -124,6 +146,9 @@ func (m *Module) Search(ctx context.Context, token string, q skills.Query) (skil
 	q.Q = strings.TrimSpace(q.Q)
 	if err := validQuery(&q); err != nil {
 		return skills.Page{}, err
+	}
+	if q.Match != "" && !slices.Contains(m.modes, q.Match) {
+		return skills.Page{}, fault.ErrInput // not enabled in this deployment
 	}
 	var visible []skills.Current
 	var vectors map[string][]float32
@@ -164,11 +189,22 @@ func (m *Module) Search(ctx context.Context, token string, q skills.Query) (skil
 		}
 		query = vs[0]
 	}
+	texts := make([]skillmatch.Text, len(visible))
+	for i, c := range visible {
+		texts[i] = skillmatch.Text{Name: c.Name, Description: c.Release.Description}
+	}
+	var bm25 []float64
+	if q.Match == skills.MatchBM25 {
+		bm25 = skillmatch.BM25(texts, q.Q)
+	}
 	items := []skills.Candidate{}
-	for _, c := range visible {
+	for i, c := range visible {
 		score, ok := 0.0, true
-		text := skillmatch.Text{Name: c.Name, Description: c.Release.Description}
+		text := texts[i]
 		switch q.Match {
+		case skills.MatchBM25:
+			score = bm25[i]
+			ok = score > 0
 		case skills.MatchName:
 			score, ok = skillmatch.Name(c.Name, q.Q)
 		case skills.MatchLexical:
@@ -214,7 +250,7 @@ func validQuery(q *skills.Query) error {
 		if q.Q == "" {
 			return fault.ErrInput
 		}
-	case skills.MatchLexical, skills.MatchSemantic:
+	case skills.MatchLexical, skills.MatchBM25, skills.MatchSemantic:
 		// One character embeds near the neutral vector and matches noise.
 		if utf8.RuneCountInString(q.Q) < 2 {
 			return fault.ErrInput

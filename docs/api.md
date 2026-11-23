@@ -112,7 +112,7 @@
 
 | 路径 | 说明 |
 | --- | --- |
-| GET /capabilities?match=&q=&page=&size=&min_score= | 目录与检索：match 为空（浏览）、name、lexical、semantic；size 默认 24、最多 100；返回 `{Items:[{Capability…, Release, Score}], Total}`，Release 为当前版本 |
+| GET /capabilities?match=&q=&page=&size=&min_score= | 目录与检索：match 为空（浏览）或部署启用的 name、lexical、bm25、semantic（未启用返回 400）；size 默认 24、最多 100；返回 `{Items:[{Capability…, Release, Score}], Total}`，Release 为当前版本 |
 | GET /capabilities/resolve?name= | 语义名 → 当前版本与 trust |
 | POST /capabilities | 请求体为 zip；首次发布即创建（private），之后追加更高版本；不通过检查返回 400 `{Diagnostics:[{Code, Message, Blocking}]}`，超过 `skills.config.maxBytes` 返回 413 |
 | POST /capabilities/publication-preflight | 同一套检查的只读报告 `{Name, Version, Digest, Size, Publishable, Diagnostics}` |

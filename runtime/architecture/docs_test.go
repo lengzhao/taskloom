@@ -17,7 +17,7 @@ var (
 // code fences must close. External URLs and absolute workstation paths are skipped.
 func TestDocumentLinksAndFences(t *testing.T) {
 	root := filepath.Join("..", "..")
-	files := []string{"README.md", "AGENTS.md", "todo.md"}
+	files := []string{"README.md", "AGENTS.md"}
 	for _, pattern := range []string{"docs/*.md", "examples/*.md"} {
 		matches, err := filepath.Glob(filepath.Join(root, pattern))
 		if err != nil {

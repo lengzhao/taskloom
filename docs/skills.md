@@ -17,7 +17,7 @@ skill 模块组负责 Agent Skill 从发布到交到宿主手里为止：发布�
 ## 发布
 
 1. 认证后读入归档（默认上限 10 MiB），由 `domain/skillpkg` 确定性检查：
-   - 拦截：不是 zip、条目超量或解压超限、路径穿越、链接与特殊文件、重复条目、不在唯一根目录下、缺 `SKILL.md`、非 UTF-8、frontmatter 缺失或 `name`/`description` 不合规、`metadata.skilla.version` 不是 semver、根目录名不等于 `name`。
+   - 拦截：不是 zip、条目超量或解压超限、路径穿越、链接与特殊文件、重复条目、不在唯一根目录下、缺 `SKILL.md`、非 UTF-8、frontmatter 缺失或 `name`/`description` 不合规、`metadata.version` 不是 semver、根目录名不等于 `name`。
    - 只提示：缺 `when_to_use`、`not_for`、`success_criteria`、`examples`；联网、shell、破坏性命令、凭据相关的风险标记。正则标记不证明安全与否。
 2. 已有同名 capability 走 `skill.release`（拥有者、协作者、管理员），否则走 `skill.create`（任一有效成员）；先写字节，再在命令事务内创建 capability（首次）并追加版本。
 3. 同版本同字节返回已有版本；同版本不同字节或更低版本拒绝（`version-not-increasing`）。失败、重放和相同重试都删除新写的字节，补偿失败只留下不可达字节。

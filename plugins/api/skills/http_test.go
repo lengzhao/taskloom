@@ -212,7 +212,7 @@ func skill(t *testing.T, name, version, description string, extra ...string) []b
 	var buf bytes.Buffer
 	w := zip.NewWriter(&buf)
 	md, _ := w.Create(name + "/SKILL.md")
-	io.WriteString(md, "---\nname: "+name+"\ndescription: "+description+"\nmetadata:\n  skilla:\n    version: "+version+"\n---\n# "+name+"\n")
+	io.WriteString(md, "---\nname: "+name+"\ndescription: "+description+"\nmetadata:\n  version: "+version+"\n---\n# "+name+"\n")
 	for _, e := range extra {
 		x, _ := w.Create(name + "/" + e)
 		io.WriteString(x, e)

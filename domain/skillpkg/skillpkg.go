@@ -121,21 +121,19 @@ type frontmatter struct {
 	Name        string `yaml:"name"`
 	Description string `yaml:"description"`
 	Metadata    struct {
-		Skilla struct {
-			Version      string `yaml:"version"`
-			RequiredApps []struct {
-				Key string `yaml:"key"`
-			} `yaml:"required_apps"`
-			EgressManifest struct {
-				Hosts []string `yaml:"hosts"`
-			} `yaml:"egress_manifest"`
-			Capability struct {
-				WhenToUse       []any `yaml:"when_to_use"`
-				NotFor          []any `yaml:"not_for"`
-				SuccessCriteria []any `yaml:"success_criteria"`
-				Examples        []any `yaml:"examples"`
-			} `yaml:"capability"`
-		} `yaml:"skilla"`
+		Version      string `yaml:"version"`
+		RequiredApps []struct {
+			Key string `yaml:"key"`
+		} `yaml:"required_apps"`
+		EgressManifest struct {
+			Hosts []string `yaml:"hosts"`
+		} `yaml:"egress_manifest"`
+		Capability struct {
+			WhenToUse       []any `yaml:"when_to_use"`
+			NotFor          []any `yaml:"not_for"`
+			SuccessCriteria []any `yaml:"success_criteria"`
+			Examples        []any `yaml:"examples"`
+		} `yaml:"capability"`
 	} `yaml:"metadata"`
 }
 
@@ -158,7 +156,7 @@ func parseSkillMD(body []byte) (Manifest, []skills.Diagnostic) {
 	}
 	m.Name = strings.TrimSpace(fm.Name)
 	m.Description = strings.TrimSpace(fm.Description)
-	m.Version = strings.TrimSpace(fm.Metadata.Skilla.Version)
+	m.Version = strings.TrimSpace(fm.Metadata.Version)
 	if len(m.Name) > maxName || !nameRule.MatchString(m.Name) {
 		return bad("name must be 1-64 lowercase letters, digits and single hyphens")
 	}
@@ -166,20 +164,20 @@ func parseSkillMD(body []byte) (Manifest, []skills.Diagnostic) {
 		return bad("description must be 1-1024 characters")
 	}
 	if _, ok := ParseVersion(m.Version); !ok {
-		return m, []skills.Diagnostic{{Code: "invalid-version", Message: "metadata.skilla.version must be a semantic version", Blocking: true}}
+		return m, []skills.Diagnostic{{Code: "invalid-version", Message: "metadata.version must be a semantic version", Blocking: true}}
 	}
 	d := &m.Declarations
-	for _, a := range fm.Metadata.Skilla.RequiredApps {
+	for _, a := range fm.Metadata.RequiredApps {
 		if k := strings.TrimSpace(a.Key); k != "" {
 			d.RequiredApps = append(d.RequiredApps, k)
 		}
 	}
-	for _, h := range fm.Metadata.Skilla.EgressManifest.Hosts {
+	for _, h := range fm.Metadata.EgressManifest.Hosts {
 		if h = strings.TrimSpace(h); h != "" {
 			d.EgressHosts = append(d.EgressHosts, h)
 		}
 	}
-	c := fm.Metadata.Skilla.Capability
+	c := fm.Metadata.Capability
 	d.WhenToUse, d.NotFor, d.SuccessCriteria, d.Examples = texts(c.WhenToUse), texts(c.NotFor), texts(c.SuccessCriteria), texts(c.Examples)
 	return m, nil
 }

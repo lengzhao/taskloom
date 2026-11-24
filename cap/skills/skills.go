@@ -46,7 +46,7 @@ func (c Capability) Contributes(subject string) bool {
 }
 
 // Declarations are what a release states about itself in SKILL.md
-// metadata.skilla. They are evidence for decisions, not grants.
+// metadata. They are evidence for decisions, not grants.
 type Declarations struct {
 	RequiredApps    []string `json:",omitempty"`
 	EgressHosts     []string `json:",omitempty"`

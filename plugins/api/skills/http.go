@@ -1,6 +1,5 @@
 // Package skills adapts skill publication, review, discovery, artifact reads
-// and delivery decisions to HTTP under /skills. After that prefix the
-// consumer paths match Skilla's (/capabilities, /releases/{ref}, ...).
+// and delivery decisions to HTTP under /skills.
 package skills
 
 import (

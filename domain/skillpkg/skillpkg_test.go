@@ -32,16 +32,15 @@ const good = `---
 name: pdf-reader
 description: Reads PDF files and extracts their text.
 metadata:
-  skilla:
-    version: 1.2.0
-    required_apps:
-      - key: drive
-    egress_manifest:
-      hosts: [api.example.com]
-    capability:
-      when_to_use: [a PDF must be read]
-      examples:
-        - input: report.pdf
+  version: 1.2.0
+  required_apps:
+    - key: drive
+  egress_manifest:
+    hosts: [api.example.com]
+  capability:
+    when_to_use: [a PDF must be read]
+    examples:
+      - input: report.pdf
 ---
 # PDF reader
 `

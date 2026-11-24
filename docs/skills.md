@@ -1,6 +1,6 @@
 # Skill 交付控制面
 
-skill 模块组负责 Agent Skill 从发布到交到宿主手里为止：发布不可变版本、发现、对确切版本在声明的宿主上做交付判定、提供原样字节、独立审核。它不执行 skill，不保存宿主选用了哪些 skill（消费方清单归宿主，例如 AgentKit 的 lock 文件），与任务领域互不依赖、不共享业务事务。模型与流程以 MIA Skilla 为基线；装配见[覆盖示例](../examples/skills/skills.config.yaml)，接口见 [API](api.md#skill)，范围约束见 [AGENTS.md](../AGENTS.md#项目范围与资料入口)。
+skill 模块组负责 Agent Skill 从发布到交到宿主手里为止：发布不可变版本、发现、对确切版本在声明的宿主上做交付判定、提供原样字节、独立审核。它不执行 skill，不保存宿主选用了哪些 skill（消费方清单归宿主，例如 AgentKit 的 lock 文件），与任务领域互不依赖、不共享业务事务。装配见[覆盖示例](../examples/skills/skills.config.yaml)，接口见 [API](api.md#skill)，范围约束见 [AGENTS.md](../AGENTS.md#项目范围与资料入口)。
 
 ## 事实与推导
 
@@ -37,7 +37,7 @@ skill 模块组负责 Agent Skill 从发布到交到宿主手里为止：发布�
 | `bm25` | Okapi BM25（k1 1.2、b 0.75），语料为当前可见的版本，名字计两次；词按字母数字切分，中日韩连续字符切成二元组；按本次最高分归一到 1 |
 | `semantic`（需 embedder） | 查询向量与当前版本向量的余弦；距离超过 `maxDistance`（默认 0.65）丢弃，文本含全部查询词加 `lexicalBonus`（默认 0.1）；查询 embedding 失败直接报错，不降级 |
 
-除 semantic 外都不调用外部服务。打分在 Go 内存中完成（`domain/skillmatch`），SQLite、MySQL、PostgreSQL 行为一致，不依赖 FTS5 或 pgvector。两个默认参数沿用 Skilla，换模型时须用有代表性的相关与不相关查询重新标定。
+除 semantic 外都不调用外部服务。打分在 Go 内存中完成（`domain/skillmatch`），SQLite、MySQL、PostgreSQL 行为一致，不依赖 FTS5 或 pgvector。两个默认参数是经验值，换模型时须用有代表性的相关与不相关查询重新标定。
 
 ## 交付判定
 

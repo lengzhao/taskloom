@@ -45,13 +45,7 @@ claude mcp add --transport http taskloom http://localhost:8899/v1/mcp \
 
 常驻执行 Agent 由 AgentKit 提供（v0.4.46 起）：平台插件 `platform/taskloom`（AgentKit 仓库 `runtime/platform/taskloom`）与 preset `presets/taskloom.yaml`，用 AgentKit 自带的 `cmd/agent` 运行，本仓库不再包含 Agent 代码。该 preset 只开放 Taskloom MCP 工具与 todo/finish，没有 shell、文件或网络工具，所有写入仍由 Taskloom 鉴权；提示词与模型在 preset 中，可用自己的 overlay 覆盖。
 
-`platform/taskloom` 是 Agent 层的适配，不是 Taskloom 服务端插件，也不新增 Taskloom 接口：它用该 Agent 自己的业务凭据只读 `GET /v1/me`、`/v1/changes`、`/v1/inbox` 与 `/v1/tasks/{id}?after=`，决定何时唤醒或 steer AgentKit 会话。这几个接口的字段与语义、以及 MCP 工具名（preset 提示词与唤醒文本引用 `read_task`、`finish` 等）是跨仓库契约，变更时须同步 AgentKit：
-
-- **按任务分会话**：每个任务是一个 channel（会话 ID 含任务 ID），历史与 steer 互不影响；`runner.maxConcurrentTurns` 控制并行任务数。
-- **唤醒**：任务进入 inbox（下一步等这个 Agent）时唤醒一次：本进程首次看到，或停止等待 Agent 后再次等待（如必需子任务全部完成、父任务回到等处理人），即使没有新 commit；留在 inbox 期间只在其他人写入时再唤醒，消息里带上这些新 commit 摘要；Agent 自己的写入从不唤醒自己（避免自回复）。等别人期间（问负责人、待验收）他人写入不唤醒，回到 inbox 时一并带上。阻塞任务（等待必需子任务）不唤醒。
-- **运行中新消息**：任务会话正在运行时的唤醒由 AgentKit runner 折叠进当前 turn（steer）。
-- **不主动停止**：任务被取消、改派或失去读取权限时不发送 `/stop`。Taskloom 已让该执行失去写资格，示例 Agent 只有 Taskloom 工具，后续写入都会被拒，由 Agent 按提示词读任务后 finish；给 Agent 开放外部工具时须重新评估。
-- **断线与重启**：Taskloom 不可达时按 pollSeconds 起指数退避（上限 maxBackoffSeconds），不调用模型，恢复后用原游标补拉；游标被拒（换库/恢复备份）时从 inbox 重新同步。进程重启不保存任何状态：inbox 中每个任务唤醒一次，Agent 用同一凭据 read_task 继续原执行。凭据被拒按最大退避记错误日志，需运维换凭据后重启。
+`platform/taskloom` 是 Agent 层的适配，不是 Taskloom 服务端插件，也不新增 Taskloom 接口：它用该 Agent 自己的业务凭据只读 `GET /v1/me`、`/v1/changes`、`/v1/inbox` 与 `/v1/tasks/{id}?after=`，决定何时唤醒或 steer 会话；唤醒、退避与重启行为以 AgentKit 文档为准。这几个接口的字段与语义、以及 MCP 工具名（preset 提示词引用 `read_task`、`finish` 等）是跨仓库契约，变更时须同步 AgentKit。适配插件不主动停止 turn：取消或改派后旧执行的写入被拒，由 Agent 读任务后结束；给 Agent 开放外部工具时须重新评估。
 
 ```sh
 # 1. 为 Agent 签发业务凭据（一张凭据即一个运行实例，30 天），不打印；

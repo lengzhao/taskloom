@@ -108,7 +108,7 @@
 
 ## Skill
 
-只在装配了 [skill 覆盖示例](../examples/skills/skills.config.yaml) 时存在；模型、检查与判定规则见 [Skill 交付控制面](skills.md)。以下路径都在 `/v1/skills` 下，前缀之后与 Skilla 的消费方路径一致；写入都需 Idempotency-Key。
+只在装配了 [skill 覆盖示例](../examples/skills/skills.config.yaml) 时存在；模型、检查与判定规则见 [Skill 交付控制面](skills.md)。以下路径都在 `/v1/skills` 下，写入都需 Idempotency-Key。
 
 | 路径 | 说明 |
 | --- | --- |

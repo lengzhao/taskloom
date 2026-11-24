@@ -23,6 +23,7 @@
 | 任务参与者 | 读取、评论（只能更正自己的评论）、提问（可问任一有效成员，被问者随之成为参与者） |
 | 项目负责人与项目成员（人或 Agent） | 对项目内每个任务等同参与者；不能管理、移动、移交或验收 |
 | Agent | 不继承所属人任何权限；须显式参与任务（被分配或被提问）；只能认领分配给自己的任务；持有当前执行时可在该任务下新建子任务；可读成员目录 |
+| Skill（启用时） | 有效成员读取可见目录并新建 skill；拥有者与协作者发布新版本；拥有者管理可见性、协作者与归档；人类管理员管理本租户全部 skill、审核（不审自己发布的版本）与重建索引，见 [Skill](skills.md#权限) |
 | 停用或不存在的成员 | 无任何访问，即使保留负责人/参与历史 |
 
 资源始终按认证租户查询；每次读写和幂等重放都检查当前关系。任务写权限一律包含该任务的读权限，命令不再单独检查读取（由 access 测试固定）。成员或参与关系变更与业务写共用全局写锁，先提交者生效。停用不删除历史，重新启用恢复仍保留的任务关系。
@@ -104,6 +105,25 @@
 `GET /v1/files/limits`（不在任务下，只需登录）返回 `{MaxBytes, MaxFiles, MaxLinks}`：单个上传上限（即 `files.config.maxBytes`）与每条 commit 的文件、链接数量上限，供客户端在发送前拒绝必然失败的请求；服务端照常校验。
 
 评论与结果的 `Files` 是本任务 FileID 列表（最多 20 个，不重复），`Links` 是 `{URL, Title}` 列表（最多 20 个，URL 为 http/https 且不含用户信息，最长 2048 字节；Title 最长 200 字节）。时间线 commit 原样返回 Files 与 Links，名称与大小由 `GET /files` 对照。上传与下载各自的读写时限由 `file-api.config.transferTimeout`（默认 10m）替代全局 HTTP 时限。
+
+## Skill
+
+只在装配了 [skill 覆盖示例](../examples/skills/skills.config.yaml) 时存在；模型、检查与判定规则见 [Skill 交付控制面](skills.md)。以下路径都在 `/v1/skills` 下，前缀之后与 Skilla 的消费方路径一致；写入都需 Idempotency-Key。
+
+| 路径 | 说明 |
+| --- | --- |
+| GET /capabilities?match=&q=&page=&size=&min_score= | 目录与检索：match 为空（浏览）或部署启用的 name、lexical、bm25、semantic（未启用返回 400）；size 默认 24、最多 100；返回 `{Items:[{Capability…, Release, Score}], Total}`，Release 为当前版本 |
+| GET /capabilities/resolve?name= | 语义名 → 当前版本与 trust |
+| POST /capabilities | 请求体为 zip；首次发布即创建（private），之后追加更高版本；不通过检查返回 400 `{Diagnostics:[{Code, Message, Blocking}]}`，超过 `skills.config.maxBytes` 返回 413 |
+| POST /capabilities/publication-preflight | 同一套检查的只读报告 `{Name, Version, Digest, Size, Publishable, Diagnostics}` |
+| PATCH /capabilities/{id} | `{Visibility: private\|tenant}` |
+| PUT /capabilities/{id}/collaborators | `{Subjects}` 整体替换（最多 50） |
+| POST /capabilities/{id}/archive、/restore | 归档与恢复，不删除历史 |
+| GET /releases/{ref} | 确切版本与 trust；旧版本可读 |
+| GET /releases/{ref}/artifact | 原样 zip，附 `X-Content-SHA256` |
+| POST /capability-decisions | `{ReleaseRef, Host:{Contract, Affordances, Apps}}` → `{State, Reason, Trust, Missing, Action}`；只读 |
+| POST /admin/releases/{ref}/reviews | `{Verdict: approved\|rejected, Reason}`，人类管理员，不能审自己发布的版本；重放返回该键写入的那条审核 |
+| POST /admin/reindex | 人类管理员，补齐当前版本缺失的检索向量，返回 `{Indexed}` |
 
 ## 变化补拉
 

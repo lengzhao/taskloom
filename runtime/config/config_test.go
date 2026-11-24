@@ -1,6 +1,7 @@
 package config_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"os"
@@ -297,6 +298,7 @@ access:
     store: sql
     tasks: sql
     projects: sql
+    skills: sql
 probe:
   use: test/security-probe
   deps:
@@ -305,5 +307,27 @@ probe:
 `, "")
 	if _, _, err := cfg.BuildFiles(context.Background(), bp, op); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// The skill overlay adds its nodes to the real default graph.
+func TestSkillsExampleOverlayBuilds(t *testing.T) {
+	if _, _, err := cfg.BuildFiles(context.Background(), "../../base.yaml", "../../examples/skills/skills.config.yaml"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSemanticModeNeedsEmbedder(t *testing.T) {
+	raw, err := os.ReadFile("../../examples/skills/skills.config.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw = bytes.Replace(raw, []byte("modes: [name, lexical, bm25]"), []byte("modes: [name, semantic]"), 1)
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err = os.WriteFile(path, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err = cfg.BuildFiles(context.Background(), "../../base.yaml", path); err == nil || !strings.Contains(err.Error(), "skill-query") {
+		t.Fatal("semantic without embedder built", err)
 	}
 }

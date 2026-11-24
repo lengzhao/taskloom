@@ -9,6 +9,7 @@ import (
 	"github.com/lengzhao/taskloom/cap/catalog"
 	"github.com/lengzhao/taskloom/cap/fault"
 	"github.com/lengzhao/taskloom/cap/identity"
+	"github.com/lengzhao/taskloom/cap/skills"
 	"github.com/lengzhao/taskloom/cap/task"
 )
 
@@ -18,6 +19,8 @@ type Deps struct {
 	// Projects grants a project's owner and members what a participant has
 	// on every task filed under it.
 	Projects catalog.ProjectReader `json:"projects"`
+	// Skills gives a capability's owner and collaborators their relations.
+	Skills skills.CapabilityReader `json:"skills"`
 }
 type Service struct{ d Deps }
 
@@ -25,8 +28,8 @@ func init() {
 	pluginkit.Register("access/default", func(_ struct{}, d Deps) (*Service, error) { return New(d) })
 }
 func New(d Deps) (*Service, error) {
-	if d.Store == nil || d.Tasks == nil || d.Projects == nil {
-		return nil, errors.New("membership, tasks and projects required")
+	if d.Store == nil || d.Tasks == nil || d.Projects == nil || d.Skills == nil {
+		return nil, errors.New("membership, tasks, projects and skills required")
 	}
 	return &Service{d}, nil
 }
@@ -69,6 +72,35 @@ func (s *Service) Check(ctx context.Context, p identity.Principal, op, resource 
 		return az.ErrForbidden
 	case "task.create":
 		if resource == p.Tenant && p.Kind == "human" {
+			return nil
+		}
+		return az.ErrForbidden
+	case "skill.read", "skill.create":
+		// Any active member, person or Agent, reads the tenant catalog and may
+		// start a capability; visibility of each one is checked by its reader.
+		if resource == p.Tenant {
+			return nil
+		}
+		return az.ErrForbidden
+	case "skill.review", "skill.admin":
+		if resource == p.Tenant && m.Role == "admin" && p.Kind == "human" {
+			return nil
+		}
+		return az.ErrForbidden
+	case "skill.release", "skill.manage":
+		// Resource is a capability ID. Collaborators publish releases; only the
+		// owner and administrators change metadata, visibility or archive state.
+		if m.Role == "admin" && p.Kind == "human" {
+			return nil
+		}
+		c, e := s.d.Skills.GetCapability(ctx, p.Tenant, resource)
+		if errors.Is(e, fault.ErrNotFound) {
+			return az.ErrForbidden
+		}
+		if e != nil {
+			return e
+		}
+		if c.Owner == p.ID || (op == "skill.release" && c.Contributes(p.ID)) {
 			return nil
 		}
 		return az.ErrForbidden

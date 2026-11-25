@@ -76,13 +76,13 @@ func (s *Store) ClaimBootstrap(ctx context.Context) error {
 }
 func receiptKey(k record.RequestKey) string { return key(k.Tenant, k.Subject, k.Operation, k.Key) }
 func (s *Store) FindReceipt(ctx context.Context, k record.RequestKey) (record.Receipt, error) {
-	var r receiptRow
+	var r receiptRecord
 	err := s.use(ctx, false, func(db *gorm.DB) error { return db.First(&r, "row_key = ?", receiptKey(k)).Error })
 	return record.Receipt{RequestKey: k, Digest: r.Digest, Result: r.Result}, err
 }
 func (s *Store) SaveReceipt(ctx context.Context, r record.Receipt) error {
 	return s.use(ctx, true, func(db *gorm.DB) error {
-		return db.Create(&receiptRow{Key: receiptKey(r.RequestKey), Digest: r.Digest, Result: r.Result}).Error
+		return db.Create(&receiptRecord{Key: receiptKey(r.RequestKey), Digest: r.Digest, Result: r.Result}).Error
 	})
 }
 func (s *Store) AppendAudit(ctx context.Context, a record.Audit) error {

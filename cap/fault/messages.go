@@ -16,6 +16,7 @@ var messages = map[string]string{
 	CodeTaskNotActive:          "任务已结束或已取消",
 	"body_too_large":           "请求体超过上限",
 	"too_long":                 "内容超过长度上限",
+	"resync_required":          "变化记录已过期，请重新读取任务列表并从新游标补拉",
 
 	// Work on a task (cap/workflow reasons and command conflicts).
 	"business_credential_required": "需要 Agent 接入凭据",

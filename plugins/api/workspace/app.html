@@ -127,6 +127,7 @@ ul.attachments.chosen li { margin: 2px 0 }
 #content {min-width:0}
 .page-head {display:flex;justify-content:space-between;gap:12px;align-items:center;margin-bottom:16px}
 .toolbar {display:flex;gap:8px;flex-wrap:wrap;margin:14px 0}
+.skill-card {margin-bottom:10px}.skill-card .meta{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .toolbar input {flex:1;min-width:150px}.toolbar select{width:auto;max-width:220px}
 #tasks.board {display:grid;grid-template-columns:repeat(auto-fit,minmax(205px,1fr));align-items:start;gap:12px}
 .lane {background:var(--bg);border-radius:10px;padding:12px;display:grid;gap:8px}.lane h3{margin:0 0 6px}
@@ -159,6 +160,7 @@ ul.attachments.chosen li { margin: 2px 0 }
    <button id="tab-mine">等我处理<span id="mine-count" class="count" hidden></span></button>
    <button id="tab-all">全部任务</button>
    <button id="tab-projects">项目</button>
+   <button id="tab-skills" hidden>Skill</button>
    <button id="tab-space">空间设置</button>
   </nav>
   <p id="viewer-name" class="muted small"></p>
@@ -171,6 +173,8 @@ ul.attachments.chosen li { margin: 2px 0 }
     <div class="toolbar">
      <input id="task-search" aria-label="搜索任务" placeholder="搜索标题、目标或任务编号">
      <select id="project-filter" aria-label="筛选项目"></select>
+     <select id="owner-filter" aria-label="筛选负责人"></select>
+     <select id="assignee-filter" aria-label="筛选处理人"></select>
      <select id="status-filter" aria-label="筛选状态"><option value="">全部状态</option><option value="unassigned">待分配</option><option value="handling">处理中</option><option value="blocked">已阻塞</option><option value="accepting">验收中</option><option value="completed">已完成</option><option value="cancelled">已取消</option></select>
      <select id="task-layout" aria-label="任务视图"><option value="list">列表</option><option value="board">看板</option></select>
     </div>
@@ -297,6 +301,18 @@ async function api(path, method = 'GET', data, headers = {}) {
   if (method !== 'GET') wrote(path, out);
   return out;
 }
+// allTasks reads the task list in bounded pages: the server returns the next
+// page's cursor in X-Next-Cursor, so no single request derives every task.
+async function allTasks(query = '') {
+  let out = [], next = '';
+  do {
+    const path = '/tasks?limit=200' + query + (next ? '&cursor=' + encodeURIComponent(next) : '');
+    const r = await fetch(prefix + path, { headers: { 'X-Taskloom-Request': '1' } });
+    next = r.ok ? (r.headers.get('X-Next-Cursor') || '') : '';
+    out = out.concat(await answer(r, 'GET ' + path));
+  } while (next);
+  return out;
+}
 // upload sends one file's raw bytes; the same file keeps its key until answered.
 async function upload(path, file) {
   const fingerprint = 'upload ' + path + ' ' + file.name + ' ' + file.size + ' ' + file.lastModified;
@@ -348,7 +364,7 @@ function showLogin() {
   $('project-dialog').close();$('catalog-content').replaceChildren();projectID='';
   $('members-dialog').close();
   $('members-content').replaceChildren();
-  selected = ''; cursor = ''; inboxIDs = new Set(); blockedMine = new Set(); people = null; current = null;
+  selected = ''; cursor = ''; skillsView = null; inboxIDs = new Set(); blockedMine = new Set(); people = null; current = null;
   freshIDs = new Set(); ownWrites = new Set(); inboxSeen = false; $('desktop-notify').hidden = true;
   $('detail').replaceChildren(h('div', 'panel empty', '选择左侧任务，或新建一个任务。'));
   $('tasks').replaceChildren();
@@ -361,8 +377,8 @@ async function start() {
   const p = await api('/changes');
   cursor = p.Cursor;
   // Open on "待我处理" only when something is actually waiting.
-  view = (await api('/tasks?mine=true')).length ? 'mine' : 'all';
-  await Promise.all([list(), directory()]);
+  view = (await allTasks('&mine=true')).length ? 'mine' : 'all';
+  await Promise.all([list(), directory(), probeSkills()]);
   $('work').hidden = false; $('login').hidden = true; $('logout').hidden = false;
   $('desktop-notify').hidden = !('Notification' in window) || Notification.permission !== 'default';
   // A shared link opens one task directly: /v1/app?task=<ID>.
@@ -428,7 +444,7 @@ function index(rows) {
  inboxIDs = new Set(inboxMap.keys());
 }
 async function list() {
- const [tasks,ps,sp]=await Promise.all([api('/tasks'),api('/projects'),api('/space')]);
+ const [tasks,ps,sp]=await Promise.all([allTasks(),api('/projects'),api('/space')]);
  const before=inboxMap;
  taskCache=tasks;projects=ps;spaceInfo=sp;overview=new Map();inboxMap=new Map();blockedMine=new Set();index(tasks);
  pendingIDs.clear();
@@ -451,7 +467,8 @@ async function refresh(ids) {
 function render() {
  const sp=spaceInfo;
  $('space-name').textContent=sp.Name;$('mine-count').hidden=!inboxMap.size;$('mine-count').textContent=inboxMap.size;
- for(const name of ['mine','all','projects','space'])$('tab-'+name).classList.toggle('on',view===name);
+ for(const name of ['mine','all','projects','skills','space'])$('tab-'+name).classList.toggle('on',view===name);
+ peopleFilters();
  const prev=$('project-filter').value;projectOptions($('project-filter'),true);$('project-filter').value=prev;
  const createPrev=$('create-project').value;projectOptions($('create-project'),false);$('create-project').value=projectID||createPrev;if(!$('create-project').value)$('create-project').value='';
  renderBrowse();
@@ -467,9 +484,12 @@ function projectOptions(select,filter=false,current=''){
 const memberText=p=>'成员 '+((p.Members||[]).join('、')||'无');
 function counts(id){const ts=taskCache.filter(d=>d.Task.ProjectID===id);const done=ts.filter(d=>d.Position.Status==='completed').length;const cancelled=ts.filter(d=>d.Position.Status==='cancelled').length;return `可见任务 ${ts.length} · 完成 ${done} · 未完成 ${ts.length-done-cancelled} · 取消 ${cancelled}`}
 function renderBrowse(){
- const root=$('catalog-content');root.replaceChildren();$('task-area').hidden=view==='projects'||view==='space';
- $('page-title').textContent=({mine:'等我处理',all:'全部任务',projects:'项目',space:'空间设置',project:'项目任务'})[view];
+ const root=$('catalog-content');root.replaceChildren();$('task-area').hidden=view==='projects'||view==='space'||view==='skills';
+ $('page-title').textContent=({mine:'等我处理',all:'全部任务',projects:'项目',skills:'Skill',space:'空间设置',project:'项目任务'})[view];
  $('create-box').hidden=false;$('project-filter').hidden=view==='project';
+ // The Skill page loads when its tab is opened or its filter changes; task
+ // refreshes re-render the page around the same, already loaded list.
+ if(view==='skills'){if(!skillsView){skillsView=h('div');renderSkills(skillsView).catch(e=>notice(e.message))}root.append(skillsView);return}
  if(view==='space'){
   const name=el('input');name.name='Name';name.required=true;name.value=spaceInfo.Name;name.maxLength=200;
   const description=textarea('Description');description.value=spaceInfo.Description;description.maxLength=20000;
@@ -505,9 +525,23 @@ function renderBrowse(){
  renderTasks();
 }
 let showArchived=false;
+// peopleFilters offers the owners and handlers of the tasks already loaded,
+// so filtering needs no extra request; "me" is always first.
+function peopleFilters(){
+ const fill=(id,all,mine,names,extra=[])=>{const sel=$(id),prev=sel.value;sel.replaceChildren();
+  for(const [v,t] of [['',all],['me',mine],...extra,...[...names].filter(n=>n&&n!==viewer.Subject).sort().map(n=>[n,n])]){const o=el('option',t);o.value=v;sel.append(o)}
+  sel.value=[...sel.options].some(o=>o.value===prev)?prev:''};
+ fill('owner-filter','全部负责人','我负责的',new Set(taskCache.map(d=>d.Task.Owner)));
+ fill('assignee-filter','全部处理人','我处理的',new Set([...overview.values()].map(o=>o.Assignee)),[['none','未分配']]);
+}
+function byPeople(d){
+ const owner=$('owner-filter').value,assignee=$('assignee-filter').value,who=overview.get(d.Task.ID)?.Assignee||'';
+ const me=v=>v==='me'?viewer.Subject:v;
+ return (!owner||d.Task.Owner===me(owner))&&(!assignee||(assignee==='none'?!who:who===me(assignee)));
+}
 function renderTasks(){
  const search=$('task-search').value.trim().toLowerCase(),filter=$('project-filter').value,status=$('status-filter').value;
- const shown=taskCache.filter(d=>(view!=='mine'||inboxIDs.has(d.Task.ID)||blockedMine.has(d.Task.ID))&&(view!=='project'||d.Task.ProjectID===projectID)&&(!filter||view==='project'||(filter==='none'?!d.Task.ProjectID:d.Task.ProjectID===filter))&&(!status||(status==='blocked'?!!d.Position.WaitingOnSubtasks:stateOf(d.Position,overview.get(d.Task.ID)?.Assignee).key===status))&&(!search||[d.Task.Title,d.Task.Goal,d.Task.ID].some(x=>(x||'').toLowerCase().includes(search))));
+ const shown=taskCache.filter(d=>(view!=='mine'||inboxIDs.has(d.Task.ID)||blockedMine.has(d.Task.ID))&&byPeople(d)&&(view!=='project'||d.Task.ProjectID===projectID)&&(!filter||view==='project'||(filter==='none'?!d.Task.ProjectID:d.Task.ProjectID===filter))&&(!status||(status==='blocked'?!!d.Position.WaitingOnSubtasks:stateOf(d.Position,overview.get(d.Task.ID)?.Assignee).key===status))&&(!search||[d.Task.Title,d.Task.Goal,d.Task.ID].some(x=>(x||'').toLowerCase().includes(search))));
  const nav=$('tasks');nav.replaceChildren();const board=$('task-layout').value==='board';nav.classList.toggle('board',board);
  if(!shown.length){nav.append(el('p','没有符合条件的任务','empty'));return}
  // Board lanes follow the work's order; empty lanes are not drawn. Newest activity first.
@@ -542,9 +576,68 @@ async function openProject(p=null){
 }
 $('project-close').onclick=()=>$('project-dialog').close();
 $('project-form').onsubmit=handle(async()=>{const p=editingProject;const result=await api(p?'/projects/'+p.ID:'/projects',p?'PATCH':'POST',{Name:$('project-name').value,Description:$('project-description').value,Owner:$('project-owner').value,Members:[...$('project-members').querySelectorAll('input:checked')].map(c=>c.value).filter(v=>v!==$('project-owner').value),Archived:p?.Archived||false,ExpectedVersion:p?.Version||0});$('project-dialog').close();projectID=result.ID;view='project';selected='';await list();notice('项目已保存')});
-for(const id of ['task-search','status-filter','project-filter','task-layout'])$(id).addEventListener(id==='task-search'?'input':'change',()=>renderTasks());
-for(const name of ['mine','all','projects','space'])$('tab-'+name).onclick=handle(async()=>{view=name;projectID='';selected='';await list()});
+for(const id of ['task-search','status-filter','project-filter','owner-filter','assignee-filter','task-layout'])$(id).addEventListener(id==='task-search'?'input':'change',()=>renderTasks());
+for(const name of ['mine','all','projects','skills','space'])$('tab-'+name).onclick=handle(async()=>{view=name;projectID='';selected='';skillsView=null;await list()});
 $('detail-back').onclick=handle(async()=>{selected='';render()});
+
+// ---------- Skills ----------
+// The tab appears only when the deployment mounts the skill module group.
+// Everyone browses what they may see; human administrators also review the
+// current release (they cannot review a release they published).
+const TRUST_LABEL = { approved: '已通过审核', rejected: '已拒绝', unreviewed: '待审核' };
+let skillTrust = '', skillSearch = '', skillsView = null;
+async function probeSkills() {
+  try { await api('/skills/capabilities?size=1'); $('tab-skills').hidden = false } catch { $('tab-skills').hidden = true }
+}
+async function renderSkills(root) {
+  const q = el('input'); q.placeholder = '按名字或描述筛选'; q.value = skillSearch; q.setAttribute('aria-label', '筛选 Skill');
+  const trust = el('select'); trust.setAttribute('aria-label', '筛选审核状态');
+  for (const [v, t] of [['', '全部审核状态'], ['unreviewed', '待审核'], ['approved', '已通过审核'], ['rejected', '已拒绝']]) { const o = el('option', t); o.value = v; trust.append(o) }
+  trust.value = skillTrust;
+  const box = h('div', null);
+  root.append(h('div', 'toolbar', q, trust), box);
+  q.oninput = () => { skillSearch = q.value; paintSkills() };
+  trust.onchange = handle(async () => { skillTrust = trust.value; await loadSkills() });
+  let items = [];
+  const paintSkills = () => {
+    box.replaceChildren();
+    const term = skillSearch.trim().toLowerCase();
+    const shown = items.filter(c => !term || [c.Name, c.Release.Description].some(x => (x || '').toLowerCase().includes(term)));
+    if (!shown.length) { box.append(el('p', skillTrust === 'unreviewed' ? '没有待审核的 Skill' : '没有符合条件的 Skill', 'empty')); return }
+    for (const c of shown) {
+      const card = h('div', 'panel skill-card');
+      card.append(h('div', 'meta', el('strong', c.Name + ' · v' + c.Release.Version), el('span', TRUST_LABEL[c.Trust] || c.Trust, 'pill ' + (c.Trust === 'approved' ? 'done' : c.Trust === 'rejected' ? 'stopped' : 'mine'))),
+        el('p', c.Release.Description || '（无描述）', 'muted small'),
+        el('p', '拥有者 ' + c.Owner + ' · 发布者 ' + c.Release.Publisher + ' · ' + (c.Visibility === 'tenant' ? '空间内可见' : '仅拥有者与协作者可见') + ' · ' + time(c.Release.CreatedAt), 'small'));
+      const actions = h('div', 'actions');
+      const dl = el('a', '下载 zip'); dl.href = prefix + '/skills/releases/' + encodeURIComponent(c.Release.Ref) + '/artifact'; actions.append(dl);
+      if (viewer.CanAdmin && viewer.Kind !== 'agent' && c.Release.Publisher !== viewer.Subject) {
+        const verdict = (v) => async () => {
+          const reason = prompt(v === 'approved' ? '审核意见（可选）' : '拒绝理由（必填）') ?? null;
+          if (reason === null) return;
+          if (v === 'rejected' && !reason.trim()) throw Error('拒绝时请写明理由');
+          await api('/skills/admin/releases/' + encodeURIComponent(c.Release.Ref) + '/reviews', 'POST', { Verdict: v, Reason: reason });
+          notice(c.Name + ' v' + c.Release.Version + (v === 'approved' ? ' 已通过审核' : ' 已拒绝'));
+          await loadSkills();
+        };
+        actions.append(button('通过审核', verdict('approved'), 'primary'), button('拒绝', verdict('rejected'), 'danger'));
+      }
+      card.append(actions);
+      box.append(card);
+    }
+  };
+  // Pages of 100 until the list is complete; capability counts stay small.
+  const loadSkills = async () => {
+    items = [];
+    for (let page = 1; ; page++) {
+      const p = await api('/skills/capabilities?size=100&page=' + page + (skillTrust ? '&trust=' + skillTrust : ''));
+      items = items.concat(p.Items);
+      if (items.length >= p.Total || !p.Items.length) break;
+    }
+    paintSkills();
+  };
+  await loadSkills();
+}
 
 // ---------- Task detail ----------
 // current is the shown task's view; earlier holds older timeline pages the
@@ -1033,7 +1126,8 @@ function renderExecution(ctx) {
     if (ex.ProgressAt && !ex.ProgressAt.startsWith('0001')) add('最近进展', ago(ex.ProgressAt) + '（' + time(ex.ProgressAt) + '）');
   }
   const panel = h('div', 'panel', el('h3', '处理情况'), dl);
-  if (w.CanAssign && ctx.active && w.Assignee && !w.Result) panel.append(h('details', null, el('summary', '转交处理（用户或 Agent）'), assignForm(ctx, '选择新的处理人')));
+  // A rejected result returns work to the executor; the owner may also hand it to someone else.
+  if (w.CanAssign && ctx.active && w.Assignee && (!w.Result || w.Review?.Outcome === 'rejected')) panel.append(h('details', null, el('summary', '转交处理（用户或 Agent）'), assignForm(ctx, '选择新的处理人')));
   return panel;
 }
 
@@ -1272,6 +1366,17 @@ setInterval(async () => {
       pendingRefresh = false; pendingIDs.clear();
     } else if (due && editing) notice('任务有新变化，已保留你的输入；完成编辑后刷新。');
   } catch (e) {
+    // Events older than the retained range are gone: start over from a fresh
+    // cursor and full lists instead of guessing what was missed.
+    if (e.code === 'resync_required') {
+      try {
+        cursor = (await api('/changes')).Cursor; people = null; pendingRefresh = false; pendingIDs.clear();
+        await Promise.all([list(), directory()]);
+        if (selected) await show();
+        notice('已重新同步任务列表');
+      } catch (e2) { cursor = ''; notice(e2.message + '；请刷新同步。') }
+      return;
+    }
     cursor = '';
     if (e.status === 403) {
       selected = '';

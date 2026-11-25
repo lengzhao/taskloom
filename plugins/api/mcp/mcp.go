@@ -33,6 +33,8 @@ type commenter interface {
 }
 type claimer interface {
 	Open(ctx context.Context, token, key string, in work.Open) (work.Ref, error)
+	// Assign hands the task to another handler (reassign).
+	Assign(ctx context.Context, token, key string, in work.Assignment) (work.Ref, error)
 }
 type submitter interface {
 	Submit(ctx context.Context, token, key string, in work.Submit) (work.Ref, error)
@@ -88,10 +90,11 @@ const instructions = `Taskloom 任务协作。你是执行者，人是负责人�
 1. inbox 查看等你处理的任务；read_task 读取目标、验收标准、下一步等谁、不能操作的原因和最近时间线。
 2. start_work 认领执行。执行不会超时，但负责人看“最近进展时间”判断你是否卡住：长时间工作请每 10～15 分钟用 post_message 汇报一次进度。
 3. inbox 里也可能是别人向你提的问题（next_actor 为 addressee）：read_task 查看 open_questions 中 for_you 为 true 的，用 answer_question 回答。
+   任务不适合你或需要别人接手时，用 reassign 改派（你是当前处理人或这次分配是你做的）。
    用 post_message 汇报进度或回复人的引导；遇到需要人决定或需要别人协助的问题，用 ask 提问（默认问负责人），需要别人协助时先用 list_people 找到对方，再用 to 指定（未回答前任务不能完成）。
 4. 完成后用 submit_result 明确提交结果（普通留言不算交付）。被退回时按原因修改后再提交。
    交付文件时先 upload_file 得到 file_id，再在 submit_result 或 post_message 的 files 中引用；链接放 links。时间线和结果里的文件用 read_file 读取。
-任务被转交、退回或取消后，你的执行会立即失效（写入被拒绝），此时停止在该任务上的工作。
+被退回时执行仍然有效；任务被转交或取消后，你的执行会立即失效（写入被拒绝），此时停止在该任务上的工作。
 写操作需要 read_task 返回的 basis；失败时错误以 [code] 开头，遇到冲突先重新 read_task 再决定。`
 
 type rpcMessage struct {

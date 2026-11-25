@@ -398,12 +398,12 @@ func TestCreateUnderParentIsAtomic(t *testing.T) {
 	if _, e = f.controls.Cancel(f.ctx, f.owner, "cancel", api.Cancel{TaskID: parent.Task.ID}); e != nil {
 		t.Fatal(e)
 	}
-	before, _ := f.query.List(f.ctx, f.owner, api.ListFilter{})
+	before, _, _ := f.query.List(f.ctx, f.owner, api.ListFilter{})
 	in.Title = "late"
 	if _, e = f.tasks.Commands.Create(f.ctx, f.owner, "create-late", in); !errors.Is(e, fault.ErrConflict) {
 		t.Fatal("subtask created under a cancelled parent", e)
 	}
-	if after, _ := f.query.List(f.ctx, f.owner, api.ListFilter{}); len(after) != len(before) {
+	if after, _, _ := f.query.List(f.ctx, f.owner, api.ListFilter{}); len(after) != len(before) {
 		t.Fatal("failed placement left a task behind", len(before), len(after))
 	}
 	if _, e = f.tasks.Commands.Create(f.ctx, f.agent, "agent-create", workspace.Create{Title: "x", ParentID: parent.Task.ID}); e == nil {

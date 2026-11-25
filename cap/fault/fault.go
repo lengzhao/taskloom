@@ -57,4 +57,6 @@ const (
 	CodeRoundChanged           = "round_changed"
 	CodeVersionChanged         = "version_changed"
 	CodeTaskNotActive          = "task_not_active"
+	// CodeResyncRequired: a change-feed cursor precedes the retained events.
+	CodeResyncRequired = "resync_required"
 )

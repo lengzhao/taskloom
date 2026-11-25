@@ -21,7 +21,7 @@ import (
 
 type QueryDeps struct {
 	Commits       commit.Reader          `json:"commits"`
-	Transactions  unitofwork.Manager     `json:"transactions"`
+	Transactions  unitofwork.Viewer      `json:"transactions"`
 	Tasks         task.Lister            `json:"tasks"`
 	Flow          flow.Controller        `json:"flow"`
 	Executions    execution.Reader       `json:"executions"`
@@ -121,7 +121,7 @@ func (s *Query) Read(ctx context.Context, token, taskID string, before int64) (a
 	if before < 0 {
 		return view, fault.Input(fault.CodeInvalid, "before")
 	}
-	e := s.d.Transactions.Do(ctx, func(tx context.Context) error {
+	e := s.d.Transactions.View(ctx, func(tx context.Context) error {
 		out := &view.Snapshot
 		p, e := s.d.Identity.Authenticate(tx, token)
 		if e != nil {
@@ -229,9 +229,12 @@ func (s *Query) relations(ctx context.Context, p identity.Principal, t task.Task
 
 // List derives every list row from the same facts as Read; it keeps no
 // inbox or overview records, so it cannot drift from the tasks' real state.
-func (s *Query) List(ctx context.Context, token string, f api.ListFilter) ([]api.Summary, error) {
-	out := []api.Summary{}
-	e := s.d.Transactions.Do(ctx, func(tx context.Context) error {
+func (s *Query) List(ctx context.Context, token string, f api.ListFilter) ([]api.Summary, string, error) {
+	if f.Limit < 0 || f.Limit > api.MaxListLimit || (f.Limit > 0 && len(f.IDs) > 0) || (f.Limit == 0 && f.Cursor != "") {
+		return nil, "", fault.Input(fault.CodeInvalid, "limit")
+	}
+	out, next := []api.Summary{}, ""
+	e := s.d.Transactions.View(ctx, func(tx context.Context) error {
 		p, e := s.d.Identity.Authenticate(tx, token)
 		if e != nil {
 			return e
@@ -240,14 +243,11 @@ func (s *Query) List(ctx context.Context, token string, f api.ListFilter) ([]api
 		if e = s.d.Authorization.Check(tx, p, "tasks.list", p.Tenant); e != nil {
 			return e
 		}
-		ts, e := task.Pick(tx, s.d.Tasks, p.Tenant, f.IDs)
-		if e != nil {
-			return e
-		}
 		blocked := []api.Summary{}
-		for _, t := range ts {
+		// add derives one row; it reports whether the row joined the page.
+		add := func(t task.Task) error {
 			if s.d.Authorization.Check(tx, p, "task.read", t.ID) != nil {
-				continue
+				return nil
 			}
 			v, e := s.ReadFacts(tx, t)
 			if e != nil {
@@ -272,11 +272,55 @@ func (s *Query) List(ctx context.Context, token string, f api.ListFilter) ([]api
 			case v.Position.WaitingOnSubtasks && (v.Assignee == p.ID || (p.Kind == "human" && p.ID == t.Owner)):
 				blocked = append(blocked, row)
 			}
+			return nil
+		}
+		if f.Limit == 0 {
+			ts, e := task.Pick(tx, s.d.Tasks, p.Tenant, f.IDs)
+			if e != nil {
+				return e
+			}
+			for _, t := range ts {
+				if e = add(t); e != nil {
+					return e
+				}
+			}
+		} else {
+			// Read bounded batches until the page is full or the tasks run out;
+			// the cursor is the last task examined, shown or not.
+			after, full := f.Cursor, false
+			for !full {
+				ts, e := s.d.Tasks.ListTasksAfter(tx, p.Tenant, after, f.Limit)
+				if e != nil {
+					return e
+				}
+				for _, t := range ts {
+					if e = add(t); e != nil {
+						return e
+					}
+					after = t.ID
+					if full = len(out)+len(blocked) == f.Limit; full {
+						break
+					}
+				}
+				if !full && len(ts) < f.Limit {
+					break // no more tasks: the list is complete
+				}
+			}
+			if full {
+				// A full page may also be the last; peek so a cursor always has more behind it.
+				more, e := s.d.Tasks.ListTasksAfter(tx, p.Tenant, after, 1)
+				if e != nil {
+					return e
+				}
+				if len(more) > 0 {
+					next = after
+				}
+			}
 		}
 		out = append(out, blocked...)
 		return nil
 	})
-	return out, e
+	return out, next, e
 }
 
 func waitsOn(p identity.Principal, t task.Task, v api.Snapshot) bool {

@@ -24,8 +24,8 @@ Taskloom 是人与 Agent 协作的任务系统，采用模块化单体：公共�
 | identity（identity/local）、access（access/default） | 凭据认证；按成员/负责人/参与/项目成员/skill 拥有者与协作者关系授权 | 1、4 |
 | command-runtime（commands/runtime） | 命令事务、幂等回执、审计 | 5 |
 | flow（task/flow） | 阶段/轮次唯一写入者，步骤由事实推导（含直接必需子任务） | 6 |
-| workspace（workspace/tasks） | 任务创建（含原子建为子任务、执行中的 Agent 拆分本任务）/依据修改/评论/参与者/项目归属/变化补拉 | 13 |
-| execution-commands、result-commands、question-commands、flow-commands | 分配与认领；提交与验收；提问与回答；取消与开新轮 | 8、7、8、5 |
+| workspace（workspace/tasks） | 任务创建（含原子建为子任务、执行中的 Agent 拆分本任务）/依据修改/评论/参与者/项目归属/变化补拉 | 14 |
+| execution-commands、result-commands、question-commands、flow-commands | 分配与认领；提交与验收；提问与回答；取消与开新轮 | 8、7、9、5 |
 | ownership-commands（commands/ownership） | 负责人移交：同事务改负责人、原负责人留为参与者、写 `task.owner` commit、按新验收人重推导完成并发事件 | 8 |
 | plan-commands（commands/plan） | 子任务放置：挂接、切换必需、重挂（不解除），同事务递增父依据；同一规则以 Placer 供任务创建在其事务内调用 | 7 |
 | workflow-query（query/workflow） | 只读任务视图（任务、快照、可读父/子任务、可用操作原因、时间线分页）与任务列表（含"我的工作"过滤），均读取时推导 | 12 |
@@ -34,7 +34,7 @@ Taskloom 是人与 Agent 协作的任务系统，采用模块化单体：公共�
 | workspace-api、task-api、workflow-api、file-api、mcp-api、audit-api、health | HTTP 与 MCP 协议适配：workspace-api 管会话、空间与项目、成员目录、变化流和 `/admin`；task-api 管任务本身（列表、视图、创建、修改、时间线、参与者、项目、负责人、拆分放置）；workflow-api 管执行、交付、验收、提问与取消重开；任务写入一律回答任务视图；错误统一为 `{Code, Message, Field}`；Origin/CSRF 由 http 对所有路由统一检查 | 5、4、5、1、7、4、0 |
 | skills、skill-review、skill-query、skills-api、embedder（可选；均仅[覆盖示例](../examples/skills/skills.config.yaml)） | skill 发布与管理、独立审核、检索与交付判定、HTTP 适配、OpenAI 兼容 embedding；规则见 [Skill 交付控制面](skills.md) | 6（embedder 可选）、3、6（embedder 可选）、3、0 |
 
-超过 5 个 Deps 的模块都是同一命令事务内的协调边界：每个字段是一个独立能力接口（命令生命周期、各领域事实、事件），不是服务定位器；拆开只会把同一事务协调挪到别处。workspace 的 13 项是工作台纵向切片的历史边界（第 13 项 Placer 只为让创建与放置成为一个原子命令，放置规则仍只在 plan 模块），新增执行/验收/拆分能力都放入独立命令模块，不再向它堆积。执行中的 Agent 拆分本任务没有新增字段：原有的执行进展依赖改为 `executor`（execution.Executor），由执行模块检查调用者持有当前执行（Hold）并在其自己的计划变更后让执行跟随新依据（Follow），执行规则仍只在执行模块。flow 增加的关系读取是同一完成规则的事实输入，提交检查和父任务事件也复用它，命令模块因此无需各自读取关系。ownership 的 8 项都是移交这一个事务内写入或检查的事实（负责人、新负责人成员资格、原负责人参与、时间线、新验收人下的完成、事件）加命令生命周期与它自己的授权（让做出移交的原负责人能重试已生效的移交），拆开只会把同一事务挪到别处。files 的 6 项是上传命令（命令生命周期、文件登记、字节存储）与读取（事务、认证、授权）共用的同一授权边界。skills 与 skill-query 的 6 项沿用 files 的理由：上传前预检（事务、认证）、先写字节再登记、事务外派生向量；读取共用同一认证与可见性检查，再在事务外读字节或编码查询。评论与结果引用文件时不新增依赖：文件属于本任务这一引用完整性由 commit 仓储在追加时检查，与 RefID 相同。
+超过 5 个 Deps 的模块都是同一命令事务内的协调边界：每个字段是一个独立能力接口（命令生命周期、各领域事实、事件），不是服务定位器；拆开只会把同一事务协调挪到别处。workspace 的 14 项是工作台纵向切片的历史边界（其中 Placer 只为让创建与放置成为一个原子命令，放置规则仍只在 plan 模块），新增执行/验收/拆分能力都放入独立命令模块，不再向它堆积。执行中的 Agent 拆分本任务没有新增字段：原有的执行进展依赖改为 `executor`（execution.Executor），由执行模块检查调用者持有当前执行（Hold）并在其自己的计划变更后让执行跟随新依据（Follow），执行规则仍只在执行模块。flow 增加的关系读取是同一完成规则的事实输入，提交检查和父任务事件也复用它，命令模块因此无需各自读取关系。ownership 的 8 项都是移交这一个事务内写入或检查的事实（负责人、新负责人成员资格、原负责人参与、时间线、新验收人下的完成、事件）加命令生命周期与它自己的授权（让做出移交的原负责人能重试已生效的移交），拆开只会把同一事务挪到别处。files 的 6 项是上传命令（命令生命周期、文件登记、字节存储）与读取（事务、认证、授权）共用的同一授权边界。skills 与 skill-query 的 6 项沿用 files 的理由：上传前预检（事务、认证）、先写字节再登记、事务外派生向量；读取共用同一认证与可见性检查，再在事务外读字节或编码查询。评论与结果引用文件时不新增依赖：文件属于本任务这一引用完整性由 commit 仓储在追加时检查，与 RefID 相同。
 
 命令模块不依赖查询模块：各模块持有自己声明的 Deps，共享步骤是只接收窄接口的包级函数，不存在跨模块共用的依赖并集。
 
@@ -54,11 +54,19 @@ Taskloom 是人与 Agent 协作的任务系统，采用模块化单体：公共�
 
 事件序号在持锁事务内分配，因此即为提交顺序；变化补拉按序号读取并逐条重新鉴权，详见 [API](api.md#变化补拉)。
 
+只读用例（任务视图与列表、文件列表与下载前检查、空间/项目/成员目录、变化补拉、审计、skill 检索）经 `unitofwork.Viewer` 在只读快照事务中执行，不取全局写锁：命令按序号串行提交，快照总是看到事件序列的一个前缀。视图内任何写入或嵌套命令都被拒绝；在命令事务内调用时加入该事务。读写都可能发生的模块仍用 `unitofwork.Manager`。
+
 ## 存储与迁移
 
-GORM v1.31.1，SQLite/MySQL/PostgreSQL 驱动 v1.6.0（SQLite 驱动需 CGO）。默认 `driver: sqlite`、`dsn: taskloom.db`，生产在 config.yaml 覆盖 driver 与原生 DSN；SQLite 使用 immediate 事务、外键检查和 5 秒 busy timeout。MySQL/PostgreSQL 已编入但未连接真实服务验证。
+GORM v1.31.1，SQLite/MySQL/PostgreSQL 驱动 v1.6.0（SQLite 驱动需 CGO）。默认 `driver: sqlite`、`dsn: taskloom.db`，生产在 config.yaml 覆盖 driver 与原生 DSN；SQLite 使用 immediate 事务、外键检查和 5 秒 busy timeout，默认 WAL 日志模式（DSN 可自选 `_journal_mode`）。写入用单连接；只读快照用独立连接池（8 个连接，SQLite 为 deferred 事务，MySQL/PostgreSQL 为只读可重复读事务；内存 SQLite 与写入共用连接）。MySQL/PostgreSQL 已编入但未连接真实服务验证。
 
-迁移按模块 ID 顺序登记校验和；已应用的未知迁移或校验和不一致时拒绝打开数据库，不做自动破坏性升级。当前处于开发阶段，表结构变更直接修改迁移定义，本地旧库需删除后重新初始化。
+过期的变化事件与幂等回执由 sql 资源自有的清理循环删除（Open 启动、Close 先停止并等待），保留期见[两层配置](configuration.md)；已清理的最高事件序号记为下限，补拉游标低于它时要求重同步。
+
+迁移按模块 ID 顺序登记校验和；已应用的未知迁移或校验和不一致时拒绝打开数据库，不做自动破坏性升级。已应用迁移的模型保持冻结；表结构变化以新迁移 ID 追加：新模型用同表名的新类型（如 `receiptRecord`、`assignmentRecord`），只加列或索引，必要的数据回填写在该迁移里并由其定义名覆盖校验和（如 `command/002` 为旧回执补 created_at，`workflow/002` 为分配加派送人）。
+
+## 日志
+
+使用标准库 `log/slog` 默认 logger：`cmd/taskloom` 在启动时设定唯一的输出（stderr 文本，`-log-level` 默认 info）。这是“不用全局状态”的唯一例外，理由是日志只是诊断出口：不参与业务判断、没有读取方，也不改变模块行为；为它给每个插件增加 Deps 字段只会扩大依赖面。业务能力仍一律经 Deps 注入。HTTP 每个请求一行（操作、方法、路径、状态、耗时，不记凭据、正文或查询串；成功的 GET 为 debug，写入与 4xx 为 info，5xx 为 error）；存储把未知数据库错误的原因写入日志，对外仍只返回 `unavailable`；补偿删除失败与清理失败记 warn。
 
 ## 身份、凭据与审计
 

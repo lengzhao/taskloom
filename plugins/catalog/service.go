@@ -22,7 +22,7 @@ import (
 // commands read the caller and membership, write the store inside the shared
 // command lifecycle, and announce the change; none of these is a second role.
 type Deps struct {
-	Transactions unitofwork.Manager     `json:"transactions"`
+	Transactions unitofwork.Viewer      `json:"transactions"`
 	Identity     identity.Authenticator `json:"identity"`
 	Members      az.MemberDirectory     `json:"members"`
 	Store        api.Store              `json:"store"`
@@ -53,7 +53,7 @@ func (s *Service) actor(ctx context.Context, token string) (identity.Principal, 
 }
 func (s *Service) Space(ctx context.Context, token string) (api.Space, error) {
 	var out api.Space
-	e := s.d.Transactions.Do(ctx, func(tx context.Context) error {
+	e := s.d.Transactions.View(ctx, func(tx context.Context) error {
 		p, e := s.actor(tx, token)
 		if e != nil {
 			return e
@@ -65,7 +65,7 @@ func (s *Service) Space(ctx context.Context, token string) (api.Space, error) {
 }
 func (s *Service) Projects(ctx context.Context, token string) ([]api.Project, error) {
 	out := []api.Project{}
-	e := s.d.Transactions.Do(ctx, func(tx context.Context) error {
+	e := s.d.Transactions.View(ctx, func(tx context.Context) error {
 		p, e := s.actor(tx, token)
 		if e != nil {
 			return e
@@ -79,7 +79,7 @@ func (s *Service) Projects(ctx context.Context, token string) ([]api.Project, er
 // Project reads one project of the caller's tenant, visible like Projects.
 func (s *Service) Project(ctx context.Context, token, id string) (api.Project, error) {
 	var out api.Project
-	e := s.d.Transactions.Do(ctx, func(tx context.Context) error {
+	e := s.d.Transactions.View(ctx, func(tx context.Context) error {
 		p, e := s.actor(tx, token)
 		if e != nil {
 			return e

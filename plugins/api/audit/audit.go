@@ -18,7 +18,7 @@ import (
 )
 
 type Deps struct {
-	Transactions  unitofwork.Manager     `json:"transactions"`
+	Transactions  unitofwork.Viewer      `json:"transactions"`
 	Identity      identity.Authenticator `json:"identity"`
 	Authorization az.Authorizer          `json:"authorization"`
 	Audit         record.AuditReader     `json:"audit"`
@@ -47,7 +47,7 @@ func (m *Module) List(ctx context.Context, token string, limit int) ([]record.Au
 		limit = 100
 	}
 	var out []record.Audit
-	e := m.d.Transactions.Do(ctx, func(tx context.Context) error {
+	e := m.d.Transactions.View(ctx, func(tx context.Context) error {
 		p, e := m.d.Identity.Authenticate(tx, token)
 		if e != nil {
 			return e

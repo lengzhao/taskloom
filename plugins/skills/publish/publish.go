@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"slices"
 	"strings"
 	"time"
@@ -196,7 +197,9 @@ func (m *Module) Publish(ctx context.Context, token, key string, body io.Reader)
 		// release's bytes (replay or identical retry). A failed delete
 		// leaves only unreachable bytes.
 		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-		_ = m.d.Blobs.Delete(cleanup, ref)
+		if e := m.d.Blobs.Delete(cleanup, ref); e != nil {
+			slog.Default().WarnContext(ctx, "compensating blob delete failed; bytes left unreachable", slog.String("key", ref), slog.String("error", e.Error()))
+		}
 		cancel()
 	}
 	if err != nil {

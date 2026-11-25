@@ -99,8 +99,16 @@ func TestHumanCanDelegateButOldWorkCannotSubmit(t *testing.T) {
 	if _, e = f.results.Submit(f.ctx, worker, "stale-human-result", api.Submit{TaskID: d.Task.ID, ExecutionID: old.ID, Body: "too late"}); !errors.Is(e, fault.ErrConflict) {
 		t.Fatal("old human submission accepted", e)
 	}
-	if _, e = f.ex.Assign(f.ctx, worker, "steal-back", api.Assignment{TaskID: d.Task.ID, Subject: "worker"}); !errors.Is(e, az.ErrForbidden) {
-		t.Fatal("old handler can steal assignment", e)
+	// The old handler made this assignment, so it may change it again; that
+	// starts new work and never revives the fenced execution.
+	if _, e = f.ex.Assign(f.ctx, other, "not-the-assigner", api.Assignment{TaskID: d.Task.ID, Subject: "other"}); !errors.Is(e, az.ErrForbidden) {
+		t.Fatal("participant who neither handles nor assigned can reassign", e)
+	}
+	if s, e = f.ex.Assign(f.ctx, worker, "assigner-reassigns", api.Assignment{TaskID: d.Task.ID, Subject: "agent"}); e != nil || s.Assignee != "agent" {
+		t.Fatal("assigner cannot reassign", e)
+	}
+	if _, e = f.results.Submit(f.ctx, worker, "stale-human-result-2", api.Submit{TaskID: d.Task.ID, ExecutionID: old.ID, Body: "still too late"}); !errors.Is(e, fault.ErrConflict) {
+		t.Fatal("reassignment revived old execution", e)
 	}
 	s, e = f.ex.Open(f.ctx, f.agent, "agent-start", api.Open{TaskID: d.Task.ID, BasisVersion: d.Task.BasisVersion})
 	if e != nil {
@@ -167,7 +175,8 @@ func TestOverviewAndOwnerSelfAssignment(t *testing.T) {
 		t.Fatal("owner self-assignment", s.Assignee, s.Participants)
 	}
 	list := func(token string, ids []string) ([]api.Summary, error) {
-		return f.query.List(f.ctx, token, api.ListFilter{IDs: ids})
+		rows, _, e := f.query.List(f.ctx, token, api.ListFilter{IDs: ids})
+		return rows, e
 	}
 	items, e := list(f.owner, nil)
 	if e != nil {

@@ -38,6 +38,9 @@ type Reader interface {
 type Lister interface {
 	Reader
 	ListTasks(ctx context.Context, tenant string) ([]Task, error)
+	// ListTasksAfter reads at most limit tasks with IDs after the given one,
+	// in ID order, so a long list can be read in bounded batches.
+	ListTasksAfter(ctx context.Context, tenant, after string, limit int) ([]Task, error)
 }
 
 // MaxPick bounds how many tasks one list request may name.

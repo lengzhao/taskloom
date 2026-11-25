@@ -59,4 +59,4 @@ trust 为 approved、rejected 或 unreviewed；没有审核是否放行由宿主
 
 ## 未实现
 
-宿主预设（待 AgentKit 同步工具成为消费方再加）、跨租户系统目录、只读授权、按组织可见、MCP Skills 扩展（SEP-2640）、`.well-known` 发现、网页界面、Remote MCP producer；宿主侧同步工具在 AgentKit。
+宿主预设（待 AgentKit 同步工具成为消费方再加）、跨租户系统目录、只读授权、按组织可见、MCP Skills 扩展（SEP-2640）、`.well-known` 发现、网页发布与管理（工作台只提供浏览、按审核状态筛选、下载与管理员审核，见[工作台](api.md#工作台)）、Remote MCP producer；宿主侧同步工具在 AgentKit。

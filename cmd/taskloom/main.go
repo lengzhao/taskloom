@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
@@ -26,12 +27,21 @@ func run(ctx context.Context, args []string, out, errout io.Writer) int {
 	base := flags.String("base", "base.yaml", "L0 base file")
 	overlay := flags.String("config", "config.yaml", "L1 override file; empty path means no overlay")
 	check := flags.Bool("check", false, "build typed plugin graph without opening resources or listeners")
+	logLevel := flags.String("log-level", "info", "diagnostic log level: debug, info, warn or error")
 	if err := flags.Parse(args); err != nil {
 		if err == flag.ErrHelp {
 			return 0
 		}
 		return 2
 	}
+	var level slog.Level
+	if err := level.UnmarshalText([]byte(*logLevel)); err != nil {
+		fmt.Fprintln(errout, "invalid -log-level")
+		return 2
+	}
+	// The process owns the one diagnostic sink; plugins write to it through
+	// slog's default logger (see docs/architecture.md#日志).
+	slog.SetDefault(slog.New(slog.NewTextHandler(errout, &slog.HandlerOptions{Level: level})))
 	if flags.NArg() != 0 {
 		fmt.Fprintln(errout, "unexpected arguments; only one base and one config file are supported")
 		return 2

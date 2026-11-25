@@ -8,7 +8,7 @@
 - **浏览器写入**：HTTP 传输层对所有路由统一要求：带 Origin 时必须等于 `http.config.origin`；无 Authorization 的非 GET 请求必须带 `X-Taskloom-Request: 1`。origin 只有回环主机（localhost、127.0.0.1、::1）可用 http，其余须 https；会话 Cookie 除回环主机外都是 Secure。多租户库须设置 `workspace-api.config.loginTenant`。
 - **写入**：都需 `Idempotency-Key`（缺少时 400 `idempotency_key_required`）；同键同载荷返回原结果，不同载荷 409 `idempotency_key_reused`。回执只存命令固定的引用与一次性返回值（如新建 ID、凭据编号），不存可推导的事实，见[命令生命周期](architecture.md#命令生命周期)。租户和作者来自认证主体，请求体不能指定。
 - **载荷**：JSON 使用导出字段名，路径绑定 ID，未知字段拒绝。正文上限 64KiB，业务文本上限 20000 字节。文件上传例外，见[文件](#文件)。响应不含租户（由认证决定）与任务创建序号。
-- **错误**：响应体一律为 `{Code, Message, Field?}`：`Code` 是稳定的 snake_case 原因，程序据此分支；`Message` 是给人看的中文说明（每个 code 的文字只在 `cap/fault` 维护一份，HTTP 错误、MCP 错误和快照 `Blocked` 共用）；`Field` 指出出错的请求字段（如 `Title`、`ExecutionID`、`Idempotency-Key`）。状态码：400 输入无效，401 认证，403 授权，404 不存在，409 当前事实不允许（如 `basis_changed`、`round_changed`、`execution_fenced`、`result_changed`、`required_children_pending`），413 超过上限，429 登录过多，500 技术失败。冲突码与快照 `Blocked` 原因码同一套（见 `cap/workflow`），通用码与说明文字见 `cap/fault`。
+- **错误**：响应体一律为 `{Code, Message, Field?}`：`Code` 是稳定的 snake_case 原因，程序据此分支；`Message` 是给人看的中文说明（每个 code 的文字只在 `cap/fault` 维护一份，HTTP 错误、MCP 错误和快照 `Blocked` 共用）；`Field` 指出出错的请求字段（如 `Title`、`ExecutionID`、`Idempotency-Key`）。状态码：400 输入无效，401 认证，403 授权（不可读的任务与不存在的任务同样返回 403，不泄露是否存在），404 不存在（不按任务鉴权的资源，如 skill 与文件），409 当前事实不允许（如 `basis_changed`、`round_changed`、`execution_fenced`、`result_changed`、`required_children_pending`），413 超过上限，429 登录过多，500 技术失败。冲突码与快照 `Blocked` 原因码同一套（见 `cap/workflow`），通用码与说明文字见 `cap/fault`。
 
 ## 权限
 
@@ -19,9 +19,10 @@
 | 有效人类成员 | 创建任务并成为负责人；读空间与项目目录，创建项目；列出可读任务 |
 | 有效人类管理员 | 管理本租户成员、身份、凭据与空间资料；读取和管理本租户任务；查询审计 |
 | 任务负责人（有效人类） | 读写约定、追加 commit、管理参与者、分配、取消、重开、验收、调整子任务、移动项目、移交负责人 |
-| 当前人工处理人（仍参与） | 提交结果并转交；不取得负责人或验收资格 |
+| 当前处理人（人或 Agent，仍参与） | 提交结果（Agent 须先认领）并改派给他人；不取得负责人或验收资格 |
+| 当前分配的派送人（仍参与） | 改派：做出当前这次分配的人或 Agent 可以再改给别人 |
 | 任务参与者 | 读取、评论（只能更正自己的评论）、提问（可问任一有效成员，被问者随之成为参与者） |
-| 项目负责人与项目成员（人或 Agent） | 对项目内每个任务等同参与者；不能管理、移动、移交或验收 |
+| 项目负责人与项目成员（人或 Agent） | 对项目内每个任务等同参与者；项目负责人还可改派处理人；不能管理、移动、移交负责人或验收 |
 | Agent | 不继承所属人任何权限；须显式参与任务（被分配或被提问）；只能认领分配给自己的任务；持有当前执行时可在该任务下新建子任务，并按部署配置同时分配处理人（默认任一有效成员）；可读成员目录 |
 | Skill（启用时） | 有效成员读取可见目录并新建 skill；拥有者与协作者发布新版本；拥有者管理可见性、协作者与归档；人类管理员管理本租户全部 skill、审核（不审自己发布的版本）与重建索引，见 [Skill](skills.md#权限) |
 | 停用或不存在的成员 | 无任何访问，即使保留负责人/参与历史 |
@@ -54,7 +55,7 @@
 | GET/PATCH /space | 读取；管理员更新 Name、Description、ExpectedVersion，响应为当前空间 |
 | GET/POST /projects、PATCH /projects/{id} | 目录、创建（Name、Description、Owner、Members）与编辑/归档（另带 Archived、ExpectedVersion），整项替换，省略 Members 即清空成员；Members 为有效成员（人或 Agent），最多 200 个，自动去重并去掉负责人；管理员或项目负责人可编辑；写入响应为该项目当前状态，回执只存项目 ID |
 | GET /people | 有效成员目录（Subject、Kind、OwnerID），任一有效成员（含 Agent）可读；`?q=` 按 Subject 片段搜索、`kind=human\|agent`、按 Subject 分页（`after`，`limit` 默认 50、最多 200），返回 `{Items, Next}`；供选项目负责人、处理人、参与者和被提问人，不按任务过滤 |
-| GET /tasks | 任务列表，每行是推导出的 `{Task, Position, Assignee, ParentID, NextActor, ForMe, UpdatedAt}`（UpdatedAt 为时间线最后一条 commit 的时间），不保存，读取时推导；`?mine=true` 只列调用者的工作：先是 NextActor 指向自己的任务（`ForMe`），再是自己负责或处理、正在等待必需子任务的任务（`Position.WaitingOnSubtasks`）；可重复 `?id=`（最多 100 个，空值 400）只返回这些任务中可读的部分，不存在与不可读一样不出现 |
+| GET /tasks | 任务列表，每行是推导出的 `{Task, Position, Assignee, ParentID, NextActor, ForMe, UpdatedAt}`（UpdatedAt 为时间线最后一条 commit 的时间），不保存，读取时推导；`?mine=true` 只列调用者的工作：先是 NextActor 指向自己的任务（`ForMe`），再是自己负责或处理、正在等待必需子任务的任务（`Position.WaitingOnSubtasks`）；可重复 `?id=`（最多 100 个，空值 400）只返回这些任务中可读的部分，不存在与不可读一样不出现；`?limit=N`（1–200）分页：响应体仍是数组，还有下一页时响应头 `X-Next-Cursor` 给出游标，用 `?cursor=` 续读，页按任务 ID 排序（`mine` 时页内先 ForMe 后阻塞），`limit` 不与 `id` 同用；不带 `limit` 返回全表（兼容旧客户端） |
 | POST /tasks | 创建（Title 必填，Goal、Criteria 可选、可后补；可选 ProjectID；可选 ParentID、Required 与 Owner 直接建为子任务，同一事务内创建并放置，需父任务调整子任务的资格，Agent 则需持有父任务当前可写执行，任一步失败都不留下任务；Owner 为空间内有效人类成员，空时人为本人、Agent 为父任务负责人；只传 Required 或 Owner 不传 ParentID 返回 400，Owner 不是有效人类成员返回 400；可选 Acceptance（`manual`/`none`，其他值 400，空时的默认见[核心契约](core-contracts.md#标识与版本)）；可选 Assignee 同事务分配，人的资格同分配命令，Agent 可填的范围由部署配置决定，超出返回 403，缺少目标时 409，见[任务拆分](core-contracts.md#任务拆分)） |
 | GET /tasks/{id} | 任务视图：任务、调用者的流程快照（见[执行、交付与验收](#执行交付与验收)）、`CanEdit`/`CanComment` 与一页时间线：默认是最新的 100 条（页内按时间正序），`Earlier: true` 表示前面还有，用 `?before=<页内最早一条的 Sequence>` 往前翻 |
 | PATCH /tasks/{id} | 修改任务要求（Title、Goal、Criteria、BasisVersion） |
@@ -113,7 +114,7 @@
 
 | 路径 | 说明 |
 | --- | --- |
-| GET /capabilities?match=&q=&page=&size=&min_score= | 目录与检索：match 为空（浏览）或部署启用的 name、lexical、bm25、semantic（未启用返回 400）；size 默认 24、最多 100；返回 `{Items:[{Capability…, Release, Score}], Total}`，Release 为当前版本 |
+| GET /capabilities?match=&q=&page=&size=&min_score=&trust= | 目录与检索：match 为空（浏览）或部署启用的 name、lexical、bm25、semantic（未启用返回 400）；size 默认 24、最多 100；`trust`（approved/rejected/unreviewed）只留当前版本为该审核状态的，`trust=unreviewed` 即待审核队列；返回 `{Items:[{Capability…, Release, Score, Trust}], Total}`，Release 为当前版本，Trust 由其最新审核推导 |
 | GET /capabilities/resolve?name= | 语义名 → 当前版本与 trust |
 | POST /capabilities | 请求体为 zip；首次发布即创建（private），之后追加更高版本；不通过检查返回 400 `{Diagnostics:[{Code, Message, Blocking}]}`，超过 `skills.config.maxBytes` 返回 413 |
 | POST /capabilities/publication-preflight | 同一套检查的只读报告 `{Name, Version, Digest, Size, Publishable, Diagnostics}` |
@@ -132,10 +133,10 @@
 2. 读取任务列表和快照。
 3. 之后用 `GET /v1/changes?cursor=<游标>` 补拉，每次返回新游标。
 
-游标就是事件序号。每条事件读取时重新鉴权，因此游标本身不授予任何访问，无需签名或过期；事件当前不清理。Change 只含变更类型与任务 ID：`task.changed`（调用者可读的任务有变化，重读快照）或 `access.changed`（成员、参与者、空间、项目或任务移出项目，可能有人失去访问，重读列表）。不推送正文或未授权摘要。工作台每 4 秒补拉一次：只有 `task.changed` 时用 `GET /tasks?id=` 重读这些任务（超过 100 个时整表重读），回答里缺席的任务从各列表移除，正在查看的任务在其中时才重读它；出现 `access.changed` 时整表重读并重读成员目录。没有变化时不发其他请求。重复变化按 ID 重读即可。WebSocket 尚未实现。AgentKit 的 `platform/taskloom` 读取本节与 `/me`、`/tasks?mine=true`、`/tasks/{id}`，见 [MCP 接入](mcp-adapter.md#示例agentkit-常驻执行-agent)。
+游标就是事件序号。每条事件读取时重新鉴权，因此游标本身不授予任何访问，无需签名。事件按 `sql.config.eventRetention`（默认 720h，至少 24h）清理：游标早于已清理范围时返回 409 `resync_required`，客户端须重读列表并用不带 cursor 的请求取新游标；新游标不会落在已清理范围内。Change 只含变更类型与任务 ID：`task.changed`（调用者可读的任务有变化，重读快照）或 `access.changed`（成员、参与者、空间、项目或任务移出项目，可能有人失去访问，重读列表）。不推送正文或未授权摘要。工作台收到 `resync_required` 时自动重取游标并整表重读。工作台每 4 秒补拉一次：只有 `task.changed` 时用 `GET /tasks?id=` 重读这些任务（超过 100 个时整表重读），回答里缺席的任务从各列表移除，正在查看的任务在其中时才重读它；出现 `access.changed` 时整表重读并重读成员目录。没有变化时不发其他请求。重复变化按 ID 重读即可。WebSocket 尚未实现。AgentKit 的 `platform/taskloom` 读取本节与 `/me`、`/tasks?mine=true`、`/tasks/{id}`，见 [MCP 接入](mcp-adapter.md#示例agentkit-常驻执行-agent)。
 
 ## 工作台
 
-`/v1/app` 是内嵌的薄界面，无外部资源和前端构建链。留言与提交结果可在"附件与链接"中选择文件（列出已选文件、可逐个移除；按 `GET /files/limits` 在发送前检查数量、单个大小、空文件和链接格式，再逐个上传后引用，失败提示文件名）和填写链接。它只依据快照的 `Can*`/`Blocked`/`NextActor` 决定可用操作，状态名只用于显示；界面不出现依据版本、轮次、执行实例等内部机制名，统一说"任务要求""重新开始"；错误直接显示响应的 `Message` 与 `Field`；取消、重开需二次确认；网络结果不明确时沿用同一幂等键。写入后直接用响应里的任务视图渲染，只按 ID 重读该任务的列表行和文件列表；打开任务只读该任务；成员目录每次登录读一次。已有待验收结果时，重新提交收在"替换已提交的结果"里。时间线默认显示最新一页，"加载更早记录"向前翻。管理员在"用户与 Agent"中管理成员、签发和撤销凭据、查看审计记录；首次初始化与离线恢复只在 CLI 中执行。
+`/v1/app` 是内嵌的薄界面，无外部资源和前端构建链。留言与提交结果可在"附件与链接"中选择文件（列出已选文件、可逐个移除；按 `GET /files/limits` 在发送前检查数量、单个大小、空文件和链接格式，再逐个上传后引用，失败提示文件名）和填写链接。它只依据快照的 `Can*`/`Blocked`/`NextActor` 决定可用操作，状态名只用于显示；界面不出现依据版本、轮次、执行实例等内部机制名，统一说"任务要求""重新开始"；错误直接显示响应的 `Message` 与 `Field`；取消、重开需二次确认；网络结果不明确时沿用同一幂等键。写入后直接用响应里的任务视图渲染，只按 ID 重读该任务的列表行和文件列表；打开任务只读该任务；成员目录每次登录读一次。已有待验收结果时，重新提交收在"替换已提交的结果"里；结果被退回后，有改派资格的人仍可"转交处理"。任务列表按每页 200 条分页读取，筛选（项目、负责人、处理人、状态、搜索）在已读取的列表上进行。装配了 skill 模块组时出现"Skill"页：浏览可见 skill、按审核状态筛选（`trust`）、下载 zip；人类管理员可对当前版本通过或拒绝（不能审自己发布的）。时间线默认显示最新一页，"加载更早记录"向前翻。管理员在"用户与 Agent"中管理成员、签发和撤销凭据、查看审计记录；首次初始化与离线恢复只在 CLI 中执行。
 
 新待处理提醒不在服务端存任何记录：每次读任务列表（整表或按 `?id=`）时，与上一次相比新进入、或等待角色变化（如由处理人变为被提问人）的任务标"新"、在页面顶部提示，用户在顶栏"开启桌面通知"并允许后还会弹出浏览器桌面通知，点击打开该任务；打开任务即清除"新"。本页刚写过的任务在随后的那次读取中跳过，所以自己的操作（如分配给自己）不提醒。登录或刷新页面后的首次读取只建立基线，不标"新"。因此提醒只在页面打开期间有效；人不在页面时的渠道（飞书、邮件）以及 Agent 推送需要服务端检测，届时再作为新模块加入。`/v1/app?task=<任务ID>` 直接打开该任务。

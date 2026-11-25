@@ -94,7 +94,7 @@ func (m *ExecutionModule) Assign(ctx context.Context, token, key string, in api.
 		if e != nil {
 			return api.Ref{}, e
 		}
-		started, e := m.assign(tx, t, pos, in.Subject)
+		started, e := m.assign(tx, t, pos, in.Subject, p.ID)
 		if e != nil {
 			return api.Ref{}, e
 		}
@@ -106,7 +106,7 @@ func (m *ExecutionModule) Assign(ctx context.Context, token, key string, in api.
 
 // AssignCreated implements execution.Assigner for a command that creates the
 // task in the same transaction; that command announces the change itself.
-func (m *ExecutionModule) AssignCreated(ctx context.Context, tenant, taskID, subject string) error {
+func (m *ExecutionModule) AssignCreated(ctx context.Context, tenant, taskID, subject, assigner string) error {
 	t, e := m.d.Tasks.GetTask(ctx, tenant, taskID)
 	if e != nil {
 		return e
@@ -115,7 +115,7 @@ func (m *ExecutionModule) AssignCreated(ctx context.Context, tenant, taskID, sub
 	if e != nil {
 		return e
 	}
-	_, e = m.assign(ctx, t, pos, subject)
+	_, e = m.assign(ctx, t, pos, subject, assigner)
 	return e
 }
 
@@ -123,7 +123,7 @@ func (m *ExecutionModule) AssignCreated(ctx context.Context, tenant, taskID, sub
 // participant, fencing the current execution. A person needs no separate
 // claim, so their manual work starts here; an Agent still claims, binding
 // the execution to one credential.
-func (m *ExecutionModule) assign(tx context.Context, t task.Task, pos flow.Position, subject string) (execution.Execution, error) {
+func (m *ExecutionModule) assign(tx context.Context, t task.Task, pos flow.Position, subject, assigner string) (execution.Execution, error) {
 	if pos.Status != flow.PhaseActive {
 		return execution.Execution{}, fault.Conflict(api.ReasonTaskNotActive)
 	}
@@ -150,7 +150,7 @@ func (m *ExecutionModule) assign(tx context.Context, t task.Task, pos flow.Posit
 			return execution.Execution{}, e
 		}
 	}
-	if e = m.d.Executions.AssignSubject(tx, t.Tenant, t.ID, subject); e != nil {
+	if e = m.d.Executions.AssignSubject(tx, t.Tenant, t.ID, subject, assigner); e != nil {
 		return execution.Execution{}, e
 	}
 	if who.Kind == "human" {

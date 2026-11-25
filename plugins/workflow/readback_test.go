@@ -30,7 +30,7 @@ type pending struct {
 
 // inbox lists the caller's work (List with Mine).
 func inbox(ctx context.Context, q api.Queries, token string, ids []string) ([]pending, error) {
-	rows, e := q.List(ctx, token, api.ListFilter{IDs: ids, Mine: true})
+	rows, _, e := q.List(ctx, token, api.ListFilter{IDs: ids, Mine: true})
 	out := []pending{}
 	for _, r := range rows {
 		x := pending{TaskID: r.Task.ID, Title: r.Task.Title, WaitingOnSubtasks: !r.ForMe}

@@ -11,6 +11,7 @@ import (
 	"io"
 	"mime"
 	"path"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -167,8 +168,8 @@ func toolList() []tool {
 	str := func(desc string) map[string]any { return prop("string", desc) }
 	task, basis := str(descTask), str(descBasis)
 	return []tool{
-		{"inbox", "列出当前等你处理的任务（下一步在等你）。", schema(nil, nil)},
-		{"read_task", "读取任务：目标、验收标准、状态、下一步等谁、你能做哪些操作及不能做的原因、待回答问题、当前结果和最近时间线，并返回写操作所需的 basis。", schema([]string{"task_id"}, map[string]any{"task_id": task})},
+		{"inbox", "列出当前等你处理的任务（下一步在等你），含当前步骤和等待原因（如验收未通过等待重新提交）。任务较多时分页：返回 next_cursor 时，把它作为 cursor 取下一页。", schema(nil, map[string]any{"cursor": str("可选：上一页返回的 next_cursor")})},
+		{"read_task", "读取任务：目标、验收标准、状态、下一步等谁、你能做哪些操作及不能做的原因、待回答问题、当前结果和最近时间线，并返回写操作所需的 basis。时间线只含最近 " + strconv.Itoa(timelineLimit) + " 条；返回 earlier_before 时，把它作为 before 读更早的记录。", schema([]string{"task_id"}, map[string]any{"task_id": task, "before": str("可选：上次返回的 earlier_before，读取更早的时间线")})},
 		{"list_people", "查找空间内的有效成员（用户与 Agent），用于 ask 的 to 或 create_subtask 的 owner/assignee。按 ID 片段搜索，按 subject 排序分页：返回 next 时，把它作为 after 取下一页。", schema(nil, map[string]any{"query": str("可选：ID 中包含的文字"), "kind": map[string]any{"type": "string", "enum": []string{"human", "agent"}, "description": "可选：只列用户或只列 Agent"}, "after": str("可选：上一页返回的 next")})},
 		{"start_work", "认领并开始执行任务。", schema([]string{"task_id", "basis"}, map[string]any{"task_id": task, "basis": basis})},
 		{"post_message", "在任务时间线留言：汇报进度、回复人的引导，可附文件和链接。留言会更新你的最近进展时间，但不算交付结果。text、files、links 至少一项。", schema([]string{"task_id"}, map[string]any{"task_id": task, "text": str("留言内容"), "files": filesProp, "links": linksProp})},
@@ -177,6 +178,7 @@ func toolList() []tool {
 		{"close_question", "撤回你提的、已不再需要回答的问题（open_questions 中 asked_by 为你的那条），须写明理由；撤回后它不再阻止任务完成。", schema([]string{"task_id", "question_id", "reason"}, map[string]any{"task_id": task, "question_id": str("问题 ID（open_questions 中的 id）"), "reason": str("为什么不再需要回答")})},
 		{"submit_result", "明确提交本轮的正式结果（交付物），可带文件和链接。需要已认领执行；再次提交会替换当前结果。result、files、links 至少一项。", schema([]string{"task_id", "basis"}, map[string]any{"task_id": task, "basis": basis, "result": str("结果正文"), "files": filesProp, "links": linksProp})},
 		{"create_subtask", "把你正在执行的任务拆出一个子任务，交给别人并行处理。需要你持有该任务当前有效的执行（已 start_work）。required 为 true 时，本任务要等该子任务完成才能提交结果；你的执行仍然有效，可以继续做你自己的部分。子任务负责人默认是本任务负责人，也可以用 owner 指定空间内任一有效用户（list_people 且 kind 为 human）。子任务默认不需要负责人验收（提交有效结果即完成），需要时 acceptance 填 manual。可用 assignee 同时指定处理人（可以是你自己），能指定谁由部署配置决定；指定 Agent 后它仍须 start_work 认领，指定人则对方立即开始；不指定则由子任务负责人安排。指定处理人时 goal 必填。你会成为子任务的参与者，可用 read_task 查看进度。", schema([]string{"task_id", "title"}, map[string]any{"task_id": str("你正在执行的任务 ID（子任务的父任务）"), "title": str("子任务标题"), "goal": str("子任务目标"), "criteria": str("可选：子任务验收标准"), "required": prop("boolean", "可选：true 表示本任务必须等它完成才能提交；默认 false"), "owner": str("可选：子任务负责人的 ID（用户，不能是 Agent）；留空为本任务负责人"), "acceptance": map[string]any{"type": "string", "enum": []string{"manual", "none"}, "description": "可选：manual 表示子任务结果须负责人验收；默认 none"}, "assignee": str("可选：子任务处理人的 ID（用户或 Agent，可以是你自己）")})},
+		{"reassign", "把任务改派给别人（用户或 Agent），例如任务不适合你或需要别人接手。你是当前处理人，或当前这次分配是你做的时可用；改派后原执行立即失效，接手的 Agent 须 start_work 认领，接手的人立即开始。", schema([]string{"task_id", "to"}, map[string]any{"task_id": task, "to": str("新处理人的 ID（list_people 返回的 subject）")})},
 		{"upload_file", "把一个文件上传到任务，返回 file_id，供 submit_result 或 post_message 的 files 引用；只上传不会出现在时间线中。text 与 content_base64 二选一。经本工具上传的内容上限约 700KB，更大的文件用 HTTP POST /v1/tasks/{id}/files 上传（同一凭据）。", schema([]string{"task_id", "name"}, map[string]any{"task_id": task, "name": str("文件名，如 report.md"), "text": str("文本文件的内容（UTF-8）"), "content_base64": str("二进制文件内容的 base64"), "media_type": str("可选：如 text/markdown、image/png；留空按文件名推断")})},
 		{"read_file", "读取任务中的一个文件（read_task 的 files 中列出）。UTF-8 文本直接返回内容，其他文件返回 base64；超过 512KB 时只返回元数据和 HTTP 下载路径。", schema([]string{"task_id", "file_id"}, map[string]any{"task_id": task, "file_id": str("文件 ID")})},
 	}
@@ -242,7 +244,7 @@ func (m *Module) call(ctx context.Context, c call, name string, rawArgs json.Raw
 	}
 	switch name {
 	case "inbox":
-		all, err := m.d.Workflow.List(ctx, c.token, work.ListFilter{Mine: true})
+		all, next, err := m.d.Workflow.List(ctx, c.token, work.ListFilter{Mine: true, Limit: inboxPage, Cursor: args.str("cursor")})
 		if err != nil {
 			return "", err
 		}
@@ -250,8 +252,11 @@ func (m *Module) call(ctx context.Context, c call, name string, rawArgs json.Raw
 		items := []map[string]any{}
 		for _, x := range all {
 			if x.ForMe {
-				items = append(items, map[string]any{"task_id": x.Task.ID, "title": x.Task.Title, "next_actor": x.NextActor})
+				items = append(items, map[string]any{"task_id": x.Task.ID, "title": x.Task.Title, "next_actor": x.NextActor, "step": x.Position.State, "waiting": x.Position.Waiting})
 			}
+		}
+		if next != "" {
+			return pretty(map[string]any{"tasks": items, "next_cursor": next}), nil
 		}
 		if len(items) == 0 {
 			return "当前没有等你处理的任务。", nil
@@ -275,7 +280,15 @@ func (m *Module) call(ctx context.Context, c call, name string, rawArgs json.Raw
 		if err := required(args, "task_id"); err != nil {
 			return "", err
 		}
-		return m.readTask(ctx, c, args.str("task_id"))
+		var before int64
+		if raw := args.str("before"); raw != "" {
+			n, err := strconv.ParseInt(raw, 10, 64)
+			if err != nil || n <= 0 {
+				return "", invalid("参数 before 须为 read_task 返回的 earlier_before")
+			}
+			before = n
+		}
+		return m.readTask(ctx, c, args.str("task_id"), before)
 	case "post_message":
 		if err := required(args, "task_id"); err != nil {
 			return "", err
@@ -329,6 +342,15 @@ func (m *Module) call(ctx context.Context, c call, name string, rawArgs json.Raw
 			msg += "已分配给 " + assignee + "；Agent（包括你自己）须用 start_work 认领后开始。"
 		}
 		return pretty(map[string]any{"message": msg, "subtask_id": ref.TaskID}), nil
+	case "reassign":
+		if err := required(args, "task_id", "to"); err != nil {
+			return "", err
+		}
+		to := args.str("to")
+		if _, err := m.d.Executions.Assign(ctx, c.token, c.key(name, args), work.Assignment{TaskID: args.str("task_id"), Subject: to}); err != nil {
+			return "", err
+		}
+		return pretty(map[string]any{"message": "已改派给 " + to + "；你在该任务上的执行（如有）已失效，停止在该任务上的工作。"}), nil
 	case "upload_file":
 		return m.uploadFile(ctx, c, args)
 	case "read_file":
@@ -394,6 +416,9 @@ func (m *Module) call(ctx context.Context, c call, name string, rawArgs json.Raw
 
 const timelineLimit = 20
 
+// inboxPage bounds one inbox call; most Agents see a single page.
+const inboxPage = 50
+
 // others lists the task's participants besides the caller: who is already
 // involved. Anyone in list_people may still be asked.
 func others(w work.View) []string {
@@ -406,8 +431,8 @@ func others(w work.View) []string {
 	return out
 }
 
-func (m *Module) readTask(ctx context.Context, c call, taskID string) (string, error) {
-	w, err := m.d.Workflow.Read(ctx, c.token, taskID, 0)
+func (m *Module) readTask(ctx context.Context, c call, taskID string, before int64) (string, error) {
+	w, err := m.d.Workflow.Read(ctx, c.token, taskID, before)
 	if err != nil {
 		return "", err
 	}
@@ -438,12 +463,13 @@ func (m *Module) readTask(ctx context.Context, c call, taskID string) (string, e
 	for _, q := range w.Questions {
 		questions = append(questions, map[string]any{"id": q.ID, "question": q.Body, "asked_by": q.Asker, "asked_of": q.Addressee, "for_you": q.Addressee == w.Viewer, "asked_at": q.AskedAt.Format(time.RFC3339)})
 	}
+	earlier := w.Earlier
 	if len(commits) > timelineLimit {
-		commits = commits[len(commits)-timelineLimit:]
+		commits, earlier = commits[len(commits)-timelineLimit:], true
 	}
 	timeline := []map[string]any{}
 	for _, cm := range commits {
-		entry := map[string]any{"kind": cm.Kind, "author": cm.Author, "at": cm.CreatedAt.Format(time.RFC3339), "text": cm.Body}
+		entry := map[string]any{"id": cm.ID, "kind": cm.Kind, "author": cm.Author, "at": cm.CreatedAt.Format(time.RFC3339), "text": cm.Body}
 		if q, ok := byID[cm.RefID]; ok && (cm.Kind == "answer" || cm.Kind == work.KindQuestionClosed) {
 			entry["answers"] = q.Body
 		}
@@ -469,6 +495,9 @@ func (m *Module) readTask(ctx context.Context, c call, taskID string) (string, e
 		"participants":        others(w),
 		"timeline":            timeline,
 		"basis":               b.token(),
+	}
+	if earlier && len(commits) > 0 {
+		out["earlier_before"] = strconv.FormatInt(commits[0].Sequence, 10)
 	}
 	if e := w.Execution; e != nil {
 		x := map[string]any{"writable": e.Writable, "execution_id": e.ID, "agent": e.Subject}

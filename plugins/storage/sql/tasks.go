@@ -3,6 +3,7 @@ package sql
 import (
 	"context"
 	"encoding/json"
+	"github.com/lengzhao/taskloom/cap/fault"
 
 	"github.com/lengzhao/taskloom/cap/task"
 	"gorm.io/gorm"
@@ -41,10 +42,23 @@ func (s *Store) GetTask(ctx context.Context, tenant, id string) (task.Task, erro
 	return t, err
 }
 func (s *Store) ListTasks(ctx context.Context, tenant string) ([]task.Task, error) {
+	return s.listTasks(ctx, tenant, "", 0)
+}
+func (s *Store) ListTasksAfter(ctx context.Context, tenant, after string, limit int) ([]task.Task, error) {
+	if limit < 1 {
+		return nil, fault.ErrInput
+	}
+	return s.listTasks(ctx, tenant, after, limit)
+}
+func (s *Store) listTasks(ctx context.Context, tenant, after string, limit int) ([]task.Task, error) {
 	var rows []taskRow
 	out := []task.Task{}
 	err := s.use(ctx, false, func(db *gorm.DB) error {
-		if err := db.Where("tenant = ?", tenant).Order("id ASC").Find(&rows).Error; err != nil {
+		q := db.Where("tenant = ? AND id > ?", tenant, after).Order("id ASC")
+		if limit > 0 {
+			q = q.Limit(limit)
+		}
+		if err := q.Find(&rows).Error; err != nil {
 			return err
 		}
 		for _, r := range rows {

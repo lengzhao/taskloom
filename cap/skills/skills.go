@@ -212,14 +212,19 @@ const (
 )
 
 // Query pages discovery. Score is comparable only within one response.
+// Trust, when set, keeps only capabilities whose current release has that
+// trust (e.g. unreviewed: the review queue).
 type Query struct {
 	Q, Match   string
 	Page, Size int
 	MinScore   float64
+	Trust      string
 }
 type Candidate struct {
 	Current
 	Score float64 `json:",omitempty"`
+	// Trust of the current release, derived from its latest review.
+	Trust string
 }
 type Page struct {
 	Items []Candidate

@@ -27,6 +27,9 @@ type MemberStore interface {
 type Relations interface {
 	MemberReader
 	IsAssigned(ctx context.Context, tenant, taskID, subject string) (bool, error)
+	// AssignedBy is who made the task's current assignment; "" when unknown
+	// (no assignment, or one recorded before assigners were kept).
+	AssignedBy(ctx context.Context, tenant, taskID string) (string, error)
 	HasParticipant(ctx context.Context, value Participant) (bool, error)
 }
 

@@ -28,7 +28,9 @@ type Reader interface {
 	GetExecution(ctx context.Context, tenant, id string) (Execution, error)
 }
 type Store interface {
-	AssignSubject(ctx context.Context, tenant, taskID, subject string) error
+	// AssignSubject records the handler and who made the assignment; the
+	// assigner may later reassign (see the access rules).
+	AssignSubject(ctx context.Context, tenant, taskID, subject, assigner string) error
 	Reader
 	OpenExecution(ctx context.Context, value Execution) (Execution, error)
 	SaveExecution(ctx context.Context, value Execution) error
@@ -60,7 +62,7 @@ type Progress interface {
 // active member, makes it a participant, fences the current execution and,
 // for a person, starts their manual work. It writes no change event.
 type Assigner interface {
-	AssignCreated(ctx context.Context, tenant, taskID, subject string) error
+	AssignCreated(ctx context.Context, tenant, taskID, subject, assigner string) error
 }
 
 // Executor is what a task command needs from the caller's own execution of

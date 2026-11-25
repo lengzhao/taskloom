@@ -182,7 +182,7 @@ func TestAgentWorksATaskThroughMCP(t *testing.T) {
 	if init["protocolVersion"] != "2025-06-18" || !strings.Contains(init["instructions"].(string), "submit_result") || f.session == "" {
 		t.Fatal("initialize", init, f.session)
 	}
-	if n := len(f.rpc("tools/list", nil)["tools"].([]any)); n != 12 {
+	if n := len(f.rpc("tools/list", nil)["tools"].([]any)); n != 13 {
 		t.Fatal("tools", n)
 	}
 

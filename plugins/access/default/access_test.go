@@ -43,10 +43,12 @@ func TestReadOnlyProvidersAreSufficient(t *testing.T) {
 }
 
 func (relations) IsAssigned(context.Context, string, string, string) (bool, error) { return false, nil }
+func (relations) AssignedBy(context.Context, string, string) (string, error)       { return "", nil }
 
 type fixedRelations struct {
 	role                  string
 	participant, assigned bool
+	assigner              string
 }
 
 func (r fixedRelations) GetMember(context.Context, string, string) (az.Member, error) {
@@ -58,6 +60,9 @@ func (r fixedRelations) HasParticipant(context.Context, az.Participant) (bool, e
 func (r fixedRelations) IsAssigned(context.Context, string, string, string) (bool, error) {
 	return r.assigned, nil
 }
+func (r fixedRelations) AssignedBy(context.Context, string, string) (string, error) {
+	return r.assigner, nil
+}
 
 // Task writes run without a separate task.read check, so every principal
 // allowed a task write must also be allowed to read that task.
@@ -66,17 +71,19 @@ func TestTaskWritesImplyRead(t *testing.T) {
 	for _, role := range []string{"admin", "member"} {
 		for _, participant := range []bool{false, true} {
 			for _, assigned := range []bool{false, true} {
-				s, e := access.New(access.Deps{Store: fixedRelations{role, participant, assigned}, Tasks: taskLookup{}, Projects: projects{}, Skills: skillCaps{}})
-				if e != nil {
-					t.Fatal(e)
-				}
-				for _, kind := range []string{"human", "agent"} {
-					for _, id := range []string{"owner", "other"} {
-						p := identity.Principal{Tenant: "t", ID: id, Kind: kind, CredentialID: "c"}
-						read := s.Check(ctx, p, "task.read", "task")
-						for _, op := range []string{"task.edit", "commit.append", "participant.set", "execution.assign", "execution.open", "result.submit", "result.review", "task.cancel", "task.restart", "task.project", "task.owner"} {
-							if s.Check(ctx, p, op, "task") == nil && read != nil {
-								t.Fatalf("%s allowed without task.read: role=%s participant=%v assigned=%v kind=%s id=%s", op, role, participant, assigned, kind, id)
+				for _, assigner := range []string{"", "owner", "other"} {
+					s, e := access.New(access.Deps{Store: fixedRelations{role, participant, assigned, assigner}, Tasks: taskLookup{}, Projects: projects{}, Skills: skillCaps{}})
+					if e != nil {
+						t.Fatal(e)
+					}
+					for _, kind := range []string{"human", "agent"} {
+						for _, id := range []string{"owner", "other"} {
+							p := identity.Principal{Tenant: "t", ID: id, Kind: kind, CredentialID: "c"}
+							read := s.Check(ctx, p, "task.read", "task")
+							for _, op := range []string{"task.edit", "commit.append", "participant.set", "execution.assign", "execution.open", "result.submit", "result.review", "task.cancel", "task.restart", "task.project", "task.owner"} {
+								if s.Check(ctx, p, op, "task") == nil && read != nil {
+									t.Fatalf("%s allowed without task.read: role=%s participant=%v assigned=%v assigner=%s kind=%s id=%s", op, role, participant, assigned, assigner, kind, id)
+								}
 							}
 						}
 					}
@@ -102,7 +109,8 @@ func (filedTask) GetTask(_ context.Context, tenant, id string) (task.Task, error
 }
 
 // A project's owner and members take part in its tasks like participants:
-// they read, comment and ask, but neither manage, file elsewhere nor hand over.
+// they read, comment and ask, but neither manage nor file elsewhere; only the
+// project owner may also hand the task to another handler.
 func TestProjectMembersActAsParticipants(t *testing.T) {
 	ctx := context.Background()
 	s, e := access.New(access.Deps{Store: relations{}, Tasks: filedTask{}, Projects: projects{}, Skills: skillCaps{}})
@@ -116,6 +124,13 @@ func TestProjectMembersActAsParticipants(t *testing.T) {
 			}
 		}
 		for _, op := range []string{"task.edit", "participant.set", "execution.assign", "task.cancel", "task.restart", "task.plan", "task.project", "task.owner", "result.review"} {
+			// The project's owner (a person) may change who handles a filed task.
+			if op == "execution.assign" && p.ID == "lead" {
+				if e := s.Check(ctx, p, op, "task"); e != nil {
+					t.Fatal("project owner cannot reassign", e)
+				}
+				continue
+			}
 			if e := s.Check(ctx, p, op, "task"); !errors.Is(e, az.ErrForbidden) {
 				t.Fatal(p.ID, op, "allowed", e)
 			}
@@ -125,7 +140,7 @@ func TestProjectMembersActAsParticipants(t *testing.T) {
 		t.Fatal("non-member reads a filed task", e)
 	}
 	// A participant may comment but no longer re-file the task.
-	s, _ = access.New(access.Deps{Store: fixedRelations{"member", true, false}, Tasks: taskLookup{}, Projects: projects{}, Skills: skillCaps{}})
+	s, _ = access.New(access.Deps{Store: fixedRelations{"member", true, false, ""}, Tasks: taskLookup{}, Projects: projects{}, Skills: skillCaps{}})
 	if e := s.Check(ctx, identity.Principal{Tenant: "t", ID: "other", Kind: "human"}, "task.project", "task"); !errors.Is(e, az.ErrForbidden) {
 		t.Fatal("participant files the task", e)
 	}
@@ -146,7 +161,7 @@ func TestProjectFiling(t *testing.T) {
 	if e := s.Check(ctx, identity.Principal{Tenant: "t", ID: "lead", Kind: "human"}, "project.file", "missing"); !errors.Is(e, az.ErrForbidden) {
 		t.Fatal("unknown project", e)
 	}
-	admin, _ := access.New(access.Deps{Store: fixedRelations{"admin", false, false}, Tasks: filedTask{}, Projects: projects{}, Skills: skillCaps{}})
+	admin, _ := access.New(access.Deps{Store: fixedRelations{"admin", false, false, ""}, Tasks: filedTask{}, Projects: projects{}, Skills: skillCaps{}})
 	if e := admin.Check(ctx, identity.Principal{Tenant: "t", ID: "boss", Kind: "human"}, "project.file", "p"); e != nil {
 		t.Fatal("administrator", e)
 	}
@@ -163,8 +178,8 @@ func (skillCaps) GetCapability(_ context.Context, tenant, id string) (skills.Cap
 }
 
 func TestSkillOperations(t *testing.T) {
-	member, _ := access.New(access.Deps{Store: fixedRelations{"member", false, false}, Tasks: taskLookup{}, Projects: projects{}, Skills: skillCaps{}})
-	admin, _ := access.New(access.Deps{Store: fixedRelations{"admin", false, false}, Tasks: taskLookup{}, Projects: projects{}, Skills: skillCaps{}})
+	member, _ := access.New(access.Deps{Store: fixedRelations{"member", false, false, ""}, Tasks: taskLookup{}, Projects: projects{}, Skills: skillCaps{}})
+	admin, _ := access.New(access.Deps{Store: fixedRelations{"admin", false, false, ""}, Tasks: taskLookup{}, Projects: projects{}, Skills: skillCaps{}})
 	cases := []struct {
 		s       *access.Service
 		p       identity.Principal

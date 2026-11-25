@@ -29,6 +29,7 @@ type AuditWriter interface {
 type AuditReader interface {
 	ListAudit(ctx context.Context, tenant string, limit int) ([]Audit, error)
 }
+
 // Event says that a resource changed; readers re-read current facts.
 type Event struct {
 	Sequence               int64
@@ -52,5 +53,8 @@ type EventWriter interface {
 type EventLog interface {
 	// Internal outbox access, never an authorized user feed.
 	ReadEvents(ctx context.Context, tenant string, after int64, limit int) ([]Event, error)
+	// EventFloor is the highest pruned sequence: a reader positioned below it
+	// may have missed events and must resync.
+	EventFloor(ctx context.Context) (int64, error)
 	EventWriter
 }

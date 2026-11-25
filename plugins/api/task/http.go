@@ -65,10 +65,23 @@ func (m *Module) list(w http.ResponseWriter, r *http.Request) {
 		}
 		f.Mine = mine
 	}
-	out, err := m.d.Views.List(r.Context(), httpx.Credential(r), f)
+	if raw := q.Get("limit"); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil {
+			httpx.Fail(w, fault.Input(fault.CodeInvalid, "limit"))
+			return
+		}
+		f.Limit = n
+	}
+	f.Cursor = q.Get("cursor")
+	out, next, err := m.d.Views.List(r.Context(), httpx.Credential(r), f)
 	if err != nil {
 		httpx.Fail(w, err)
 		return
+	}
+	// The body stays a plain array; the next page's cursor travels in a header.
+	if next != "" {
+		w.Header().Set("X-Next-Cursor", next)
 	}
 	httpx.Write(w, out)
 }

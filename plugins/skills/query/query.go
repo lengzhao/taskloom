@@ -80,7 +80,7 @@ var allModes = []string{skills.MatchName, skills.MatchLexical, skills.MatchBM25,
 // open bytes (blobs) and semantic search encodes the query (embedder, optional),
 // both outside the transaction. Splitting reads by kind would duplicate the check.
 type Deps struct {
-	Transactions  unitofwork.Manager     `json:"transactions"`
+	Transactions  unitofwork.Viewer      `json:"transactions"`
 	Identity      identity.Authenticator `json:"identity"`
 	Authorization az.Authorizer          `json:"authorization"`
 	Catalog       skills.Catalog         `json:"catalog"`
@@ -152,7 +152,8 @@ func (m *Module) Search(ctx context.Context, token string, q skills.Query) (skil
 	}
 	var visible []skills.Current
 	var vectors map[string][]float32
-	err := m.d.Transactions.Do(ctx, func(tx context.Context) error {
+	trust := map[string]string{}
+	err := m.d.Transactions.View(ctx, func(tx context.Context) error {
 		r, e := m.reader(tx, token)
 		if e != nil {
 			return e
@@ -162,9 +163,22 @@ func (m *Module) Search(ctx context.Context, token string, q skills.Query) (skil
 			return e
 		}
 		for _, c := range all {
-			if r.sees(c.Capability) {
-				visible = append(visible, c)
+			if !r.sees(c.Capability) {
+				continue
 			}
+			var latest *skills.Review
+			v, e := m.d.Catalog.LatestSkillReview(tx, r.Tenant, c.Release.Ref)
+			if e == nil {
+				latest = &v
+			} else if !errors.Is(e, fault.ErrNotFound) {
+				return e
+			}
+			t := skilldelivery.Trust(latest)
+			if q.Trust != "" && t != q.Trust {
+				continue
+			}
+			trust[c.Release.Ref] = t
+			visible = append(visible, c)
 		}
 		if q.Match == skills.MatchSemantic {
 			refs := make([]string, len(visible))
@@ -217,7 +231,7 @@ func (m *Module) Search(ctx context.Context, token string, q skills.Query) (skil
 			}
 		}
 		if ok && score >= q.MinScore {
-			items = append(items, skills.Candidate{Current: c, Score: score})
+			items = append(items, skills.Candidate{Current: c, Score: score, Trust: trust[c.Release.Ref]})
 		}
 	}
 	sort.SliceStable(items, func(i, j int) bool {
@@ -239,6 +253,11 @@ func validQuery(q *skills.Query) error {
 		q.Size = defaultSize
 	}
 	if q.Page < 1 || q.Page > 10000 || q.Size < 1 || q.Size > maxSize || q.MinScore < 0 || q.MinScore > 1 || utf8.RuneCountInString(q.Q) > maxQuery {
+		return fault.ErrInput
+	}
+	switch q.Trust {
+	case "", skills.TrustApproved, skills.TrustRejected, skills.TrustUnreviewed:
+	default:
 		return fault.ErrInput
 	}
 	switch q.Match {
@@ -266,7 +285,7 @@ func (m *Module) Resolve(ctx context.Context, token, name string) (skills.Releas
 		return skills.ReleaseInfo{}, fault.ErrInput
 	}
 	var out skills.ReleaseInfo
-	err := m.d.Transactions.Do(ctx, func(tx context.Context) error {
+	err := m.d.Transactions.View(ctx, func(tx context.Context) error {
 		r, e := m.reader(tx, token)
 		if e != nil {
 			return e
@@ -290,7 +309,7 @@ func (m *Module) Resolve(ctx context.Context, token, name string) (skills.Releas
 
 func (m *Module) Release(ctx context.Context, token, ref string) (skills.ReleaseInfo, error) {
 	var out skills.ReleaseInfo
-	err := m.d.Transactions.Do(ctx, func(tx context.Context) error {
+	err := m.d.Transactions.View(ctx, func(tx context.Context) error {
 		var e error
 		out, e = m.visibleRelease(tx, token, ref)
 		return e
@@ -301,7 +320,7 @@ func (m *Module) Release(ctx context.Context, token, ref string) (skills.Release
 // Open checks visibility, then opens the bytes outside the SQL transaction.
 func (m *Module) Open(ctx context.Context, token, ref string) (skills.Release, io.ReadCloser, error) {
 	var info skills.ReleaseInfo
-	err := m.d.Transactions.Do(ctx, func(tx context.Context) error {
+	err := m.d.Transactions.View(ctx, func(tx context.Context) error {
 		var e error
 		info, e = m.visibleRelease(tx, token, ref)
 		return e
@@ -325,7 +344,7 @@ func (m *Module) Decide(ctx context.Context, token, ref string, host skills.Host
 	}
 	var r skills.Release
 	var latest *skills.Review
-	err := m.d.Transactions.Do(ctx, func(tx context.Context) error {
+	err := m.d.Transactions.View(ctx, func(tx context.Context) error {
 		info, e := m.visibleRelease(tx, token, ref)
 		if e != nil {
 			return e

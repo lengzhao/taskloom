@@ -30,7 +30,7 @@ import (
 
 type Deps struct {
 	Catalog       catalog.ProjectReader  `json:"catalog"`
-	Transactions  unitofwork.Manager     `json:"transactions"`
+	Transactions  unitofwork.Viewer      `json:"transactions"`
 	Tasks         task.Store             `json:"tasks"`
 	Commits       commit.Log             `json:"commits"`
 	Flow          flow.Controller        `json:"flow"`
@@ -204,7 +204,7 @@ func (s *Service) Create(ctx context.Context, token, key string, in api.Create) 
 			if e := s.mayAssign(tx, p, t.ID, in.Assignee); e != nil {
 				return nil, e
 			}
-			if e := s.d.Assigner.AssignCreated(tx, p.Tenant, t.ID, in.Assignee); e != nil {
+			if e := s.d.Assigner.AssignCreated(tx, p.Tenant, t.ID, in.Assignee, p.ID); e != nil {
 				return nil, e
 			}
 		}
@@ -389,10 +389,22 @@ func (s *Service) Changes(ctx context.Context, token, raw string) (api.Page, err
 		}
 		after = n
 	}
-	e := s.d.Transactions.Do(ctx, func(tx context.Context) error {
+	e := s.d.Transactions.View(ctx, func(tx context.Context) error {
 		p, e := s.actor(tx, token)
 		if e != nil {
 			return e
+		}
+		floor, e := s.d.Events.EventFloor(tx)
+		if e != nil {
+			return e
+		}
+		if !start && after < floor {
+			return fault.Conflict(fault.CodeResyncRequired)
+		}
+		// A start position is never below the floor, even when no retained
+		// event is left to move it there; otherwise its next read would resync.
+		if start {
+			after = floor
 		}
 		for {
 			es, e := s.d.Events.ReadEvents(tx, p.Tenant, after, 100)
@@ -465,7 +477,7 @@ func (s *Service) People(ctx context.Context, token string, q az.MemberQuery) (a
 	}
 	size := q.Limit
 	q.Limit++ // one extra row tells whether another page follows
-	e := s.d.Transactions.Do(ctx, func(tx context.Context) error {
+	e := s.d.Transactions.View(ctx, func(tx context.Context) error {
 		p, e := s.actor(tx, token)
 		if e != nil {
 			return e
@@ -486,7 +498,7 @@ func (s *Service) People(ctx context.Context, token string, q az.MemberQuery) (a
 
 func (s *Service) Viewer(ctx context.Context, token string) (api.Viewer, error) {
 	var out api.Viewer
-	e := s.d.Transactions.Do(ctx, func(tx context.Context) error {
+	e := s.d.Transactions.View(ctx, func(tx context.Context) error {
 		p, e := s.d.Identity.Authenticate(tx, token)
 		if e != nil {
 			return e
@@ -502,7 +514,7 @@ func (s *Service) Viewer(ctx context.Context, token string) (api.Viewer, error) 
 }
 func (s *Service) Members(ctx context.Context, token string) ([]az.DirectoryMember, error) {
 	out := []az.DirectoryMember{}
-	e := s.d.Transactions.Do(ctx, func(tx context.Context) error {
+	e := s.d.Transactions.View(ctx, func(tx context.Context) error {
 		p, e := s.d.Identity.Authenticate(tx, token)
 		if e != nil {
 			return e

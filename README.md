@@ -25,5 +25,6 @@
 | 设计 | [架构](docs/architecture.md)、[核心契约](docs/core-contracts.md)、[任务流程](docs/task-flow.md) |
 | 接口 | [API 与权限](docs/api.md)、[MCP 接入](docs/mcp-adapter.md) |
 | 工程 | [两层配置](docs/configuration.md)、[开发说明](docs/development.md) |
+| 方向 | [路线图：方向与立项门槛](docs/roadmap.md) |
 
 分期：第一阶段真实 Agent 文本闭环，第二阶段文件与任务树协作（均已完成）；原第三阶段的历史恢复、治理与迁移经重审不做。

@@ -37,7 +37,7 @@ func (f *fixture) deactivate(t *testing.T, subject string) error {
 }
 
 func (f *fixture) visible(token, taskID string) bool {
-	_, e := f.query.Read(f.ctx, token, taskID)
+	_, e := f.query.Read(f.ctx, token, taskID, 0)
 	return e == nil
 }
 
@@ -175,11 +175,11 @@ func TestHandoverMovesResponsibility(t *testing.T) {
 	if e = hand(outsider, "handover", "next", "outsider"); !errors.Is(e, az.ErrForbidden) {
 		t.Fatal("non-reader passed the retry rule", e)
 	}
-	got, e := f.query.Read(f.ctx, next, d.Task.ID)
+	got, e := f.query.Read(f.ctx, next, d.Task.ID, 0)
 	if e != nil || !got.CanReview || got.NextActor != api.ActorReviewer {
 		t.Fatal("new owner cannot review", got.CanReview, got.NextActor, e)
 	}
-	old, e := f.query.Read(f.ctx, lead, d.Task.ID)
+	old, e := f.query.Read(f.ctx, lead, d.Task.ID, 0)
 	if e != nil || old.CanReview || old.CanManage {
 		t.Fatal("old owner kept responsibility or lost reading", old.CanReview, old.CanManage, e)
 	}

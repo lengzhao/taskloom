@@ -37,7 +37,7 @@ func init() {
 const maxEntries = 500
 
 func (m *Module) Routes() []httpapi.Route {
-	return []httpapi.Route{{Method: "GET", Path: "/audit", Operation: "audit.read", Handler: http.HandlerFunc(m.serve)}}
+	return []httpapi.Route{{Method: "GET", Path: "/admin/audit", Operation: "audit.read", Handler: http.HandlerFunc(m.serve)}}
 }
 
 // List returns the newest audit entries of the caller's tenant; only active

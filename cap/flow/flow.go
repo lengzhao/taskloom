@@ -23,7 +23,9 @@ const (
 type Step string
 
 const (
-	// StepReady: the goal or criteria are still missing; work cannot be claimed.
+	// StepReady: the goal is still missing; work cannot be claimed. Criteria
+	// are optional: without them the owner's acceptance, or for none the
+	// handler's delivery, is the judgment.
 	StepReady Step = "ready"
 	// StepExecuting: no valid result for the current basis yet.
 	StepExecuting Step = "executing"
@@ -44,11 +46,12 @@ const (
 // Position is a task's place in its lifecycle. Status, RoundID and Acceptance
 // are stored; State, Waiting and WaitingOnSubtasks are derived on read.
 type Position struct {
-	Status                  Phase
-	Tenant, TaskID, RoundID string
-	Acceptance              Acceptance
-	State                   Step
-	Waiting                 string
+	Status          Phase
+	Tenant          string `json:"-"`
+	TaskID, RoundID string
+	Acceptance      Acceptance
+	State           Step
+	Waiting         string
 	// WaitingOnSubtasks: the active task cannot deliver because a direct required
 	// subtask is not completed. It is a wait cause, not a step: work may still
 	// be claimed, discussed and prepared; Waiting says why.

@@ -125,7 +125,7 @@ func (m *Module) Apply(ctx context.Context, p identity.Principal, in capplan.Pla
 	}
 	// The caller must have seen the relation it changes.
 	if from.ParentID != in.SeenParentID || (from.ParentID != "" && from.Required != in.SeenRequired) {
-		return fault.ErrConflict
+		return fault.Conflict("parent_changed")
 	}
 	to := side{ParentID: in.ParentID, Required: in.Required}
 	if from == to {
@@ -140,7 +140,7 @@ func (m *Module) Apply(ctx context.Context, p identity.Principal, in capplan.Pla
 		return e
 	}
 	if child.Sequence <= parent.Sequence {
-		return fault.ErrConflict
+		return fault.Conflict("parent_newer")
 	}
 	// Every parent whose plan changes must be active; a terminal parent's plan is frozen.
 	parents := []string{from.ParentID}
@@ -160,7 +160,7 @@ func (m *Module) Apply(ctx context.Context, p identity.Principal, in capplan.Pla
 			return e
 		}
 		if pos.Status != flow.PhaseActive {
-			return fault.ErrConflict
+			return fault.Conflict(fault.CodeTaskNotActive)
 		}
 	}
 	if e = m.d.Plan.SetParent(ctx, capplan.Link{Tenant: p.Tenant, ParentID: to.ParentID, ChildID: child.ID, Required: to.Required}); e != nil {

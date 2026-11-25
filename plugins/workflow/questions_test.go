@@ -37,8 +37,12 @@ func TestOpenQuestionWaitsOnOwnerAndHoldsCompletion(t *testing.T) {
 	if len(s.Questions) != 1 || s.Questions[0].Addressee != "owner" || s.NextActor != api.ActorAddressee {
 		t.Fatalf("question not waiting on owner %+v", s.Questions)
 	}
+	// The snapshot carries the question itself, wherever its commit sits in the timeline.
+	if q := s.Questions[0]; q.Body != "导出格式用 CSV 还是 Excel？" || q.Asker != "agent" || q.AskedAt.IsZero() {
+		t.Fatalf("question text missing %+v", q)
+	}
 	q := s.Questions[0]
-	items, e := f.query.Inbox(f.ctx, f.owner, nil)
+	items, e := inbox(f.ctx, f.query, f.owner, nil)
 	if e != nil || len(items) != 1 || items[0].TaskID != d.Task.ID {
 		t.Fatal("owner inbox misses question", items, e)
 	}
@@ -128,7 +132,7 @@ func TestQuestionToMemberWaitsOnThem(t *testing.T) {
 		t.Fatal("asked itself", e)
 	}
 	// A member not on the task joins it by being asked, so they can read and answer.
-	if _, e := f.query.Read(f.ctx, outsider, d.Task.ID); e == nil {
+	if _, e := f.query.Read(f.ctx, outsider, d.Task.ID, 0); e == nil {
 		t.Fatal("outsider reads the task before being asked")
 	}
 	s, e := ask("ask-outsider", "outsider")
@@ -138,7 +142,7 @@ func TestQuestionToMemberWaitsOnThem(t *testing.T) {
 	if got := f.read(t, d.Task.ID).Participants; !slices.Contains(got, "outsider") {
 		t.Fatal("asked member not added as participant", got)
 	}
-	o, e := f.query.Read(f.ctx, outsider, d.Task.ID)
+	o, e := f.query.Read(f.ctx, outsider, d.Task.ID, 0)
 	if e != nil || o.Viewer != "outsider" || len(o.Questions) != 1 || o.Questions[0].Addressee != "outsider" {
 		t.Fatal("asked member cannot read the question", o.Questions, e)
 	}
@@ -156,10 +160,10 @@ func TestQuestionToMemberWaitsOnThem(t *testing.T) {
 	if q.Addressee != "helper" || s.NextActor != api.ActorAddressee {
 		t.Fatal("question not addressed to helper", q.Addressee, s.NextActor)
 	}
-	if items, _ := f.query.Inbox(f.ctx, helper, nil); len(items) != 1 || items[0].TaskID != d.Task.ID {
+	if items, _ := inbox(f.ctx, f.query, helper, nil); len(items) != 1 || items[0].TaskID != d.Task.ID {
 		t.Fatal("helper inbox misses the question", items)
 	}
-	if items, _ := f.query.Inbox(f.ctx, f.owner, nil); len(items) != 0 {
+	if items, _ := inbox(f.ctx, f.query, f.owner, nil); len(items) != 0 {
 		t.Fatal("owner is not the one asked", items)
 	}
 	if _, e = qs.Answer(f.ctx, f.owner, "owner-answer", api.Answer{TaskID: d.Task.ID, QuestionID: q.ID, Body: "x"}); !errors.Is(e, az.ErrForbidden) {

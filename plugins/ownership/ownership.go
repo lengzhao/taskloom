@@ -87,7 +87,7 @@ func (m *Module) Handover(ctx context.Context, token, key string, in api.Handove
 			return nil, e
 		}
 		if t.Owner != in.SeenOwner {
-			return nil, fault.ErrConflict
+			return nil, fault.Conflict("owner_changed")
 		}
 		if in.Owner == t.Owner {
 			return nil, fault.ErrInput

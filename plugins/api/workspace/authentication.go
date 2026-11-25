@@ -59,12 +59,12 @@ func (m *Module) session(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Header.Get("Authorization") != "" {
-		http.Error(w, "请使用用户名和密码登录", 400)
+		httpx.Reject(w, 400, "password_login_only", "请使用用户名和密码登录")
 		return
 	}
 	if !m.admitLogin(r) {
 		w.Header().Set("Retry-After", "60")
-		http.Error(w, "登录尝试过多，请稍后重试", 429)
+		httpx.Reject(w, 429, "too_many_attempts", "登录尝试过多，请稍后重试")
 		return
 	}
 	var in struct{ Username, Password string }
@@ -73,7 +73,7 @@ func (m *Module) session(w http.ResponseWriter, r *http.Request) {
 	}
 	issued, e := m.d.Security.Login(r.Context(), security.LoginInput{Tenant: m.c.LoginTenant, Username: in.Username, Password: in.Password})
 	if e != nil {
-		http.Error(w, "用户名或密码错误，或账户已停用", 401)
+		httpx.Reject(w, 401, "login_failed", "用户名或密码错误，或账户已停用")
 		return
 	}
 	// The cookie lifetime is only a hint; the credential's own expiry decides.

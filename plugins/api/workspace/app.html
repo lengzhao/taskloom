@@ -179,8 +179,8 @@ ul.attachments.chosen li { margin: 2px 0 }
       <label>标题<input name="Title" required maxlength="200"></label>
       <label>所属项目<select name="ProjectID" id="create-project"></select></label>
       <label>目标（分配前必填）<textarea name="Goal" placeholder="要达成什么"></textarea></label>
-      <label>验收标准（分配前必填）<textarea name="Criteria" placeholder="怎样算完成"></textarea></label>
-      <p class="muted small">可以先只写标题记下来，分配处理人前再补全目标和验收标准。</p>
+      <label>验收标准（可选）<textarea name="Criteria" placeholder="怎样算完成；不填则由负责人验收时判断"></textarea></label>
+      <p class="muted small">可以先只写标题记下来，分配处理人前再补全目标。</p>
       <div class="actions"><button class="primary">创建</button></div>
      </form>
     </details>
@@ -222,24 +222,9 @@ ul.attachments.chosen li { margin: 2px 0 }
 // One vocabulary everywhere: list, board, filter and detail. "Blocked" is a tag, not a state.
 const STATES = [['unassigned', '待分配'], ['handling', '处理中'], ['accepting', '验收中'], ['completed', '已完成'], ['cancelled', '已取消']];
 const ACTOR_LABEL = { owner: '负责人', assignee: '处理人', reviewer: '验收人', addressee: '被提问人' };
-const REASON_LABEL = {
-  task_not_active: '任务已结束或已取消',
-  business_credential_required: '需要 Agent 业务凭据',
-  not_assigned: '任务未分配给你',
-  execution_in_progress: '本轮已有执行在进行',
-  previous_execution_not_stopped: '上一次执行尚未确认安全停止',
-  step_not_open: '当前步骤还不能执行（检查目标/标准或前置步骤）',
-  not_your_execution: '当前执行不属于你的实例',
-  execution_not_active: '执行已结束',
-  execution_fenced: '执行已失效（取消或被替换）',
-  round_changed: '任务已进入新一轮',
-  basis_changed: '任务依据已更新，需要重新认领',
-  not_reviewer: '你不是本任务验收人',
-  required_children_pending: '必需子任务尚未全部完成',
-};
-const execLabel = (ex, pos) => pos && pos.Status !== 'active' ? '任务已结束' : ex.Writable ? '进行中' : '已失效（不能再写入）';
+const execLabel = (ex, pos) => pos && pos.Status !== 'active' ? '任务已结束' : ex.Writable ? '进行中' : '已停止（被取消或转交）';
 const OUTCOME_LABEL = { pending: '待验收', approved: '已通过', rejected: '未通过' };
-const KIND_LABEL = { 'task.owner': '移交负责人', comment: '留言', result: '结果', question: '提问', answer: '回答', 'review.approved': '验收通过', 'review.rejected': '验收退回', 'task.created': '创建任务', 'task.basis': '修改约定', 'plan.changed': '调整子任务', 'question.closed': '关闭问题' };
+const KIND_LABEL = { 'task.owner': '移交负责人', comment: '留言', result: '结果', question: '提问', answer: '回答', 'review.approved': '验收通过', 'review.rejected': '验收退回', 'task.created': '创建任务', 'task.basis': '修改要求', 'plan.changed': '调整子任务', 'question.closed': '关闭问题' };
 
 // ---------- State ----------
 const $ = id => document.getElementById(id);
@@ -323,11 +308,15 @@ async function answer(r, fingerprint) {
   if (!r.ok) {
     if (r.status >= 400 && r.status < 500) retryKeys.delete(fingerprint);
     if (r.status === 401) showLogin();
-    const error = Error(await r.text());
-    error.status = r.status;
+    const raw = await r.text();
+    let p = null;
+    try { p = JSON.parse(raw) } catch {}
+    const error = Error(p?.Message ? p.Message + (p.Field ? '（' + p.Field + '）' : '') : raw || '请求失败');
+    error.status = r.status; error.code = p?.Code;
     throw error;
   }
-  const result = await r.json();
+  // 204: the write succeeded but the caller can no longer read the task.
+  const result = r.status === 204 ? null : await r.json();
   retryKeys.delete(fingerprint);
   return result;
 }
@@ -354,7 +343,7 @@ function showLogin() {
   $('project-dialog').close();$('catalog-content').replaceChildren();projectID='';
   $('members-dialog').close();
   $('members-content').replaceChildren();
-  selected = ''; cursor = ''; inboxIDs = new Set(); blockedMine = new Set();
+  selected = ''; cursor = ''; inboxIDs = new Set(); blockedMine = new Set(); people = null; current = null;
   freshIDs = new Set(); ownWrites = new Set(); inboxSeen = false; $('desktop-notify').hidden = true;
   $('detail').replaceChildren(h('div', 'panel empty', '选择左侧任务，或新建一个任务。'));
   $('tasks').replaceChildren();
@@ -367,8 +356,8 @@ async function start() {
   const p = await api('/changes');
   cursor = p.Cursor;
   // Open on "待我处理" only when something is actually waiting.
-  view = (await api('/inbox')).length ? 'mine' : 'all';
-  await list();
+  view = (await api('/tasks?mine=true')).length ? 'mine' : 'all';
+  await Promise.all([list(), directory()]);
   $('work').hidden = false; $('login').hidden = true; $('logout').hidden = false;
   $('desktop-notify').hidden = !('Notification' in window) || Notification.permission !== 'default';
   // A shared link opens one task directly: /v1/app?task=<ID>.
@@ -421,10 +410,22 @@ $('desktop-notify').onclick = handle(async () => {
 
 let spaceInfo=null, projects=[], projectID='', taskCache=[], inboxMap=new Map(), overview=new Map(), editingProject=null;
 // ---------- Task list ----------
+// index derives the list views from task rows: rows waiting on me, and my
+// own tasks waiting on their required subtasks (display only; the server
+// decides who is next).
+function mineBlocked(x) { return !x.ForMe && x.Position.WaitingOnSubtasks && (x.Assignee === viewer.Subject || (viewer.Kind === 'human' && x.Task.Owner === viewer.Subject)) }
+function index(rows) {
+ for (const x of rows) {
+  overview.set(x.Task.ID, x);
+  if (x.ForMe) inboxMap.set(x.Task.ID, x.NextActor);
+  else if (mineBlocked(x)) blockedMine.add(x.Task.ID);
+ }
+ inboxIDs = new Set(inboxMap.keys());
+}
 async function list() {
- const [tasks,inbox,ps,sp,ov]=await Promise.all([api('/tasks'),api('/inbox'),api('/projects'),api('/space'),api('/overview')]);
+ const [tasks,ps,sp]=await Promise.all([api('/tasks'),api('/projects'),api('/space')]);
  const before=inboxMap;
- taskCache=tasks;overview=new Map(ov.map(x=>[x.TaskID,x]));projects=ps;spaceInfo=sp;inboxMap=new Map(inbox.filter(x=>!x.WaitingOnSubtasks).map(x=>[x.TaskID,x.NextActor]));inboxIDs=new Set(inboxMap.keys());blockedMine=new Set(inbox.filter(x=>x.WaitingOnSubtasks).map(x=>x.TaskID));
+ taskCache=tasks;projects=ps;spaceInfo=sp;overview=new Map();inboxMap=new Map();blockedMine=new Set();index(tasks);
  pendingIDs.clear();
  arrivals(before, null);
  render();
@@ -433,14 +434,12 @@ async function list() {
 // missing from the answer is no longer readable and leaves every list.
 async function refresh(ids) {
  const q=ids.map(id=>'id='+encodeURIComponent(id)).join('&');
- const [tasks,inbox,ov]=await Promise.all([api('/tasks?'+q),api('/inbox?'+q),api('/overview?'+q)]);
+ const tasks=await api('/tasks?'+q);
  const before=new Map(inboxMap);
  const gone=new Set(ids);
  taskCache=taskCache.filter(d=>!gone.has(d.Task.ID)).concat(tasks).sort((a,b)=>a.Task.ID<b.Task.ID?-1:a.Task.ID>b.Task.ID?1:0);
  for(const id of ids){overview.delete(id);inboxMap.delete(id);blockedMine.delete(id)}
- for(const x of ov)overview.set(x.TaskID,x);
- for(const x of inbox){if(x.WaitingOnSubtasks)blockedMine.add(x.TaskID);else inboxMap.set(x.TaskID,x.NextActor)}
- inboxIDs=new Set(inboxMap.keys());
+ index(tasks);
  arrivals(before, ids);
  render();
 }
@@ -513,7 +512,7 @@ function renderTasks(){
  shown.sort((a,b)=>updated(b).localeCompare(updated(a)));
  for(const d of shown){
   const o=overview.get(d.Task.ID)||{};
-  const b=button('',async()=>{selected=d.Task.ID;await list();await show()},'task');
+  const b=button('',async()=>{selected=d.Task.ID;render();await show()},'task');
   const project=projects.find(p=>p.ID===d.Task.ProjectID);
   const state=stateOf(d.Position,o.Assignee);
   const facts=[project?.Name||'未归属项目','处理人 '+(o.Assignee||'—'),o.UpdatedAt?'最近动态 '+ago(o.UpdatedAt):null].filter(Boolean).join(' · ');
@@ -539,31 +538,54 @@ $('project-close').onclick=()=>$('project-dialog').close();
 $('project-form').onsubmit=handle(async()=>{const p=editingProject;const result=await api(p?'/projects/'+p.ID:'/projects',p?'PATCH':'POST',{Name:$('project-name').value,Description:$('project-description').value,Owner:$('project-owner').value,Members:[...$('project-members').querySelectorAll('input:checked')].map(c=>c.value).filter(v=>v!==$('project-owner').value),Archived:p?.Archived||false,ExpectedVersion:p?.Version||0});$('project-dialog').close();projectID=result.ID;view='project';selected='';await list();notice('项目已保存')});
 for(const id of ['task-search','status-filter','project-filter','task-layout'])$(id).addEventListener(id==='task-search'?'input':'change',()=>renderTasks());
 for(const name of ['mine','all','projects','space'])$('tab-'+name).onclick=handle(async()=>{view=name;projectID='';selected='';await list()});
-$('detail-back').onclick=handle(async()=>{selected='';await list()});
+$('detail-back').onclick=handle(async()=>{selected='';render()});
 
 // ---------- Task detail ----------
-async function show() {
+// current is the shown task's view; earlier holds older timeline pages the
+// user asked for, kept while the same task stays open.
+let current = null, earlier = { id: '', commits: [], more: false }, people = null;
+async function show(view) {
   freshIDs.delete(selected);
   const path = '/tasks/' + encodeURIComponent(selected);
-  const [d, w, files] = await Promise.all([api(path), api(path + '/workflow'), api(path + '/files')]);
-  let commits = d.Commits || [];
-  while (commits.length && commits.length % 100 === 0) {
-    const page = await api(path + '?after=' + commits.at(-1).Sequence);
-    if (!page.Commits.length) break;
-    commits.push(...page.Commits);
-    if (page.Commits.length < 100) break;
-  }
+  const [d, files] = await Promise.all([view ? view : api(path), api(path + '/files')]);
+  if (earlier.id !== selected) earlier = { id: selected, commits: [], more: !!d.Earlier };
+  current = { d, files };
+  paint();
+}
+// paint renders the current view without reading anything.
+function paint() {
+  const { d, files } = current;
+  const w = d; // the task view carries the snapshot fields too
+  const path = '/tasks/' + encodeURIComponent(d.Task.ID);
+  const seen = new Set(d.Commits.map(c => c.ID));
+  const commits = earlier.commits.filter(c => !seen.has(c.ID)).concat(d.Commits);
   const ctx = makeContext(d, w, path);
   // Selectors for assignee, participant and addressee; any active task may ask any member.
-  ctx.candidates = (d.CanEdit || w.CanAssign || w.Position.Status === 'active') ? await directory() : [];
+  ctx.candidates = people || [];
   ctx.commits = new Map(commits.map(c => [c.ID, c]));
   ctx.files = new Map(files.map(f => [f.ID, f]));
+  ctx.more = earlier.commits.length ? earlier.more : !!d.Earlier;
   $('detail').replaceChildren(
     renderHead(ctx),
     renderNext(ctx),
     h('div', 'cols',
       h('div', null, renderResult(ctx), renderTimeline(ctx, commits)),
       h('div', null, renderBasis(ctx), renderPlan(ctx), renderExecution(ctx), renderAsk(ctx), renderParticipants(ctx), renderManage(ctx))));
+}
+// older loads the timeline page before the oldest one shown.
+async function older() {
+  const oldest = (earlier.commits[0] || current.d.Commits[0]);
+  const page = await api('/tasks/' + encodeURIComponent(selected) + '?before=' + oldest.Sequence);
+  earlier = { id: selected, commits: page.Commits.concat(earlier.commits), more: !!page.Earlier };
+  paint();
+}
+// settle shows what a task write returned: that task's list row is re-read,
+// the detail renders from the answer. 204 means the task left the caller's view.
+async function settle(view, id = selected) {
+  await refresh([id]);
+  if (!view) { if (id === selected) { selected = ''; render() } notice('该任务已不在你的可见范围内'); return }
+  if (view.Task.ID !== selected) { selected = view.Task.ID; render() }
+  await show(view);
 }
 
 function makeContext(d, w, path) {
@@ -575,8 +597,8 @@ function makeContext(d, w, path) {
     claim: { BasisVersion: d.Task.BasisVersion },
     round: { RoundID: w.Position.RoundID },
     ref: ex ? { ExecutionID: ex.ID } : {},
-    // Refresh the list first: it decides which tasks are waiting on me.
-    async send(route, input) { await api(path + route, 'POST', input); await list(); await show() },
+    // The answer is the task's current view; only its list row is re-read.
+    async send(route, input) { await settle(await api(path + route, 'POST', input)) },
   };
 }
 
@@ -590,7 +612,7 @@ function renderHead(ctx) {
   if (d.CanEdit) {
     const select = el('select'); projectOptions(select, false, d.Task.ProjectID); select.value = d.Task.ProjectID || '';
     panel.append(h('details', null, el('summary', '移动到其他项目'),
-      h('div', 'actions', select, button('移动', async () => { await api(ctx.path + '/project', 'POST', { ProjectID: select.value }); await list(); await show() }))));
+      h('div', 'actions', select, button('移动', async () => { await settle(await api(ctx.path + '/project', 'POST', { ProjectID: select.value })) }))));
   }
   return panel;
 }
@@ -613,20 +635,21 @@ function renderNext(ctx) {
   panel.append(h('div', 'head', el('h3', title), pill(s)));
   if (w.Questions?.length) panel.append(el('p', '有待回答的问题，回答前任务不能完成。', 'muted'));
   else if (w.Position.Waiting) panel.append(el('p', w.Position.Waiting, 'muted'));
-  if (active && w.Blocked?.review) panel.append(el('p', '暂不能验收：' + (REASON_LABEL[w.Blocked.review] || w.Blocked.review), 'muted'));
+  if (active && w.Blocked?.review) panel.append(el('p', '暂不能验收：' + w.Blocked.review.Message, 'muted'));
   // The worker otherwise only sees the submit form vanish, e.g. while a question is open and the title names the addressee.
   // A claim is the next move when one is open; the old execution's submit block is moot then.
-  if (active && !w.CanOpen && w.Blocked?.submit) panel.append(el('p', '暂不能提交结果：' + (REASON_LABEL[w.Blocked.submit] || w.Blocked.submit), 'muted'));
+  if (active && !w.CanOpen && w.Blocked?.submit) panel.append(el('p', '暂不能提交结果：' + w.Blocked.submit.Message, 'muted'));
 
   renderQuestions(ctx, panel);
   // Only people sign in here; Agents work through the API.
-  if (w.CanOpen) panel.append(h('div', 'actions', button('开始处理', () => ctx.send('/execution/open', claim), 'primary')));
+  if (w.CanOpen) panel.append(h('div', 'actions', button('开始处理', () => ctx.send('/start', claim), 'primary')));
   if (w.CanSubmit) {
     const body = textarea('Body', false, '填写本次任务的处理结果；也可以只交付文件或链接');
     const extra = attachInputs();
-    const form = h('form', null, field('提交处理结果', body), extra.node, h('div', 'actions', el('button', '提交结果', 'primary')));
+    const replacing = !!w.Result;
+    const form = h('form', null, field(replacing ? '新的处理结果（会替换当前结果）' : '提交处理结果', body), extra.node, h('div', 'actions', el('button', replacing ? '替换结果' : '提交结果', replacing ? '' : 'primary')));
     form.onsubmit = handle(async () => { await ctx.send('/results', { ...ctx.ref, Body: body.value, ...await extra.collect(ctx.path, body.value) }); });
-    panel.append(form);
+    panel.append(replacing ? h('details', null, el('summary', '替换已提交的结果'), form) : form);
   }
   const actions = h('div', 'actions');
   // Review is the main human decision; it lives here, next to the result summary.
@@ -652,7 +675,7 @@ function renderNext(ctx) {
     panel.append(assignForm(ctx, '选择处理人'));
   }
   // Only a cancelled task can be reopened; completed is final and rework is a new task.
-  if (w.Position.Status === 'cancelled' && w.CanManage) actions.append(button('重开任务', () => confirmThen('重开会开始新一轮，旧结果保留在历史中。继续？', () => ctx.send('/restart', round))));
+  if (w.Position.Status === 'cancelled' && w.CanManage) actions.append(button('重开任务', () => confirmThen('重开后任务重新开始，旧结果保留在历史中。继续？', () => ctx.send('/restart', round))));
   if (actions.children.length) panel.append(actions);
   return panel;
 }
@@ -664,12 +687,12 @@ function renderQuestions(ctx, panel) {
   if (!qs.length) return;
   let mine = false;
   for (const q of qs) {
-    const asked = ctx.commits?.get(q.CommitID);
+    // The snapshot carries who asked, what and when.
     const canAnswer = q.Addressee === viewer.Subject;
     mine = mine || canAnswer;
     const box = h('div', 'result',
-      el('div', (asked ? asked.Author + ' 问 ' : '问 ') + (q.Addressee === ctx.d.Task.Owner ? '负责人 ' : '') + q.Addressee + (asked ? ' · ' + time(asked.CreatedAt) : ''), 'muted small'),
-      el('p', asked ? asked.Body : '（问题正文见时间线）'));
+      el('div', q.Asker + ' 问 ' + (q.Addressee === ctx.d.Task.Owner ? '负责人 ' : '') + q.Addressee + ' · ' + time(q.AskedAt), 'muted small'),
+      el('p', q.Body));
     if (canAnswer) {
       const body = textarea('Body', true, '回答后处理人可在任务中查看');
       const f = h('form', null, body, h('div', 'actions', el('button', '回答', 'primary')));
@@ -677,7 +700,7 @@ function renderQuestions(ctx, panel) {
       box.append(f);
     }
     // The asker may withdraw a question and the owner may release the task from it.
-    if (!canAnswer && (asked?.Author === viewer.Subject || ctx.d.Task.Owner === viewer.Subject)) {
+    if (!canAnswer && (q.Asker === viewer.Subject || ctx.d.Task.Owner === viewer.Subject)) {
       const reason = el('input'); reason.required = true; reason.placeholder = '关闭理由，例如：已从其他渠道确认';
       reason.setAttribute('aria-label', '关闭理由');
       const f = h('form', null, h('details', null, el('summary', '不再需要回答？关闭问题'), reason, h('div', 'actions', el('button', '关闭问题'))));
@@ -704,15 +727,15 @@ function memberSelect(members, placeholder) {
 function assignForm(ctx, text) {
   const members = ctx.candidates;
   if (!members.length) return el('p', '暂无可分配的用户或 Agent。请联系管理员登记并启用成员，然后刷新页面。', 'muted');
-  if (!ctx.d.Task.Goal.trim() || !ctx.d.Task.Criteria.trim()) return el('p', '请先在「任务约定」中补充目标和验收标准，再选择处理人。', 'muted');
+  if (!ctx.d.Task.Goal.trim()) return el('p', '请先在「任务要求」中补充目标，再选择处理人。', 'muted');
   const input = memberSelect(members, '请选择用户或 Agent');
   const f = h('form', null, field(text, input), h('div', 'actions', el('button', '分配', 'primary')));
-  f.onsubmit = handle(() => ctx.send('/execution/assign', { Subject: input.value }));
+  f.onsubmit = handle(() => ctx.send('/assign', { Subject: input.value }));
   return f;
 }
 
 // The member directory pages by subject; selectors here take the first page of 200.
-async function directory() { return (await api('/people?limit=200')).Items }
+async function directory() { return people ||= (await api('/people?limit=200')).Items }
 
 function confirmThen(message, fn) { if (confirm(message)) return fn() }
 
@@ -858,7 +881,7 @@ function planText(c, d, w) {
   return text;
 }
 
-function renderTimeline({ d, w, path, files }, commits) {
+function renderTimeline({ d, w, path, files, more }, commits) {
   const panel = h('div', 'panel', el('h3', '时间线'));
   if (d.CanComment) {
     const ref = el('input'); ref.name = 'RefID'; ref.type = 'hidden';
@@ -867,12 +890,13 @@ function renderTimeline({ d, w, path, files }, commits) {
       field('给处理人留言 / 引导', textarea('Body', false, '补充说明、纠正方向或提出要求，处理人可在任务中查看；留言不算交付结果')),
       extra.node, ref, h('div', 'actions', el('button', '发送留言', 'primary')));
     f.id = 'comment';
-    f.onsubmit = handle(async () => { const v = formdata(f); await api(path + '/commits', 'POST', { Body: v.Body, RefID: v.RefID, ...await extra.collect(path, v.Body) }); await show() });
+    f.onsubmit = handle(async () => { const v = formdata(f); await settle(await api(path + '/commits', 'POST', { Body: v.Body, RefID: v.RefID, ...await extra.collect(path, v.Body) })) });
     panel.append(f);
   }
   const byID = new Map(commits.map(c => [c.ID, c]));
   const ul = el('ul', undefined, 'timeline');
   ul.style.marginTop = '14px';
+  if (more) panel.append(h('div', 'actions', button('加载更早记录', older, 'link')));
   if (!commits.length) ul.append(el('p', '暂无记录', 'muted'));
   for (const c of commits) {
     const li = h('li', c.Kind === 'result' ? 'result' : '',
@@ -880,7 +904,7 @@ function renderTimeline({ d, w, path, files }, commits) {
       (c.Kind === 'answer' || c.Kind === 'question.closed') && byID.has(c.RefID) ? el('div', (c.Kind === 'answer' ? '回答：' : '关闭的问题：') + byID.get(c.RefID).Body, 'muted small') : null,
       c.Kind === 'result' ? (c.Body ? folded(c.Body) : null) : c.Body || c.Kind !== 'comment' ? el('p', c.Kind === 'plan.changed' ? planText(c, d, w) : c.Kind === 'task.basis' ? basisText(c) : c.Kind === 'task.owner' ? ownerText(c) : c.Body) : null,
       attachmentsView(c, files, path),
-      c.RefID && c.Kind === 'comment' ? el('code', '更正引用 ' + c.RefID, 'muted') : null);
+      c.RefID && c.Kind === 'comment' ? el('div', '更正：' + (byID.get(c.RefID)?.Body || '').slice(0, 80), 'muted small') : null);
     if (d.CanComment && c.Kind === 'comment' && c.Author === viewer?.Subject) {
       li.append(button('追加更正', () => {
         const f = $('comment');
@@ -897,9 +921,9 @@ function renderTimeline({ d, w, path, files }, commits) {
 }
 
 function renderBasis({ d, w, ex, active, path }) {
-  const panel = h('div', 'panel', h('div', 'head', el('h3', '任务约定'), el('span', '第 ' + d.Task.BasisVersion + ' 版', 'muted small')),
+  const panel = h('div', 'panel', el('h3', '任务要求'),
     el('label', '目标'), el('p', d.Task.Goal || '待补充'),
-    el('label', '验收标准'), el('p', d.Task.Criteria || '待补充'));
+    el('label', '验收标准'), el('p', d.Task.Criteria || '未填写：由负责人验收时判断'));
   // The basis can change while work runs: a claim or result on the old basis must be redone.
   const editable = d.CanEdit && active;
   if (editable) {
@@ -910,12 +934,12 @@ function renderBasis({ d, w, ex, active, path }) {
       input.value = d.Task[name];
       f.append(field(text, input));
     }
-    if (ex && ex.Writable && ex.RoundID === w.Position.RoundID) f.append(el('p', '执行已开始：保存后当前执行和结果需要按新约定重新认领和提交。', 'muted small'));
-    f.append(h('div', 'actions', el('button', '保存约定', 'primary')));
-    f.onsubmit = handle(async () => { await api(path, 'PATCH', { ...formdata(f), BasisVersion: d.Task.BasisVersion }); await list(); await show() });
-    const box = h('details', null, el('summary', '修改约定'), f);
-    // Stays open across refreshes until the agreement is complete.
-    box.open = expandBasis === d.Task.ID && !(d.Task.Goal.trim() && d.Task.Criteria.trim());
+    if (ex && ex.Writable && ex.RoundID === w.Position.RoundID) f.append(el('p', '处理已开始：保存后处理人需要按新要求重新开始，已提交的结果不再算数。', 'muted small'));
+    f.append(h('div', 'actions', el('button', '保存要求', 'primary')));
+    f.onsubmit = handle(async () => { await settle(await api(path, 'PATCH', { ...formdata(f), BasisVersion: d.Task.BasisVersion })) });
+    const box = h('details', null, el('summary', '修改要求'), f);
+    // Stays open across refreshes until the goal is filled in.
+    box.open = expandBasis === d.Task.ID && !d.Task.Goal.trim();
     panel.append(box);
   }
   return panel;
@@ -928,8 +952,9 @@ function renderPlan(ctx) {
   const manage = d.CanEdit && active;
   if (!w.Parent && !w.Children?.length && !w.HiddenRequired && !manage) return null;
   const panel = h('div', 'panel', el('h3', '任务拆分'));
-  const open = id => async () => { selected = id; await list(); await show() };
-  const place = (child, input) => async () => { await api('/tasks/' + encodeURIComponent(child) + '/parent', 'POST', input); await list(); await show() };
+  const open = id => async () => { selected = id; render(); await show() };
+  // Placing changes both tasks; this page shows the parent.
+  const place = (child, input) => async () => { await api('/tasks/' + encodeURIComponent(child) + '/parent', 'POST', input); await refresh([child, d.Task.ID]); await show() };
   const status = t => pill(stateOf({ Status: t.Status, State: t.State }, overview.get(t.TaskID)?.Assignee));
   if (w.Parent) panel.append(h('p', null, el('span', w.Parent.Required ? '必需子任务，属于 ' : '子任务，属于 ', 'muted'), button(w.Parent.Title, open(w.Parent.TaskID), 'link'), ' ', status(w.Parent)));
   const ul = el('ul', undefined, 'timeline');
@@ -938,7 +963,7 @@ function renderPlan(ctx) {
     if (manage) {
       const seen = { SeenParentID: d.Task.ID, SeenRequired: c.Required };
       li.append(h('div', 'actions',
-        button(c.Required ? '改为非必需' : '改为必需', () => confirmThen('调整必需子任务会更新本任务依据，已有执行和结果需按新依据重做。继续？', place(c.TaskID, { ...seen, ParentID: d.Task.ID, Required: !c.Required })), 'link')));
+        button(c.Required ? '改为非必需' : '改为必需', () => confirmThen('调整必需子任务会改变本任务的要求，进行中的处理需要按新要求重新开始。继续？', place(c.TaskID, { ...seen, ParentID: d.Task.ID, Required: !c.Required })), 'link')));
     }
     ul.append(li);
   }
@@ -949,16 +974,17 @@ function renderPlan(ctx) {
     const title = el('input'); title.name = 'Title'; title.required = true;
     const required = el('input'); required.type = 'checkbox'; required.style.width = 'auto'; required.checked = true;
     const requiredLabel = el('label', ' 必需：完成后本任务才能提交结果'); requiredLabel.prepend(required);
-    f.append(field('标题', title), field('目标（分配前必填）', textarea('Goal', false)), field('验收标准（分配前必填）', textarea('Criteria', false)), requiredLabel,
+    f.append(field('标题', title), field('目标（分配前必填）', textarea('Goal', false)), field('验收标准（可选）', textarea('Criteria', false)), requiredLabel,
       el('p', '已完成的任务不能重开；需要返工时在这里新建子任务。', 'muted small'),
       h('div', 'actions', el('button', '创建子任务', 'primary')));
     // One command creates the subtask and places it under this task atomically.
     f.onsubmit = handle(async () => {
       const v = formdata(f);
       const created = await api('/tasks', 'POST', { Title: v.Title, Goal: v.Goal, Criteria: v.Criteria, ProjectID: d.Task.ProjectID || '', ParentID: d.Task.ID, Required: required.checked });
-      // An incomplete subtask is opened at once so its agreement gets filled in.
-      if (!created.Task.Goal.trim() || !created.Task.Criteria.trim()) selected = created.Task.ID;
-      await list(); await show(); openBasisIfIncomplete(created.Task);
+      // A subtask without a goal is opened at once so it gets filled in.
+      if (!created.Task.Goal.trim()) await settle(created, created.Task.ID);
+      else { await refresh([created.Task.ID, d.Task.ID]); await show() }
+      openBasisIfIncomplete(created.Task);
     });
     panel.append(h('details', null, el('summary', '新建子任务'), f));
   }
@@ -974,8 +1000,7 @@ function renderExecution(ctx) {
     add('状态', execLabel(ex, w.Position) + (ex.CredentialID ? '' : ' · 人工处理'));
     if (ex.ProgressAt && !ex.ProgressAt.startsWith('0001')) add('最近进展', ago(ex.ProgressAt) + '（' + time(ex.ProgressAt) + '）');
   }
-  const live = el('div', undefined, 'muted small'); live.id = 'execution-live-status';
-  const panel = h('div', 'panel', el('h3', '执行'), dl, live);
+  const panel = h('div', 'panel', el('h3', '处理情况'), dl);
   if (w.CanAssign && ctx.active && w.Assignee && !w.Result) panel.append(h('details', null, el('summary', '转交处理（用户或 Agent）'), assignForm(ctx, '选择新的处理人')));
   return panel;
 }
@@ -1008,8 +1033,7 @@ function renderParticipants({ d, w, path, candidates }) {
   if (!d.CanEdit && !current.length) return null;
   const panel = h('div', 'panel', el('h3', '参与者'));
   const set = (subject, present) => async () => {
-    await api(path + '/participants', 'POST', { Subject: subject, Present: present });
-    await show();
+    await settle(await api(path + '/participants', 'POST', { Subject: subject, Present: present }));
   };
   const ul = el('ul', undefined, 'timeline');
   for (const s of current) {
@@ -1033,7 +1057,7 @@ function renderManage(ctx) {
   const { d, w, active, send, path, candidates } = ctx;
   if (!w.CanManage) return null;
   const panel = h('div', 'panel', el('h3', '任务控制'));
-  if (active) panel.append(h('div', 'actions', button('取消任务', () => confirmThen('取消后当前执行立即失效，不能再写入；之后可重开为新一轮。继续？', () => send('/cancel', {})), 'danger')));
+  if (active) panel.append(h('div', 'actions', button('取消任务', () => confirmThen('取消后处理人不能再提交结果；之后可以重开任务。继续？', () => send('/cancel', {})), 'danger')));
   // Handover: responsibility and review move to another person; the handler and work stay.
   const people = (candidates || []).filter(m => m.Kind === 'human' && m.Subject !== d.Task.Owner);
   if (people.length) {
@@ -1041,8 +1065,7 @@ function renderManage(ctx) {
     reason.placeholder = '移交原因（可选）'; reason.maxLength = 2000;
     const form = h('form', null, field('移交负责人', to), field('原因', reason), h('div', 'actions', el('button', '移交')));
     form.onsubmit = handle(() => confirmThen('移交后，' + to.value + ' 成为负责人并负责验收；你仍可查看任务。继续？', async () => {
-      await api(path + '/owner', 'POST', { Owner: to.value, SeenOwner: d.Task.Owner, Reason: reason.value });
-      await list(); if (taskCache.some(x => x.Task.ID === selected)) await show();
+      await settle(await api(path + '/owner', 'POST', { Owner: to.value, SeenOwner: d.Task.Owner, Reason: reason.value }));
       notice('已移交给 ' + to.value);
     }));
     panel.append(form);
@@ -1056,7 +1079,7 @@ async function openMembers(preselect = '') {
   $('members-notice').textContent = '';
   const root = $('members-content');
   root.replaceChildren(); // Never retain a previously issued secret across reloads.
-  const members = await api('/members');
+  const members = await api('/admin/members');
   if (!$('members-dialog').open) $('members-dialog').showModal();
   const directory = h('section', null, el('h3', '已登记成员'));
   for (const m of members) {
@@ -1065,7 +1088,7 @@ async function openMembers(preselect = '') {
     if (m.Active && m.Kind==='agent') actions.append(button('签发凭据', () => { subject.value = m.Subject; credentialForm.scrollIntoView({block:'center'}); }));
     if (m.Subject !== viewer.Subject) actions.append(button(m.Active ? '停用' : '启用', () => confirmThen(
       m.Active ? '停用后，该成员将不能访问和处理任务。继续？' : '启用后将恢复仍保留的任务关系。继续？',
-      async () => { await api('/members', 'POST', {Tenant:viewer.Tenant,Subject:m.Subject,Role:m.Role,Active:!m.Active}); await openMembers(); }), m.Active ? 'danger' : ''));
+      async () => { await api('/admin/members', 'POST', {Subject:m.Subject,Role:m.Role,Active:!m.Active}); await openMembers(); }), m.Active ? 'danger' : ''));
     directory.append(h('article', 'member-row', h('div', null, el('strong',m.Subject),
       el('p',(m.Kind === 'agent' ? 'Agent · 所属人：'+m.OwnerID : '用户')+' · '+(m.Role === 'admin' ? '管理员' : '成员')+' · '+(m.Active ? '已启用' : '已停用'),'muted small')),actions));
   }
@@ -1083,7 +1106,7 @@ async function openMembers(preselect = '') {
     el('p','用户创建后即可用用户名和密码登录；Agent 添加后再签发接入凭据。','muted small'),h('div','actions',el('button','添加成员','primary')));
   create.onsubmit=handle(async()=>{
     const subjectID=id.value.trim();
-    await api('/identities','POST',{Subject:subjectID,Kind:kind.value,OwnerID:kind.value==='agent'?owner.value:'',Password:kind.value==='human'?initialPassword.value:''});
+    await api('/admin/identities','POST',{Subject:subjectID,Kind:kind.value,OwnerID:kind.value==='agent'?owner.value:'',Password:kind.value==='human'?initialPassword.value:''});
     const human=kind.value==='human';
     await openMembers(human?'':subjectID);
     notice(human?'用户已创建，可用用户名和密码登录。':'Agent 已添加，请签发接入凭据。');
@@ -1095,7 +1118,7 @@ async function openMembers(preselect = '') {
   const days=el('select');
   for (const n of [1,7,30,90]) {const o=el('option',n+' 天');o.value=n;days.append(o)}
   days.value='7';
-  const agentFields=el('p','每张凭据代表一个运行实例：同一凭据可继续它认领的执行；用新凭据认领会使旧凭据的执行失效。','muted small');
+  const agentFields=h('details',null,el('summary','凭据怎么用'),el('p','一张凭据对应一个运行中的 Agent：用同一张凭据重启后可以接着处理；换新凭据开始处理时，旧凭据上进行中的处理会停止。','muted small'));
   const result=h('div',null);result.id='issued-credential';
   const credentialForm=h('form',null,el('h3','签发 Agent 接入凭据'),field('签发对象',subject),field('有效期',days),agentFields,
     h('div','actions',el('button','生成凭据','primary')),result);
@@ -1106,7 +1129,7 @@ async function openMembers(preselect = '') {
     const fingerprint=JSON.stringify(fields);
     if(!pendingIssue || pendingIssue.fingerprint!==fingerprint) pendingIssue={fingerprint,input:{Subject:subject.value,ExpiresAt:new Date(Date.now()+Number(days.value)*86400000).toISOString()}};
     const input=pendingIssue.input;
-    const issued=await api('/credentials','POST',input);
+    const issued=await api('/admin/credentials','POST',input);
     pendingIssue=null;
     if(!issued.Secret){result.append(el('p','这次请求已签发过凭据，明文不能重新读取。请先撤销该凭据，再生成新的凭据。','muted'));}
     else {
@@ -1118,13 +1141,13 @@ async function openMembers(preselect = '') {
       result.append(el('p','请立即复制或下载并妥善保管。关闭窗口后将不再展示明文；新增凭据不会自动撤销旧凭据。','muted'),field('本次生成的凭据',secret),
         h('div','actions',button('复制凭据',async()=>{await navigator.clipboard.writeText(issued.Secret);notice('凭据已复制')}),button('下载凭据文件',download)));
     }
-    result.append(el('p','凭据编号：'+issued.ID,'muted small'),button('撤销本次凭据',async()=>{await api('/credentials/revoke','POST',{CredentialID:issued.ID});result.replaceChildren(el('p','凭据已撤销'))},'danger'));
+    result.append(el('p','凭据编号：'+issued.ID,'muted small'),button('撤销本次凭据',async()=>{await api('/admin/credentials/revoke','POST',{CredentialID:issued.ID});result.replaceChildren(el('p','凭据已撤销'))},'danger'));
   });
   if(active.length) root.append(h('section',null,credentialForm));
   // Audit trail: every committed or rejected command, newest first.
   const trail=h('div',null);
   root.append(h('section',null,el('h3','审计记录'),h('div','actions',button('查看最近 100 条',async()=>{
-    const items=await api('/audit?limit=100');
+    const items=await api('/admin/audit?limit=100');
     trail.replaceChildren(...(items.length?items.map(a=>el('p',time(a.At)+' · '+a.Subject+' · '+a.Operation+' · '+a.Resource+' · '+(a.Outcome==='committed'?'成功':'被拒绝')+(a.Reason?' · '+a.Reason:''),'muted small')):[el('p','暂无记录','muted')]));
   })),trail));
   if(preselect) credentialForm.scrollIntoView({block:'center'});
@@ -1157,7 +1180,7 @@ $('change-password').onsubmit=handle(async()=>{
   const subject=viewer.Subject, target=passwordTarget;
   const body={Password:$('new-password').value};
   if(!target)body.CurrentPassword=$('current-password').value;
-  await api(target?'/users/'+encodeURIComponent(target)+'/password':'/account/password','POST',body);
+  await api(target?'/admin/users/'+encodeURIComponent(target)+'/password':'/account/password','POST',body);
   $('change-password').reset();$('password-dialog').close();
   if(!target || target===subject){await api('/session','DELETE');showLogin();$('username').value=subject;notice('密码已设置，请用用户名和新密码登录。')}
   else notice('用户密码已更新，旧会话已失效。');
@@ -1170,20 +1193,18 @@ $('password-login').onsubmit=handle(async()=>{
 // ---------- Wiring ----------
 $('create').onsubmit = handle(async () => {
   const d = await api('/tasks', 'POST', formdata($('create')));
-  selected = d.Task.ID;
   $('create').reset();
   $('create-box').open = false;
   if(view!=='project') view = 'all';
-  await list();
-  await show();
+  await settle(d, d.Task.ID);
   openBasisIfIncomplete(d.Task);
 });
 
-// A task saved with only a title opens its agreement editor right away, so it gets completed before assignment.
+// A task saved with only a title opens its requirements editor right away, so it gets a goal before assignment.
 function openBasisIfIncomplete(t) {
-  if (t.Goal.trim() && t.Criteria.trim()) return;
+  if (t.Goal.trim()) return;
   expandBasis = t.ID;
-  const d = [...document.querySelectorAll('#detail details')].find(x => x.querySelector('summary')?.textContent === '修改约定');
+  const d = [...document.querySelectorAll('#detail details')].find(x => x.querySelector('summary')?.textContent === '修改要求');
   if (d) { d.open = true; d.scrollIntoView({ block: 'center' }); }
 }
 $('logout').onclick = handle(async () => {
@@ -1208,15 +1229,12 @@ setInterval(async () => {
     const due = pendingRefresh || pendingIDs.size > 0;
     const editing = document.activeElement?.matches('input,textarea,select') || (view==='space') || $('create-box').open;
     if (due && !editing && !document.querySelector('dialog[open]')) {
-      if (pendingRefresh || pendingIDs.size > 100) await list(); else await refresh([...pendingIDs]);
-      if (selected) await show();
+      const all = pendingRefresh || pendingIDs.size > 100, open = selected && (pendingRefresh || pendingIDs.has(selected));
+      if (pendingRefresh) people = null;
+      if (all) await Promise.all([list(), directory()]); else await refresh([...pendingIDs]);
+      if (open && selected) await show();
       pendingRefresh = false; pendingIDs.clear();
-    } else if (selected) {
-      const state = await api('/tasks/' + encodeURIComponent(selected) + '/workflow');
-      const live = $('execution-live-status');
-      if (live) live.textContent = '实时：' + (state.Assignee || '待分配') + (state.Execution ? ' · ' + execLabel(state.Execution, state.Position) : '');
-      if (due && editing) notice('任务有新变化，已保留你的输入；完成编辑后刷新。');
-    }
+    } else if (due && editing) notice('任务有新变化，已保留你的输入；完成编辑后刷新。');
   } catch (e) {
     cursor = '';
     if (e.status === 403) {

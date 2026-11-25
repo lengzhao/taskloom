@@ -22,26 +22,44 @@ const (
 // file IDs and MaxLinks absolute http(s) links. Whether each file exists on
 // the task is checked when the commit is appended.
 func Valid(files []string, links []commit.Link) error {
-	if len(files) > MaxFiles || len(links) > MaxLinks {
-		return fault.ErrInput
+	if len(files) > MaxFiles {
+		return fault.Input("too_many_files", "Files")
+	}
+	if len(links) > MaxLinks {
+		return fault.Input("too_many_links", "Links")
 	}
 	seen := map[string]bool{}
 	for _, id := range files {
 		if !FileID(id) || seen[id] {
-			return fault.ErrInput
+			return fault.Input(fault.CodeInvalid, "Files")
 		}
 		seen[id] = true
 	}
 	for _, l := range links {
 		if len(l.URL) > MaxURL || len(l.Title) > MaxTitle || !printable(l.Title) || !printable(l.URL) {
-			return fault.ErrInput
+			return fault.Input("invalid_link", "Links")
 		}
 		u, e := url.Parse(l.URL)
 		if e != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil {
-			return fault.ErrInput
+			return fault.Input("invalid_link", "Links")
 		}
 	}
 	return nil
+}
+
+// MaxBody bounds the text of one commit.
+const MaxBody = 20000
+
+// Check is the rule every comment and result shares: some text, file or
+// link, text within MaxBody, and well-formed references.
+func Check(body string, files []string, links []commit.Link) error {
+	if Empty(body, files, links) {
+		return fault.Input(fault.CodeRequired, "Body")
+	}
+	if len(body) > MaxBody {
+		return fault.Input("too_long", "Body")
+	}
+	return Valid(files, links)
 }
 
 // Empty reports whether a commit carries neither text nor references.

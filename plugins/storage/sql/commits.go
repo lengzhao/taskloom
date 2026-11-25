@@ -55,7 +55,7 @@ func (s *Store) Get(ctx context.Context, tenant, taskID, id string) (commit.Comm
 		if err := db.First(&row, "row_key = ?", key(tenant, taskID, id)).Error; err != nil {
 			return err
 		}
-		return json.Unmarshal(row.Data, &c)
+		return unmarshalCommit(row.Data, tenant, &c)
 	})
 	return c, err
 }
@@ -66,7 +66,7 @@ func (s *Store) Last(ctx context.Context, tenant, taskID string) (commit.Commit,
 		if err := db.Where("task_key = ?", key(tenant, taskID)).Order("sequence DESC").First(&row).Error; err != nil {
 			return err
 		}
-		return json.Unmarshal(row.Data, &c)
+		return unmarshalCommit(row.Data, tenant, &c)
 	})
 	return c, err
 }
@@ -82,7 +82,35 @@ func (s *Store) List(ctx context.Context, tenant, taskID string, after int64, li
 		}
 		for _, row := range rows {
 			var c commit.Commit
-			if err := json.Unmarshal(row.Data, &c); err != nil {
+			if err := unmarshalCommit(row.Data, tenant, &c); err != nil {
+				return err
+			}
+			out = append(out, c)
+		}
+		return nil
+	})
+	return out, err
+}
+
+// Before reads the page of commits just below a sequence (0: the newest),
+// returned oldest first.
+func (s *Store) Before(ctx context.Context, tenant, taskID string, before int64, limit int) ([]commit.Commit, error) {
+	if limit < 1 || limit > 501 {
+		limit = 100
+	}
+	out := []commit.Commit{}
+	err := s.use(ctx, false, func(db *gorm.DB) error {
+		q := db.Where("task_key = ?", key(tenant, taskID))
+		if before > 0 {
+			q = q.Where("sequence < ?", before)
+		}
+		var rows []commitRow
+		if err := q.Order("sequence DESC").Limit(limit).Find(&rows).Error; err != nil {
+			return err
+		}
+		for i := len(rows) - 1; i >= 0; i-- {
+			var c commit.Commit
+			if err := unmarshalCommit(rows[i].Data, tenant, &c); err != nil {
 				return err
 			}
 			out = append(out, c)
@@ -100,7 +128,7 @@ func (s *Store) LatestReview(ctx context.Context, tenant, taskID, resultCommitID
 		if err := db.Where("task_key = ? AND ref_id = ? AND kind IN ?", key(tenant, taskID), resultCommitID, []string{acceptance.KindApproved, acceptance.KindRejected}).Order("sequence DESC").First(&row).Error; err != nil {
 			return err
 		}
-		return json.Unmarshal(row.Data, &c)
+		return unmarshalCommit(row.Data, tenant, &c)
 	})
 	if err != nil {
 		return acceptance.Review{}, err
@@ -110,4 +138,14 @@ func (s *Store) LatestReview(ctx context.Context, tenant, taskID, resultCommitID
 		outcome = acceptance.OutcomeApproved
 	}
 	return acceptance.Review{CommitID: c.RefID, Reviewer: c.Author, Outcome: outcome, Reason: c.Body, BasisVersion: c.BasisVersion}, nil
+}
+
+// unmarshalCommit restores a stored commit; its tenant is the key's, never
+// part of the stored JSON.
+func unmarshalCommit(data []byte, tenant string, c *commit.Commit) error {
+	if err := json.Unmarshal(data, c); err != nil {
+		return err
+	}
+	c.Tenant = tenant
+	return nil
 }

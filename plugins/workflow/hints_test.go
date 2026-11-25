@@ -14,11 +14,11 @@ func TestSnapshotExplainsBlockedActionsAndNextActor(t *testing.T) {
 	d := f.create(t)
 	asAgent := func() api.Snapshot {
 		t.Helper()
-		s, e := f.query.Read(f.ctx, f.agent, d.Task.ID)
+		s, e := f.query.Read(f.ctx, f.agent, d.Task.ID, 0)
 		if e != nil {
 			t.Fatal(e)
 		}
-		return s
+		return s.Snapshot
 	}
 	s := f.read(t, d.Task.ID)
 	if s.NextActor != api.ActorOwner || s.Blocked != nil {
@@ -38,7 +38,7 @@ func TestSnapshotExplainsBlockedActionsAndNextActor(t *testing.T) {
 		t.Fatal(e)
 	}
 	a := asAgent()
-	if !a.CanSubmit || a.Blocked[api.ActionOpen] != api.ReasonExecutionInProgress || a.NextActor != api.ActorAssignee {
+	if !a.CanSubmit || a.Blocked[api.ActionOpen].Code != api.ReasonExecutionInProgress || a.NextActor != api.ActorAssignee {
 		t.Fatal("running execution", a.CanSubmit, a.Blocked, a.NextActor)
 	}
 	v := *a.Execution
@@ -48,14 +48,14 @@ func TestSnapshotExplainsBlockedActionsAndNextActor(t *testing.T) {
 	if s = f.read(t, d.Task.ID); !s.CanReview || s.NextActor != api.ActorReviewer || s.Blocked != nil {
 		t.Fatal("owner reviews pending result", s.CanReview, s.NextActor, s.Blocked)
 	}
-	if a = asAgent(); a.CanReview || a.Blocked[api.ActionReview] != api.ReasonNotReviewer {
+	if a = asAgent(); a.CanReview || a.Blocked[api.ActionReview].Code != api.ReasonNotReviewer {
 		t.Fatal("agent cannot review", a.Blocked)
 	}
 	if s, e = f.controls.Cancel(f.ctx, f.owner, "cancel", api.Cancel{TaskID: d.Task.ID}); e != nil {
 		t.Fatal(e)
 	}
 	// The run is fenced and nothing waits on anyone.
-	if a = asAgent(); a.NextActor != "" || a.CanSubmit || a.Blocked[api.ActionSubmit] != api.ReasonTaskNotActive {
+	if a = asAgent(); a.NextActor != "" || a.CanSubmit || a.Blocked[api.ActionSubmit].Code != api.ReasonTaskNotActive {
 		t.Fatal("cancelled task", a.NextActor, a.Blocked)
 	}
 }
@@ -69,7 +69,7 @@ func TestInboxListsOnlyTasksWaitingOnCaller(t *testing.T) {
 	}
 	inbox := func(token string) map[string]api.Actor {
 		t.Helper()
-		items, e := f.query.Inbox(f.ctx, token, nil)
+		items, e := inbox(f.ctx, f.query, token, nil)
 		if e != nil {
 			t.Fatal(e)
 		}
@@ -159,7 +159,7 @@ func TestApprovedTaskLeavesTheAgentInbox(t *testing.T) {
 	if s = f.read(t, d.Task.ID); s.Position.Status != "completed" || s.NextActor != "" {
 		t.Fatal("approved task", s.Position.Status, s.NextActor)
 	}
-	if items, e := f.query.Inbox(f.ctx, f.agent, nil); e != nil || len(items) != 0 {
+	if items, e := inbox(f.ctx, f.query, f.agent, nil); e != nil || len(items) != 0 {
 		t.Fatal("agent inbox should be empty", items, e)
 	}
 }

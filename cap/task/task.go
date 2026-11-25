@@ -9,8 +9,11 @@ import (
 	"github.com/lengzhao/taskloom/cap/fault"
 )
 
+// Tenant and Sequence are internal: the tenant always comes from
+// authentication, so neither is part of the JSON a caller reads.
 type Task struct {
-	Tenant, ID, Title, Goal, Criteria, Owner, ProjectID string
+	Tenant                                      string `json:"-"`
+	ID, Title, Goal, Criteria, Owner, ProjectID string
 	// BasisVersion is the task's only delivery-basis version: it changes with
 	// title, goal, criteria or the set of required subtasks. Executions,
 	// results, reviews and edits are pinned to it.
@@ -18,7 +21,7 @@ type Task struct {
 	// Sequence is the task's creation order, taken from the global counter
 	// that also orders commits and events when the task is stored. A child is
 	// always newer than its parent, which keeps the work breakdown acyclic.
-	Sequence int64
+	Sequence int64 `json:"-"`
 }
 
 // BasisChange contains only fields the named basis update may change.

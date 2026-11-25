@@ -29,11 +29,11 @@ func TestAgentSplitsTaskItExecutes(t *testing.T) {
 	if again, e := f.tasks.Commands.Create(f.ctx, f.agent, "split", in); e != nil || again.TaskID != ref.TaskID {
 		t.Fatal("replay created another subtask", again, e)
 	}
-	child, e := f.taskQueries.Get(f.ctx, lead, ref.TaskID, 0)
+	child, e := f.query.Read(f.ctx, lead, ref.TaskID, 0)
 	if e != nil || child.Task.Owner != "lead" {
 		t.Fatal("subtask not owned by the named person", child.Task.Owner, e)
 	}
-	if _, e = f.taskQueries.Get(f.ctx, f.agent, ref.TaskID, 0); e != nil {
+	if _, e = f.query.Read(f.ctx, f.agent, ref.TaskID, 0); e != nil {
 		t.Fatal("splitting Agent cannot follow its subtask", e)
 	}
 	if f.basis(t, parent.Task.ID) != 2 {
@@ -111,7 +111,7 @@ func TestAgentSplitGuards(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	child, e := f.taskQueries.Get(f.ctx, f.owner, ref.TaskID, 0)
+	child, e := f.query.Read(f.ctx, f.owner, ref.TaskID, 0)
 	if e != nil || child.Task.Owner != "owner" || f.basis(t, parent.Task.ID) != 1 {
 		t.Fatal("optional subtask: owner defaults to the parent's, basis unchanged", child.Task.Owner, f.basis(t, parent.Task.ID), e)
 	}

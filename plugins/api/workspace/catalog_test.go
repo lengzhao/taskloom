@@ -14,6 +14,7 @@ import (
 	"github.com/lengzhao/taskloom/cap/record"
 	cs "github.com/lengzhao/taskloom/cap/security"
 	"github.com/lengzhao/taskloom/cap/unitofwork"
+	wf "github.com/lengzhao/taskloom/cap/workflow"
 	api "github.com/lengzhao/taskloom/cap/workspace"
 	"github.com/lengzhao/taskloom/plugins/security"
 	"github.com/lengzhao/taskloom/runtime/config"
@@ -98,12 +99,12 @@ func TestWorkspaceProjectsLifecycle(t *testing.T) {
 	var other catalog.Project
 	json.Unmarshal(call(admin.Secret, "POST", "/projects", "p2", catalog.ProjectEdit{Name: "Admin project"}, 200), &other)
 	call(alice.Secret, "PATCH", "/projects/"+other.ID, "denied", catalog.ProjectEdit{Name: "Steal", Owner: "alice", ExpectedVersion: 1}, 403)
-	var task api.Detail
+	var task wf.View
 	json.Unmarshal(call(alice.Secret, "POST", "/tasks", "t1", api.Create{Title: "Visible", ProjectID: project.ID}, 200), &task)
 	call(admin.Secret, "POST", "/tasks", "hidden", api.Create{Title: "Admin private"}, 200)
 	// A project shares its tasks with its owner: the admin's filed task is visible to alice.
 	call(admin.Secret, "POST", "/tasks", "filed", api.Create{Title: "Admin filed", ProjectID: project.ID}, 200)
-	var visible []api.Detail
+	var visible []wf.Summary
 	json.Unmarshal(call(alice.Secret, "GET", "/tasks", "", nil, 200), &visible)
 	if len(visible) != 2 {
 		t.Fatalf("project shares %d tasks, want 2", len(visible))
@@ -111,7 +112,7 @@ func TestWorkspaceProjectsLifecycle(t *testing.T) {
 	// Filing shares the task, so alice cannot file into a project she is not in.
 	call(alice.Secret, "POST", "/tasks/"+task.Task.ID+"/project", "move-denied", api.ProjectMove{ProjectID: other.ID}, 403)
 	call(admin.Secret, "POST", "/tasks/"+task.Task.ID+"/project", "move", api.ProjectMove{ProjectID: other.ID}, 200)
-	var moved api.Detail
+	var moved wf.View
 	json.Unmarshal(call(alice.Secret, "GET", "/tasks/"+task.Task.ID, "", nil, 200), &moved)
 	if moved.Task.BasisVersion != task.Task.BasisVersion || !reflect.DeepEqual(moved.Position, task.Position) || moved.Task.ProjectID != other.ID {
 		t.Fatal("move changed workflow/basis")

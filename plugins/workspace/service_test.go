@@ -19,12 +19,14 @@ import (
 	"github.com/lengzhao/taskloom/cap/execution"
 	"github.com/lengzhao/taskloom/cap/fault"
 	"github.com/lengzhao/taskloom/cap/identity"
+	wf "github.com/lengzhao/taskloom/cap/workflow"
 	api "github.com/lengzhao/taskloom/cap/workspace"
 	access "github.com/lengzhao/taskloom/plugins/access/default"
 	flow "github.com/lengzhao/taskloom/plugins/flow"
 	local "github.com/lengzhao/taskloom/plugins/identity/local"
 	"github.com/lengzhao/taskloom/plugins/security"
 	store "github.com/lengzhao/taskloom/plugins/storage/sql"
+	wfplugin "github.com/lengzhao/taskloom/plugins/workflow"
 	workspace "github.com/lengzhao/taskloom/plugins/workspace"
 	"github.com/lengzhao/taskloom/runtime/command"
 )
@@ -54,20 +56,31 @@ func (noPlacer) Apply(context.Context, identity.Principal, plan.Placement) error
 }
 
 // readBack answers Create and Edit with current facts, as the HTTP API does:
-// commands return only a Ref, the same Ref their receipt stores.
-type readBack struct{ *workspace.Service }
+// commands return only a Ref, the same Ref their receipt stores. Reads go
+// through the workflow task view, the one read path the API serves.
+type readBack struct {
+	*workspace.Service
+	q *wfplugin.Query
+}
 
-func (r readBack) Create(ctx context.Context, token, key string, in api.Create) (api.Detail, error) {
+func (r readBack) Get(ctx context.Context, token, id string, after int64) (wf.View, error) {
+	return r.q.Read(ctx, token, id, after)
+}
+func (r readBack) List(ctx context.Context, token string, ids []string) ([]wf.Summary, error) {
+	return r.q.List(ctx, token, wf.ListFilter{IDs: ids})
+}
+
+func (r readBack) Create(ctx context.Context, token, key string, in api.Create) (wf.View, error) {
 	ref, e := r.Service.Create(ctx, token, key, in)
 	return r.read(ctx, token, ref, e)
 }
-func (r readBack) Edit(ctx context.Context, token, key string, in api.Edit) (api.Detail, error) {
+func (r readBack) Edit(ctx context.Context, token, key string, in api.Edit) (wf.View, error) {
 	ref, e := r.Service.Edit(ctx, token, key, in)
 	return r.read(ctx, token, ref, e)
 }
-func (r readBack) read(ctx context.Context, token string, ref api.Ref, e error) (api.Detail, error) {
+func (r readBack) read(ctx context.Context, token string, ref api.Ref, e error) (wf.View, error) {
 	if e != nil {
-		return api.Detail{}, e
+		return wf.View{}, e
 	}
 	return r.Get(ctx, token, ref.TaskID, 0)
 }
@@ -105,7 +118,11 @@ func fixtureWithStore(t *testing.T) (readBack, *security.Service, string, *store
 	if e != nil {
 		t.Fatal(e)
 	}
-	return readBack{inner}, sec, issued.Secret, s
+	q, e := wfplugin.NewQuery(wfplugin.QueryDeps{Commits: s, Transactions: s, Tasks: s, Flow: f, Executions: s, Results: s, Reviews: s, Identity: id, Authorization: az, Questions: s, Plan: s, Participants: s})
+	if e != nil {
+		t.Fatal(e)
+	}
+	return readBack{inner, q}, sec, issued.Secret, s
 }
 
 func TestCreateReadCommitEditAndRevoke(t *testing.T) {
@@ -269,13 +286,14 @@ func TestCommitPaginationAndForeignReference(t *testing.T) {
 			t.Fatal(e)
 		}
 	}
+	// The view shows the newest page; earlier pages are read backwards.
 	first, e := s.Get(ctx, token, a.Task.ID, 0)
-	if e != nil || len(first.Commits) != 100 {
-		t.Fatal("first page", len(first.Commits), e)
+	if e != nil || len(first.Commits) != 100 || !first.Earlier || first.Commits[0].Sequence >= first.Commits[99].Sequence {
+		t.Fatal("newest page", len(first.Commits), first.Earlier, e)
 	}
-	next, e := s.Get(ctx, token, a.Task.ID, first.Commits[99].Sequence)
-	if e != nil || len(next.Commits) != 4 {
-		t.Fatal("next page", len(next.Commits), e)
+	next, e := s.Get(ctx, token, a.Task.ID, first.Commits[0].Sequence)
+	if e != nil || len(next.Commits) != 4 || next.Earlier || next.Commits[0].Kind != "task.created" || next.Commits[3].Sequence >= first.Commits[0].Sequence {
+		t.Fatal("earlier page", len(next.Commits), next.Earlier, e)
 	}
 }
 

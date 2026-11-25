@@ -14,7 +14,7 @@ http:
     # The one browser origin allowed; plain http only for a loopback host.
     origin: http://127.0.0.1:8080
   deps:
-    modules: [health, workspace-api, workflow-api, plan-api, file-api, mcp-api, audit-api, ownership-api]
+    modules: [health, workspace-api, task-api, workflow-api, file-api, mcp-api, audit-api]
 health:
   use: api/health
 
@@ -103,7 +103,6 @@ workspace:
 workspace-api:
   use: api/workspace
   deps:
-    commands: workspace
     queries: workspace
     changes: workspace
     identity: identity
@@ -185,10 +184,15 @@ workflow-api:
     controls: flow-commands
     workflow: workflow-query
     questions: question-commands
-plan-api:
-  use: api/plan
+# The task's own routes: list, read, create, edit, timeline, participants,
+# project, owner and place in the breakdown; every write answers with the view.
+task-api:
+  use: api/task
   deps:
+    tasks: workspace
+    ownership: ownership-commands
     plan: plan-commands
+    views: workflow-query
 # Task handover: the owner or an administrator names another responsible person.
 ownership-commands:
   use: commands/ownership
@@ -201,10 +205,6 @@ ownership-commands:
     commits: sql
     flow: flow
     events: sql
-ownership-api:
-  use: api/ownership
-  deps:
-    ownership: ownership-commands
 files:
   use: commands/file
   config:
@@ -225,7 +225,6 @@ file-api:
 mcp-api:
   use: api/mcp
   deps:
-    tasks: workspace
     comments: workspace
     workflow: workflow-query
     executions: execution-commands

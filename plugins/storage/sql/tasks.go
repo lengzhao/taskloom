@@ -22,7 +22,7 @@ func (s *Store) CreateTask(ctx context.Context, t task.Task) error {
 			return err
 		}
 		t.Sequence = seq
-		b, err := json.Marshal(t)
+		b, err := encodeTask(t)
 		if err != nil {
 			return err
 		}
@@ -36,7 +36,7 @@ func (s *Store) GetTask(ctx context.Context, tenant, id string) (task.Task, erro
 		if err := db.First(&r, "row_key = ?", key(tenant, id)).Error; err != nil {
 			return err
 		}
-		return json.Unmarshal(r.Data, &t)
+		return decodeTask(r.Data, &t)
 	})
 	return t, err
 }
@@ -49,7 +49,7 @@ func (s *Store) ListTasks(ctx context.Context, tenant string) ([]task.Task, erro
 		}
 		for _, r := range rows {
 			var t task.Task
-			if err := json.Unmarshal(r.Data, &t); err != nil {
+			if err := decodeTask(r.Data, &t); err != nil {
 				return err
 			}
 			out = append(out, t)
@@ -83,11 +83,11 @@ func (s *Store) updateTask(ctx context.Context, tenant, taskID string, change fu
 		if e := db.First(&row, "row_key = ?", key(tenant, taskID)).Error; e != nil {
 			return e
 		}
-		if e := json.Unmarshal(row.Data, &out); e != nil {
+		if e := decodeTask(row.Data, &out); e != nil {
 			return e
 		}
 		change(&out)
-		b, e := json.Marshal(out)
+		b, e := encodeTask(out)
 		if e != nil {
 			return e
 		}
@@ -98,4 +98,26 @@ func (s *Store) updateTask(ctx context.Context, tenant, taskID string, change fu
 
 func (s *Store) SetOwner(ctx context.Context, tenant, taskID, owner string) (task.Task, error) {
 	return s.updateTask(ctx, tenant, taskID, func(t *task.Task) { t.Owner = owner })
+}
+
+// storedTask keeps the fields a caller never reads, the tenant and the
+// creation sequence, in the stored JSON; task.Task leaves them out of its own.
+type storedTask struct {
+	task.Task
+	Tenant   string
+	Sequence int64
+}
+
+func encodeTask(t task.Task) ([]byte, error) {
+	return json.Marshal(storedTask{Task: t, Tenant: t.Tenant, Sequence: t.Sequence})
+}
+
+func decodeTask(data []byte, t *task.Task) error {
+	var v storedTask
+	if err := json.Unmarshal(data, &v); err != nil {
+		return err
+	}
+	*t = v.Task
+	t.Tenant, t.Sequence = v.Tenant, v.Sequence
+	return nil
 }

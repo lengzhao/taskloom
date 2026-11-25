@@ -6,9 +6,13 @@ import (
 	"time"
 )
 
+// Tenant is not serialized: stores and callers already know it from the
+// task key and authentication. OwnerID is set only for an Agent's commit.
 type Commit struct {
-	Tenant, TaskID, ID, Author, OwnerID string
-	Kind, Body, RefID                   string
+	Tenant             string `json:"-"`
+	TaskID, ID, Author string
+	OwnerID            string `json:",omitempty"`
+	Kind, Body, RefID  string
 	// Files are file versions of the same task (see cap/file), kept as long as
 	// this commit; Links are external URLs, not snapshots of their pages.
 	Files        []string `json:",omitempty"`
@@ -32,11 +36,16 @@ type Link struct {
 type Lookup interface {
 	Get(ctx context.Context, tenant, taskID, commitID string) (Commit, error)
 }
-// Reader adds the newest commit to lookups: a task list shows when a task's
-// timeline last changed. Last returns fault.ErrNotFound for an empty timeline.
+
+// Reader is read-only timeline access: lookups, the newest commit (a task list
+// shows when a task's timeline last changed; Last returns fault.ErrNotFound
+// for an empty timeline) and pages read from the newest end.
 type Reader interface {
 	Lookup
 	Last(ctx context.Context, tenant, taskID string) (Commit, error)
+	// Before returns up to limit commits with a sequence below before (0 is
+	// the newest end), oldest first, so a page reads top to bottom.
+	Before(ctx context.Context, tenant, taskID string, before int64, limit int) ([]Commit, error)
 }
 type Log interface {
 	Lookup

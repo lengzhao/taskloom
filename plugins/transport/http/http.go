@@ -116,11 +116,11 @@ func guard(origin string, next stdhttp.Handler) stdhttp.Handler {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; frame-ancestors 'none'")
 		if o := r.Header.Get("Origin"); o != "" && o != origin {
-			stdhttp.Error(w, "origin rejected", 403)
+			httpx.Reject(w, 403, "origin_rejected", "请求来源不被允许")
 			return
 		}
 		if r.Method != "GET" && r.Header.Get("Authorization") == "" && r.Header.Get("X-Taskloom-Request") != "1" {
-			stdhttp.Error(w, "request header required", 403)
+			httpx.Reject(w, 403, "request_header_required", "浏览器写入须带 X-Taskloom-Request: 1 请求头")
 			return
 		}
 		next.ServeHTTP(w, r)

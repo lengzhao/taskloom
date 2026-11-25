@@ -59,7 +59,7 @@ func (m *ControlModule) Restart(ctx context.Context, token, key string, in api.R
 			return api.Ref{}, e
 		}
 		if pos.RoundID != in.RoundID {
-			return api.Ref{}, fault.ErrConflict
+			return api.Ref{}, fault.Conflict(api.ReasonRoundChanged)
 		}
 		if _, e = m.d.Flow.Restart(tx, t); e != nil {
 			return api.Ref{}, e

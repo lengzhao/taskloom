@@ -20,7 +20,7 @@ import (
 // passwordHash hashes a password given offline, with a random salt.
 func passwordHash(password string) (string, error) {
 	if !domain.ValidPassword(password) {
-		return "", fault.ErrInput
+		return "", fault.Input("weak_password", "Password")
 	}
 	var salt [16]byte
 	if _, err := rand.Read(salt[:]); err != nil {
@@ -32,8 +32,14 @@ func passwordHash(password string) (string, error) {
 // The command receipt fingerprint must not expose a cheap SHA256 password oracle.
 // Bind a costly KDF proof to the request; store a separately random-salted hash.
 func passwordMaterial(tenant, subject, key, password string) (hash, proof string, err error) {
-	if !domain.ValidPassword(password) || !valid(subject) || key == "" || len(key) > 128 {
-		return "", "", fault.ErrInput
+	if !domain.ValidPassword(password) {
+		return "", "", fault.Input("weak_password", "Password")
+	}
+	if !valid(subject) {
+		return "", "", fault.Input("invalid_subject", "Subject")
+	}
+	if key == "" || len(key) > 128 {
+		return "", "", fault.Input(fault.CodeIdempotencyKeyRequired, "Idempotency-Key")
 	}
 	var salt [16]byte
 	if _, err = rand.Read(salt[:]); err != nil {
@@ -79,7 +85,7 @@ func (s *Service) SetPassword(ctx context.Context, token, key string, in api.Pas
 			return nil, e
 		}
 		if target.Kind != "human" {
-			return nil, fault.ErrInput
+			return nil, fault.Input("not_a_person", "Subject")
 		}
 		return nil, s.savePassword(tx, p.Tenant, in.Subject, hash)
 	})
@@ -97,7 +103,7 @@ func (s *Service) ChangePassword(ctx context.Context, token, key string, in api.
 		return e
 	}
 	if len(in.CurrentPassword) > 128 {
-		return fault.ErrInput
+		return fault.Input("too_long", "CurrentPassword")
 	}
 	// Every person has a password, so the current one is always required.
 	if !domain.PasswordMatches(in.CurrentPassword, old) {

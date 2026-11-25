@@ -76,15 +76,16 @@ func TestAgentSplitAcceptanceAndAssignment(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	s, e = f.query.Read(f.ctx, lead, theirs)
+	s, e = f.snap(lead, theirs)
 	if e != nil || s.Position.Acceptance != flow.AcceptanceManual || s.Assignee != "lead" || s.Execution == nil || !s.Execution.Writable {
 		t.Fatal("manual subtask assigned to a person", s.Position.Acceptance, s.Assignee, s.Execution, e)
 	}
 
 	// Failures leave no task behind.
 	before := len(f.read(t, parent).Children)
-	if _, e = create("incomplete", workspace.Create{Goal: "g", Assignee: "agent"}); !errors.Is(e, fault.ErrConflict) {
-		t.Fatal("assigned a subtask without criteria", e)
+	// Criteria are optional; a goal is what work needs before it can be assigned.
+	if _, e = create("incomplete", workspace.Create{Criteria: "c", Assignee: "agent"}); !errors.Is(e, fault.ErrConflict) {
+		t.Fatal("assigned a subtask without a goal", e)
 	}
 	if _, e = create("bogus", workspace.Create{Goal: "g", Criteria: "c", Acceptance: "later"}); !errors.Is(e, fault.ErrInput) {
 		t.Fatal("unknown acceptance mode accepted", e)

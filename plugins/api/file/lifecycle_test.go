@@ -72,7 +72,7 @@ func TestRevokedAccessToHistoricalFiles(t *testing.T) {
 		}
 	}
 	f.json("POST", "/tasks/"+id+"/participants", f.owner, "p3", map[string]any{"Subject": "agent", "Present": true}, nil)
-	if code := f.json("DELETE", "/members", f.owner, "m", map[string]any{"Tenant": "t", "Subject": "agent", "Role": "member"}, nil); code != 200 {
+	if code := f.json("POST", "/admin/members", f.owner, "m", map[string]any{"Subject": "agent", "Role": "member", "Active": false}, nil); code != 200 {
 		t.Fatal("deactivate", code)
 	}
 	if code, _ := f.do("GET", "/tasks/"+id+"/files/"+up.ID, f.agent, "", "", nil); code != 403 && code != 401 {

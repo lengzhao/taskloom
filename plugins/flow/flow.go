@@ -89,7 +89,7 @@ func (c *Controller) Initialize(ctx context.Context, t task.Task, acceptance cap
 		acceptance = c.c.Acceptance
 	}
 	if !knownAcceptance(acceptance) {
-		return capflow.Position{}, fault.ErrInput
+		return capflow.Position{}, fault.Input(fault.CodeInvalid, "Acceptance")
 	}
 	p := capflow.Position{Status: capflow.PhaseActive, Tenant: t.Tenant, TaskID: t.ID, RoundID: id(), Acceptance: acceptance}
 	if e := c.d.Positions.CreatePosition(ctx, p); e != nil {
@@ -161,9 +161,6 @@ func (c *Controller) result(ctx context.Context, t task.Task, p capflow.Position
 	if strings.TrimSpace(t.Goal) == "" {
 		return capflow.StepReady, "请补充任务目标", nil
 	}
-	if strings.TrimSpace(t.Criteria) == "" {
-		return capflow.StepReady, "请补充验收标准", nil
-	}
 	v, e := c.d.Results.CurrentResult(ctx, t.Tenant, t.ID, p.RoundID)
 	if errors.Is(e, fault.ErrNotFound) {
 		return capflow.StepExecuting, "等待有效结果提交", nil
@@ -226,7 +223,7 @@ func (c *Controller) CheckSubmit(ctx context.Context, t task.Task) error {
 		return e
 	}
 	if pending {
-		return fault.ErrConflict
+		return fault.Conflict("required_children_pending")
 	}
 	return nil
 }
@@ -277,8 +274,11 @@ func (c *Controller) CheckOpen(ctx context.Context, t task.Task) (capflow.Positi
 	if e != nil {
 		return p, e
 	}
-	if p.Status != capflow.PhaseActive || p.State == capflow.StepReady {
-		return p, fault.ErrConflict
+	if p.Status != capflow.PhaseActive {
+		return p, fault.Conflict(fault.CodeTaskNotActive)
+	}
+	if p.State == capflow.StepReady {
+		return p, fault.Conflict("step_not_open")
 	}
 	return p, nil
 }
@@ -289,7 +289,7 @@ func (c *Controller) Cancel(ctx context.Context, t task.Task) (capflow.Position,
 		return p, e
 	}
 	if p.Status != capflow.PhaseActive {
-		return p, fault.ErrConflict
+		return p, fault.Conflict(fault.CodeTaskNotActive)
 	}
 	p.Status = capflow.PhaseCancelled
 	if _, e = c.save(ctx, p); e != nil {
@@ -308,7 +308,7 @@ func (c *Controller) Restart(ctx context.Context, t task.Task) (capflow.Position
 		return p, e
 	}
 	if p.Status != capflow.PhaseCancelled {
-		return p, fault.ErrConflict
+		return p, fault.Conflict("not_cancelled")
 	}
 	p.RoundID = id()
 	p.Status = capflow.PhaseActive

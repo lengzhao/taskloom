@@ -60,7 +60,7 @@ func (m *QuestionModule) activeRound(ctx context.Context, p identity.Principal, 
 		return t, pos, e
 	}
 	if pos.Status != flow.PhaseActive {
-		return t, pos, fault.ErrConflict
+		return t, pos, fault.Conflict(api.ReasonTaskNotActive)
 	}
 	return t, pos, nil
 }
@@ -80,14 +80,14 @@ func (m *QuestionModule) addressee(ctx context.Context, p identity.Principal, t 
 		to = t.Owner
 	}
 	if to == p.ID {
-		return "", fault.ErrInput
+		return "", fault.Input(fault.CodeInvalid, "Addressee")
 	}
 	if to == t.Owner {
 		return to, nil
 	}
 	member, e := m.d.Relations.GetMember(ctx, t.Tenant, to)
 	if e != nil || !member.Active || (member.Role != "admin" && member.Role != "member") {
-		return "", fault.ErrInput
+		return "", fault.Input("member_inactive", "Addressee")
 	}
 	who := az.Participant{Tenant: t.Tenant, TaskID: t.ID, Subject: to}
 	in, e := m.d.Relations.HasParticipant(ctx, who)
@@ -106,14 +106,14 @@ func (m *QuestionModule) addressee(ctx context.Context, p identity.Principal, t 
 func (m *QuestionModule) Ask(ctx context.Context, token, key string, in api.Ask) (api.Ref, error) {
 	return run(ctx, m.d.Commands, token, key, "commit.append", in.TaskID, in, func(tx context.Context, p identity.Principal) (api.Ref, error) {
 		if !validText(in.Body) {
-			return api.Ref{}, fault.ErrInput
+			return api.Ref{}, fault.Input(fault.CodeRequired, "Body")
 		}
 		t, pos, e := m.activeRound(tx, p, in.TaskID)
 		if e != nil {
 			return api.Ref{}, e
 		}
 		if pos.RoundID != in.RoundID {
-			return api.Ref{}, fault.ErrConflict
+			return api.Ref{}, fault.Conflict(api.ReasonRoundChanged)
 		}
 		to, e := m.addressee(tx, p, t, in.Addressee)
 		if e != nil {
@@ -138,7 +138,7 @@ func (m *QuestionModule) Ask(ctx context.Context, token, key string, in api.Ask)
 func (m *QuestionModule) Answer(ctx context.Context, token, key string, in api.Answer) (api.Ref, error) {
 	return run(ctx, m.d.Commands, token, key, "commit.append", in.TaskID, in, func(tx context.Context, p identity.Principal) (api.Ref, error) {
 		if !validText(in.Body) {
-			return api.Ref{}, fault.ErrInput
+			return api.Ref{}, fault.Input(fault.CodeRequired, "Body")
 		}
 		t, pos, e := m.activeRound(tx, p, in.TaskID)
 		if e != nil {
@@ -152,7 +152,7 @@ func (m *QuestionModule) Answer(ctx context.Context, token, key string, in api.A
 			return api.Ref{}, az.ErrForbidden
 		}
 		if q.AnswerCommitID != "" || q.RoundID != pos.RoundID {
-			return api.Ref{}, fault.ErrConflict
+			return api.Ref{}, fault.Conflict("question_closed")
 		}
 		c, e := m.appendCommit(tx, p, t, "answer", in.Body, q.CommitID)
 		if e != nil {
@@ -172,7 +172,7 @@ func (m *QuestionModule) Answer(ctx context.Context, token, key string, in api.A
 func (m *QuestionModule) Close(ctx context.Context, token, key string, in api.CloseQuestion) (api.Ref, error) {
 	return run(ctx, m.d.Commands, token, key, "commit.append", in.TaskID, in, func(tx context.Context, p identity.Principal) (api.Ref, error) {
 		if !validText(in.Reason) {
-			return api.Ref{}, fault.ErrInput
+			return api.Ref{}, fault.Input(fault.CodeRequired, "Reason")
 		}
 		t, pos, e := m.activeRound(tx, p, in.TaskID)
 		if e != nil {
@@ -190,7 +190,7 @@ func (m *QuestionModule) Close(ctx context.Context, token, key string, in api.Cl
 			return api.Ref{}, az.ErrForbidden
 		}
 		if q.AnswerCommitID != "" || q.RoundID != pos.RoundID {
-			return api.Ref{}, fault.ErrConflict
+			return api.Ref{}, fault.Conflict("question_closed")
 		}
 		c, e := m.appendCommit(tx, p, t, api.KindQuestionClosed, in.Reason, q.CommitID)
 		if e != nil {

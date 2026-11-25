@@ -30,7 +30,11 @@ func (s *Store) GetPosition(ctx context.Context, tenant, id string) (flow.Positi
 		if e := db.First(&r, "row_key = ?", key(tenant, id)).Error; e != nil {
 			return e
 		}
-		return json.Unmarshal(r.Data, &p)
+		if e := json.Unmarshal(r.Data, &p); e != nil {
+			return e
+		}
+		p.Tenant = tenant // the key's, never part of the stored JSON
+		return nil
 	})
 	return p, err
 }

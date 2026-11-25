@@ -54,12 +54,12 @@ func (m *Module) administration(w http.ResponseWriter, r *http.Request, token st
 		}
 		if in.Kind == "human" {
 			if in.OwnerID != "" {
-				return nil, fault.ErrInput
+				return nil, fault.Input(fault.CodeInvalid, "OwnerID") // people have no owner
 			}
 			e = m.d.Security.CreateUser(ctx, token, key, security.UserInput{Tenant: p.Tenant, Username: in.Subject, Password: in.Password})
 		} else {
 			if in.Password != "" {
-				return nil, fault.ErrInput
+				return nil, fault.Input(fault.CodeInvalid, "Password") // Agents sign in with credentials
 			}
 			e = m.d.Security.Create(ctx, token, key, identity.Principal{Tenant: p.Tenant, ID: in.Subject, Kind: in.Kind, OwnerID: in.OwnerID})
 		}

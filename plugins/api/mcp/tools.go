@@ -17,8 +17,8 @@ import (
 
 	az "github.com/lengzhao/taskloom/cap/authorization"
 	"github.com/lengzhao/taskloom/cap/commit"
-	capfile "github.com/lengzhao/taskloom/cap/file"
 	"github.com/lengzhao/taskloom/cap/fault"
+	capfile "github.com/lengzhao/taskloom/cap/file"
 	"github.com/lengzhao/taskloom/cap/flow"
 	"github.com/lengzhao/taskloom/cap/identity"
 	work "github.com/lengzhao/taskloom/cap/workflow"
@@ -89,41 +89,46 @@ type invalid string
 
 func (e invalid) Error() string { return string(e) }
 
-// explain turns an error into guidance the model can act on.
+// explain turns an error into guidance the model can act on: the stable code
+// first, so the model can branch on it, then what to do.
 func explain(err error) string {
 	var bad invalid
-	switch {
-	case errors.As(err, &bad):
+	if errors.As(err, &bad) {
 		return string(bad)
-	case errors.Is(err, identity.ErrUnauthenticated):
-		return "凭据无效或已过期：请联系管理员重新签发 Agent 业务凭据。"
-	case errors.Is(err, az.ErrForbidden):
-		return "无权执行：该操作不属于你，或任务未分配给你。用 read_task 查看 blocked 原因。"
-	case errors.Is(err, fault.ErrNotFound):
-		return "任务或记录不存在，或你无权查看。"
-	case errors.Is(err, fault.ErrConflict):
-		return "版本冲突或当前状态不允许：任务已变化。请先 read_task 获取最新 basis 和 blocked 原因再决定。"
-	case errors.Is(err, fault.ErrTooLarge):
-		return "文件超过大小上限。"
-	case errors.Is(err, fault.ErrInput):
-		return "输入无效：检查参数（正文、文件、链接不能全为空；file_id 须来自本任务；链接须为 http(s)；文件名不能为空；文件不能超过上限；子任务的 owner 须为空间内有效用户）。"
-	default:
-		return "服务暂时不可用，可稍后重试。"
 	}
-}
-
-var reasonText = map[string]string{
-	work.ReasonTaskNotActive:       "任务已结束或已取消",
-	work.ReasonCredential:          "需要 Agent 业务凭据",
-	work.ReasonNotAssigned:         "任务未分配给你",
-	work.ReasonExecutionInProgress: "本轮已有执行在进行",
-	work.ReasonStepNotOpen:         "当前步骤还不能执行",
-	work.ReasonNotYourExecution:    "当前执行不属于你的实例",
-	work.ReasonExecutionFenced:     "执行已失效（取消或被替换）",
-	work.ReasonRoundChanged:        "任务已进入新一轮，需要重新 read_task",
-	work.ReasonBasisChanged:        "任务约定已更新，需要重新认领",
-	work.ReasonNotReviewer:         "你不是验收人",
-	work.ReasonChildrenPending:     "必需子任务尚未全部完成",
+	var coded *fault.Error
+	code := ""
+	if errors.As(err, &coded) {
+		code = coded.Code
+	}
+	hint := ""
+	switch {
+	case errors.Is(err, identity.ErrUnauthenticated):
+		code, hint = "unauthenticated", "凭据无效或已过期：请联系管理员重新签发 Agent 业务凭据。"
+	case errors.Is(err, az.ErrForbidden):
+		hint = "无权执行：该操作不属于你，或任务未分配给你。用 read_task 查看 blocked 原因。"
+	case errors.Is(err, fault.ErrNotFound):
+		hint = "任务或记录不存在，或你无权查看。"
+	case errors.Is(err, fault.ErrConflict):
+		hint = "任务已变化，当前状态不允许：先 read_task 获取最新 basis 和 blocked 原因再决定。"
+	case errors.Is(err, fault.ErrTooLarge):
+		hint = "内容超过大小上限。"
+	case errors.Is(err, fault.ErrInput):
+		hint = "输入无效，检查参数后重试。"
+	default:
+		return "[internal] 服务暂时不可用，可稍后重试。"
+	}
+	if code == "" {
+		return hint
+	}
+	text := "[" + code + "] "
+	if m := fault.Message(code); m != "" {
+		text += m + "。"
+	}
+	if coded != nil && coded.Field != "" {
+		text += "字段：" + coded.Field + "。"
+	}
+	return text + hint
 }
 
 type tool struct {
@@ -132,44 +137,88 @@ type tool struct {
 	InputSchema map[string]any `json:"inputSchema"`
 }
 
-func schema(required []string, props map[string]string) map[string]any {
-	p := map[string]any{}
-	for name, desc := range props {
-		p[name] = map[string]any{"type": "string", "description": desc}
+// prop describes one tool argument; typ is a JSON Schema type.
+func prop(typ, desc string) map[string]any { return map[string]any{"type": typ, "description": desc} }
+
+var (
+	filesProp = map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "maxItems": attachment.MaxFiles,
+		"description": "可选：要附上的 file_id 列表（upload_file 返回或 read_task 的 files 中列出）"}
+	linksProp = map[string]any{"type": "array", "maxItems": attachment.MaxLinks, "description": "可选：要附上的链接；只保存链接，不保存页面内容",
+		"items": map[string]any{"type": "object", "required": []string{"url"}, "additionalProperties": false, "properties": map[string]any{
+			"url": prop("string", "http 或 https 地址"), "title": prop("string", "可选：链接标题")}}}
+)
+
+func schema(required []string, props map[string]any) map[string]any {
+	if props == nil {
+		props = map[string]any{}
 	}
 	if required == nil {
 		required = []string{}
 	}
-	return map[string]any{"type": "object", "properties": p, "required": required, "additionalProperties": false}
+	return map[string]any{"type": "object", "properties": props, "required": required, "additionalProperties": false}
 }
 
 const (
 	descTask  = "任务 ID"
 	descBasis = "read_task（或上一次写操作）返回的 basis，原样传入"
-	descFiles = "可选：要附上的 file_id，多个用逗号分隔（upload_file 返回或 read_task 的 files 中列出）"
-	descLinks = "可选：要附上的链接，每行一个：URL，后面可空格加标题；只保存链接，不保存页面内容"
 )
 
 func toolList() []tool {
+	str := func(desc string) map[string]any { return prop("string", desc) }
+	task, basis := str(descTask), str(descBasis)
 	return []tool{
-		{"inbox", "列出当前等你处理的任务（下一步在等你这个执行 Agent）。", schema(nil, nil)},
-		{"read_task", "读取任务：目标、验收标准、状态、下一步等谁、你能做哪些操作及不能做的原因、待回答问题、当前结果和最近时间线，并返回写操作所需的 basis。", schema([]string{"task_id"}, map[string]string{"task_id": descTask})},
-		{"list_members", "查找空间内的有效成员（用户与 Agent），用于 ask_owner 的 to。按 ID 片段搜索，按 subject 排序分页：返回 next 时，把它作为 after 取下一页。", schema(nil, map[string]string{"query": "可选：ID 中包含的文字", "kind": "可选：human 或 agent", "after": "可选：上一页返回的 next"})},
-		{"start_work", "认领并开始执行任务。", schema([]string{"task_id", "basis"}, map[string]string{"task_id": descTask, "basis": descBasis})},
-		{"post_message", "在任务时间线留言：汇报进度、回复人的引导，可附文件和链接。留言会更新你的最近进展时间，但不算交付结果。text、files、links 至少一项。", schema([]string{"task_id"}, map[string]string{"task_id": descTask, "text": "留言内容", "files": descFiles, "links": descLinks})},
-		{"ask_owner", "提问或请求协助（说明问题、为何卡住、可选方案和建议）。默认问任务负责人；需要别人协助时用 to 指定空间内任一有效成员（用 list_members 查找）；对方不在任务中时会自动加为参与者。问题未回答前任务不能完成；回答会出现在 read_task 的时间线中。", schema([]string{"task_id", "basis", "question"}, map[string]string{"task_id": descTask, "basis": descBasis, "question": "问题内容", "to": "可选：被提问人的 ID（list_members 返回的 subject）；留空为负责人"})},
-		{"answer_question", "回答别人向你提的问题（read_task 的 open_questions 中 for_you 为 true 的那条）。", schema([]string{"task_id", "question_id", "text"}, map[string]string{"task_id": descTask, "question_id": "问题 ID（open_questions 中的 id）", "text": "回答内容"})},
-		{"close_question", "撤回你提的、已不再需要回答的问题（open_questions 中 asked_by 为你的那条），须写明理由；撤回后它不再阻止任务完成。", schema([]string{"task_id", "question_id", "reason"}, map[string]string{"task_id": descTask, "question_id": "问题 ID（open_questions 中的 id）", "reason": "为什么不再需要回答"})},
-		{"submit_result", "明确提交本轮的正式结果（交付物），可带文件和链接。需要已认领执行；再次提交会替换当前结果。result、files、links 至少一项。", schema([]string{"task_id", "basis"}, map[string]string{"task_id": descTask, "basis": descBasis, "result": "结果正文", "files": descFiles, "links": descLinks})},
-		{"create_subtask", "把你正在执行的任务拆出一个子任务，交给别人并行处理。需要你持有该任务当前有效的执行（已 start_work）。required 为 true 时，本任务要等该子任务完成才能提交结果；你的执行仍然有效，可以继续做你自己的部分。子任务负责人默认是本任务负责人，也可以用 owner 指定空间内任一有效用户（list_members 且 kind 为 human）。子任务默认不需要负责人验收（提交有效结果即完成），需要时 acceptance 填 manual。可用 assignee 同时指定处理人（可以是你自己），能指定谁由部署配置决定；指定 Agent 后它仍须 start_work 认领，指定人则对方立即开始；不指定则由子任务负责人安排。指定处理人时 goal 和 criteria 必填。你会成为子任务的参与者，可用 read_task 查看进度。", schema([]string{"task_id", "title"}, map[string]string{"task_id": "你正在执行的任务 ID（子任务的父任务）", "title": "子任务标题", "goal": "子任务目标", "criteria": "子任务验收标准", "required": "可选：true 表示本任务必须等它完成才能提交；默认 false", "owner": "可选：子任务负责人的 ID（用户，不能是 Agent）；留空为本任务负责人", "acceptance": "可选：manual 表示子任务结果须负责人验收；默认 none", "assignee": "可选：子任务处理人的 ID（用户或 Agent，可以是你自己）"})},
-		{"upload_file", "把一个文件上传到任务，返回 file_id，供 submit_result 或 post_message 的 files 引用；只上传不会出现在时间线中。text 与 content_base64 二选一。经本工具上传的内容上限约 700KB，更大的文件用 HTTP POST /v1/tasks/{id}/files 上传（同一凭据）。", schema([]string{"task_id", "name"}, map[string]string{"task_id": descTask, "name": "文件名，如 report.md", "text": "文本文件的内容（UTF-8）", "content_base64": "二进制文件内容的 base64", "media_type": "可选：如 text/markdown、image/png；留空按文件名推断"})},
-		{"read_file", "读取任务中的一个文件（read_task 的 files 中列出）。UTF-8 文本直接返回内容，其他文件返回 base64；超过 512KB 时只返回元数据和 HTTP 下载路径。", schema([]string{"task_id", "file_id"}, map[string]string{"task_id": descTask, "file_id": "文件 ID"})},
+		{"inbox", "列出当前等你处理的任务（下一步在等你）。", schema(nil, nil)},
+		{"read_task", "读取任务：目标、验收标准、状态、下一步等谁、你能做哪些操作及不能做的原因、待回答问题、当前结果和最近时间线，并返回写操作所需的 basis。", schema([]string{"task_id"}, map[string]any{"task_id": task})},
+		{"list_people", "查找空间内的有效成员（用户与 Agent），用于 ask 的 to 或 create_subtask 的 owner/assignee。按 ID 片段搜索，按 subject 排序分页：返回 next 时，把它作为 after 取下一页。", schema(nil, map[string]any{"query": str("可选：ID 中包含的文字"), "kind": map[string]any{"type": "string", "enum": []string{"human", "agent"}, "description": "可选：只列用户或只列 Agent"}, "after": str("可选：上一页返回的 next")})},
+		{"start_work", "认领并开始执行任务。", schema([]string{"task_id", "basis"}, map[string]any{"task_id": task, "basis": basis})},
+		{"post_message", "在任务时间线留言：汇报进度、回复人的引导，可附文件和链接。留言会更新你的最近进展时间，但不算交付结果。text、files、links 至少一项。", schema([]string{"task_id"}, map[string]any{"task_id": task, "text": str("留言内容"), "files": filesProp, "links": linksProp})},
+		{"ask", "提问或请求协助（说明问题、为何卡住、可选方案和建议）。默认问任务负责人；需要别人协助时用 to 指定空间内任一有效成员（用 list_people 查找）；对方不在任务中时会自动加为参与者。问题未回答前任务不能完成；回答会出现在 read_task 的时间线中。", schema([]string{"task_id", "basis", "question"}, map[string]any{"task_id": task, "basis": basis, "question": str("问题内容"), "to": str("可选：被提问人的 ID（list_people 返回的 subject）；留空为负责人")})},
+		{"answer_question", "回答别人向你提的问题（read_task 的 open_questions 中 for_you 为 true 的那条）。", schema([]string{"task_id", "question_id", "text"}, map[string]any{"task_id": task, "question_id": str("问题 ID（open_questions 中的 id）"), "text": str("回答内容")})},
+		{"close_question", "撤回你提的、已不再需要回答的问题（open_questions 中 asked_by 为你的那条），须写明理由；撤回后它不再阻止任务完成。", schema([]string{"task_id", "question_id", "reason"}, map[string]any{"task_id": task, "question_id": str("问题 ID（open_questions 中的 id）"), "reason": str("为什么不再需要回答")})},
+		{"submit_result", "明确提交本轮的正式结果（交付物），可带文件和链接。需要已认领执行；再次提交会替换当前结果。result、files、links 至少一项。", schema([]string{"task_id", "basis"}, map[string]any{"task_id": task, "basis": basis, "result": str("结果正文"), "files": filesProp, "links": linksProp})},
+		{"create_subtask", "把你正在执行的任务拆出一个子任务，交给别人并行处理。需要你持有该任务当前有效的执行（已 start_work）。required 为 true 时，本任务要等该子任务完成才能提交结果；你的执行仍然有效，可以继续做你自己的部分。子任务负责人默认是本任务负责人，也可以用 owner 指定空间内任一有效用户（list_people 且 kind 为 human）。子任务默认不需要负责人验收（提交有效结果即完成），需要时 acceptance 填 manual。可用 assignee 同时指定处理人（可以是你自己），能指定谁由部署配置决定；指定 Agent 后它仍须 start_work 认领，指定人则对方立即开始；不指定则由子任务负责人安排。指定处理人时 goal 必填。你会成为子任务的参与者，可用 read_task 查看进度。", schema([]string{"task_id", "title"}, map[string]any{"task_id": str("你正在执行的任务 ID（子任务的父任务）"), "title": str("子任务标题"), "goal": str("子任务目标"), "criteria": str("可选：子任务验收标准"), "required": prop("boolean", "可选：true 表示本任务必须等它完成才能提交；默认 false"), "owner": str("可选：子任务负责人的 ID（用户，不能是 Agent）；留空为本任务负责人"), "acceptance": map[string]any{"type": "string", "enum": []string{"manual", "none"}, "description": "可选：manual 表示子任务结果须负责人验收；默认 none"}, "assignee": str("可选：子任务处理人的 ID（用户或 Agent，可以是你自己）")})},
+		{"upload_file", "把一个文件上传到任务，返回 file_id，供 submit_result 或 post_message 的 files 引用；只上传不会出现在时间线中。text 与 content_base64 二选一。经本工具上传的内容上限约 700KB，更大的文件用 HTTP POST /v1/tasks/{id}/files 上传（同一凭据）。", schema([]string{"task_id", "name"}, map[string]any{"task_id": task, "name": str("文件名，如 report.md"), "text": str("文本文件的内容（UTF-8）"), "content_base64": str("二进制文件内容的 base64"), "media_type": str("可选：如 text/markdown、image/png；留空按文件名推断")})},
+		{"read_file", "读取任务中的一个文件（read_task 的 files 中列出）。UTF-8 文本直接返回内容，其他文件返回 base64；超过 512KB 时只返回元数据和 HTTP 下载路径。", schema([]string{"task_id", "file_id"}, map[string]any{"task_id": task, "file_id": str("文件 ID")})},
 	}
 }
 
-func required(args map[string]string, names ...string) error {
+// arguments are a tool call's JSON arguments. String fields read as text;
+// required, files and links keep their JSON types.
+type arguments map[string]any
+
+func (a arguments) str(name string) string {
+	s, _ := a[name].(string)
+	return s
+}
+
+// check rejects a value whose JSON type the schema does not allow, so a
+// model learns the shape instead of having its value silently dropped.
+func (a arguments) check() error {
+	for name, v := range a {
+		if v == nil {
+			continue
+		}
+		switch name {
+		case "required":
+			if _, ok := v.(bool); !ok {
+				return invalid("参数 required 须为布尔值 true 或 false")
+			}
+		case "files", "links":
+			if _, ok := v.([]any); !ok {
+				return invalid("参数 " + name + " 须为数组")
+			}
+		default:
+			if _, ok := v.(string); !ok {
+				return invalid("参数 " + name + " 须为字符串")
+			}
+		}
+	}
+	return nil
+}
+
+func required(args arguments, names ...string) error {
 	for _, n := range names {
-		if strings.TrimSpace(args[n]) == "" {
+		if strings.TrimSpace(args.str(n)) == "" {
 			return invalid("缺少参数 " + n)
 		}
 	}
@@ -182,31 +231,34 @@ func pretty(v any) string {
 }
 
 func (m *Module) call(ctx context.Context, c call, name string, rawArgs json.RawMessage) (string, error) {
-	args := map[string]string{}
+	args := arguments{}
 	if len(rawArgs) > 0 && string(rawArgs) != "null" {
 		if err := json.Unmarshal(rawArgs, &args); err != nil {
-			return "", invalid("参数必须是字符串字段的对象")
+			return "", invalid("参数必须是 JSON 对象")
 		}
+	}
+	if err := args.check(); err != nil {
+		return "", err
 	}
 	switch name {
 	case "inbox":
-		all, err := m.d.Workflow.Inbox(ctx, c.token, nil)
+		all, err := m.d.Workflow.List(ctx, c.token, work.ListFilter{Mine: true})
 		if err != nil {
 			return "", err
 		}
 		// An Agent's inbox is work it can do now; blocked tasks are read when it wants them.
-		items := []work.Pending{}
+		items := []map[string]any{}
 		for _, x := range all {
-			if !x.WaitingOnSubtasks {
-				items = append(items, x)
+			if x.ForMe {
+				items = append(items, map[string]any{"task_id": x.Task.ID, "title": x.Task.Title, "next_actor": x.NextActor})
 			}
 		}
 		if len(items) == 0 {
 			return "当前没有等你处理的任务。", nil
 		}
 		return pretty(items), nil
-	case "list_members":
-		page, err := m.d.People.People(ctx, c.token, az.MemberQuery{Search: args["query"], Kind: args["kind"], After: args["after"]})
+	case "list_people":
+		page, err := m.d.People.People(ctx, c.token, az.MemberQuery{Search: args.str("query"), Kind: args.str("kind"), After: args.str("after")})
 		if err != nil {
 			return "", err
 		}
@@ -214,7 +266,7 @@ func (m *Module) call(ctx context.Context, c call, name string, rawArgs json.Raw
 		for _, x := range page.Items {
 			members = append(members, map[string]string{"subject": x.Subject, "kind": x.Kind})
 		}
-		out := map[string]any{"members": members}
+		out := map[string]any{"people": members}
 		if page.Next != "" {
 			out["next"] = page.Next
 		}
@@ -223,7 +275,7 @@ func (m *Module) call(ctx context.Context, c call, name string, rawArgs json.Raw
 		if err := required(args, "task_id"); err != nil {
 			return "", err
 		}
-		return m.readTask(ctx, c, args["task_id"])
+		return m.readTask(ctx, c, args.str("task_id"))
 	case "post_message":
 		if err := required(args, "task_id"); err != nil {
 			return "", err
@@ -232,7 +284,7 @@ func (m *Module) call(ctx context.Context, c call, name string, rawArgs json.Raw
 		if err != nil {
 			return "", err
 		}
-		ref, err := m.d.Comments.Comment(ctx, c.token, c.key(name, args), workspace.Comment{TaskID: args["task_id"], Body: args["text"], Files: fileIDs, Links: links})
+		ref, err := m.d.Comments.Comment(ctx, c.token, c.key(name, args), workspace.Comment{TaskID: args.str("task_id"), Body: args.str("text"), Files: fileIDs, Links: links})
 		if err != nil {
 			return "", err
 		}
@@ -241,7 +293,7 @@ func (m *Module) call(ctx context.Context, c call, name string, rawArgs json.Raw
 		if err := required(args, "task_id", "question_id", "text"); err != nil {
 			return "", err
 		}
-		if _, err := m.d.Questions.Answer(ctx, c.token, c.key(name, args), work.Answer{TaskID: args["task_id"], QuestionID: args["question_id"], Body: args["text"]}); err != nil {
+		if _, err := m.d.Questions.Answer(ctx, c.token, c.key(name, args), work.Answer{TaskID: args.str("task_id"), QuestionID: args.str("question_id"), Body: args.str("text")}); err != nil {
 			return "", err
 		}
 		return "已回答。", nil
@@ -249,7 +301,7 @@ func (m *Module) call(ctx context.Context, c call, name string, rawArgs json.Raw
 		if err := required(args, "task_id", "question_id", "reason"); err != nil {
 			return "", err
 		}
-		if _, err := m.d.Questions.Close(ctx, c.token, c.key(name, args), work.CloseQuestion{TaskID: args["task_id"], QuestionID: args["question_id"], Reason: args["reason"]}); err != nil {
+		if _, err := m.d.Questions.Close(ctx, c.token, c.key(name, args), work.CloseQuestion{TaskID: args.str("task_id"), QuestionID: args.str("question_id"), Reason: args.str("reason")}); err != nil {
 			return "", err
 		}
 		return "已撤回问题。", nil
@@ -257,20 +309,13 @@ func (m *Module) call(ctx context.Context, c call, name string, rawArgs json.Raw
 		if err := required(args, "task_id", "title"); err != nil {
 			return "", err
 		}
-		req := false
-		switch strings.TrimSpace(args["required"]) {
-		case "", "false":
-		case "true":
-			req = true
-		default:
-			return "", invalid("required 只能是 true 或 false")
-		}
-		mode := flow.Acceptance(strings.TrimSpace(args["acceptance"]))
+		req, _ := args["required"].(bool)
+		mode := flow.Acceptance(strings.TrimSpace(args.str("acceptance")))
 		if mode != "" && mode != flow.AcceptanceManual && mode != flow.AcceptanceNone {
 			return "", invalid("acceptance 只能是 manual 或 none")
 		}
-		assignee := strings.TrimSpace(args["assignee"])
-		ref, err := m.d.Comments.Create(ctx, c.token, c.key(name, args), workspace.Create{Title: args["title"], Goal: args["goal"], Criteria: args["criteria"], ParentID: args["task_id"], Owner: args["owner"], Required: req, Acceptance: mode, Assignee: assignee})
+		assignee := strings.TrimSpace(args.str("assignee"))
+		ref, err := m.d.Comments.Create(ctx, c.token, c.key(name, args), workspace.Create{Title: args.str("title"), Goal: args.str("goal"), Criteria: args.str("criteria"), ParentID: args.str("task_id"), Owner: args.str("owner"), Required: req, Acceptance: mode, Assignee: assignee})
 		if err != nil {
 			return "", err
 		}
@@ -290,15 +335,15 @@ func (m *Module) call(ctx context.Context, c call, name string, rawArgs json.Raw
 		if err := required(args, "task_id", "file_id"); err != nil {
 			return "", err
 		}
-		return m.readFile(ctx, c, args["task_id"], args["file_id"])
-	case "start_work", "ask_owner", "submit_result":
+		return m.readFile(ctx, c, args.str("task_id"), args.str("file_id"))
+	case "start_work", "ask", "submit_result":
 	default:
 		return "", invalid("未知工具 " + name)
 	}
 	if err := required(args, "task_id", "basis"); err != nil {
 		return "", err
 	}
-	b, err := parseBasis(args["task_id"], args["basis"])
+	b, err := parseBasis(args.str("task_id"), args.str("basis"))
 	if err != nil {
 		return "", err
 	}
@@ -311,15 +356,15 @@ func (m *Module) call(ctx context.Context, c call, name string, rawArgs json.Raw
 		}
 		n := b.next(s)
 		return pretty(map[string]any{"message": "已认领执行。长时间工作请定期 post_message 汇报进度。", "basis": n.token()}), nil
-	case "ask_owner":
+	case "ask":
 		if err = required(args, "question"); err != nil {
 			return "", err
 		}
-		s, err := m.d.Questions.Ask(ctx, c.token, key, work.Ask{TaskID: b.TaskID, RoundID: b.RoundID, Body: args["question"], Addressee: args["to"]})
+		s, err := m.d.Questions.Ask(ctx, c.token, key, work.Ask{TaskID: b.TaskID, RoundID: b.RoundID, Body: args.str("question"), Addressee: args.str("to")})
 		if err != nil {
 			return "", err
 		}
-		to := args["to"]
+		to := args.str("to")
 		if to == "" {
 			to = "负责人"
 		}
@@ -329,17 +374,17 @@ func (m *Module) call(ctx context.Context, c call, name string, rawArgs json.Raw
 		if err != nil {
 			return "", err
 		}
-		if strings.TrimSpace(args["result"]) == "" && len(fileIDs) == 0 && len(links) == 0 {
+		if strings.TrimSpace(args.str("result")) == "" && len(fileIDs) == 0 && len(links) == 0 {
 			return "", invalid("缺少参数 result（或 files、links）")
 		}
 		if b.ExecutionID == "" {
 			return "", invalid("还没有执行：先 start_work 认领，再用它返回的 basis 提交")
 		}
-		r, err := m.d.Results.Submit(ctx, c.token, key, work.Submit{TaskID: b.TaskID, ExecutionID: b.ExecutionID, Body: args["result"], Files: fileIDs, Links: links})
+		r, err := m.d.Results.Submit(ctx, c.token, key, work.Submit{TaskID: b.TaskID, ExecutionID: b.ExecutionID, Body: args.str("result"), Files: fileIDs, Links: links})
 		if err != nil {
 			return "", err
 		}
-		s, err := m.d.Workflow.Read(ctx, c.token, b.TaskID)
+		s, err := m.d.Workflow.Read(ctx, c.token, b.TaskID, 0)
 		if err != nil {
 			return "", err
 		}
@@ -350,8 +395,8 @@ func (m *Module) call(ctx context.Context, c call, name string, rawArgs json.Raw
 const timelineLimit = 20
 
 // others lists the task's participants besides the caller: who is already
-// involved. Anyone in list_members may still be asked.
-func others(w work.Snapshot) []string {
+// involved. Anyone in list_people may still be asked.
+func others(w work.View) []string {
 	out := []string{}
 	for _, s := range w.Participants {
 		if s != w.Viewer {
@@ -362,23 +407,13 @@ func others(w work.Snapshot) []string {
 }
 
 func (m *Module) readTask(ctx context.Context, c call, taskID string) (string, error) {
-	d, err := m.d.Tasks.Get(ctx, c.token, taskID, 0)
+	w, err := m.d.Workflow.Read(ctx, c.token, taskID, 0)
 	if err != nil {
 		return "", err
 	}
-	commits := d.Commits
-	for page := d.Commits; len(page) == 100; {
-		next, err := m.d.Tasks.Get(ctx, c.token, taskID, page[len(page)-1].Sequence)
-		if err != nil {
-			return "", err
-		}
-		page = next.Commits
-		commits = append(commits, page...)
-	}
-	w, err := m.d.Workflow.Read(ctx, c.token, taskID)
-	if err != nil {
-		return "", err
-	}
+	d := w
+	// The view carries the newest page, more than the recent entries shown.
+	commits := w.Commits
 	listed, err := m.d.Files.List(ctx, c.token, taskID)
 	if err != nil {
 		return "", err
@@ -396,12 +431,12 @@ func (m *Module) readTask(ctx context.Context, c call, taskID string) (string, e
 		b.ExecutionID = w.Execution.ID
 	}
 	blocked := map[string]string{}
-	for action, code := range w.Blocked {
-		blocked[action] = code + "：" + reasonText[code]
+	for action, r := range w.Blocked {
+		blocked[action] = r.Code + "：" + r.Message
 	}
 	questions := []map[string]any{}
 	for _, q := range w.Questions {
-		questions = append(questions, map[string]any{"id": q.ID, "question": byID[q.CommitID].Body, "asked_by": byID[q.CommitID].Author, "asked_of": q.Addressee, "for_you": q.Addressee == w.Viewer, "asked_at": byID[q.CommitID].CreatedAt.Format(time.RFC3339)})
+		questions = append(questions, map[string]any{"id": q.ID, "question": q.Body, "asked_by": q.Asker, "asked_of": q.Addressee, "for_you": q.Addressee == w.Viewer, "asked_at": q.AskedAt.Format(time.RFC3339)})
 	}
 	if len(commits) > timelineLimit {
 		commits = commits[len(commits)-timelineLimit:]
@@ -409,8 +444,8 @@ func (m *Module) readTask(ctx context.Context, c call, taskID string) (string, e
 	timeline := []map[string]any{}
 	for _, cm := range commits {
 		entry := map[string]any{"kind": cm.Kind, "author": cm.Author, "at": cm.CreatedAt.Format(time.RFC3339), "text": cm.Body}
-		if cm.Kind == "answer" || cm.Kind == work.KindQuestionClosed {
-			entry["answers"] = byID[cm.RefID].Body
+		if q, ok := byID[cm.RefID]; ok && (cm.Kind == "answer" || cm.Kind == work.KindQuestionClosed) {
+			entry["answers"] = q.Body
 		}
 		addAttachments(entry, cm, fileByID)
 		timeline = append(timeline, entry)
@@ -469,26 +504,31 @@ func (m *Module) readTask(ctx context.Context, c call, taskID string) (string, e
 	return pretty(out), nil
 }
 
-// attachments parses the comma-separated files and line-separated links
-// arguments; the commands validate them again.
-func attachments(args map[string]string) ([]string, []commit.Link, error) {
+// attachments reads the files and links arguments; the commands validate
+// them again.
+func attachments(args arguments) ([]string, []commit.Link, error) {
 	var ids []string
-	for _, id := range strings.Split(args["files"], ",") {
-		if id = strings.TrimSpace(id); id != "" {
-			ids = append(ids, id)
+	files, _ := args["files"].([]any)
+	for _, v := range files {
+		id, ok := v.(string)
+		if !ok {
+			return nil, nil, invalid("files 须为 file_id 字符串数组")
 		}
+		ids = append(ids, strings.TrimSpace(id))
 	}
 	var links []commit.Link
-	for _, line := range strings.Split(args["links"], "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
+	raw, _ := args["links"].([]any)
+	for _, v := range raw {
+		o, ok := v.(map[string]any)
+		url, _ := o["url"].(string)
+		title, _ := o["title"].(string)
+		if !ok || url == "" {
+			return nil, nil, invalid("links 须为 {url, title} 对象数组")
 		}
-		url, title, _ := strings.Cut(line, " ")
-		links = append(links, commit.Link{URL: url, Title: strings.TrimSpace(title)})
+		links = append(links, commit.Link{URL: strings.TrimSpace(url), Title: strings.TrimSpace(title)})
 	}
-	if attachment.Valid(ids, links) != nil {
-		return nil, nil, invalid("files 或 links 无效：file_id 用逗号分隔（最多 20 个），链接每行一个且须以 http:// 或 https:// 开头（最多 20 个）")
+	if err := attachment.Valid(ids, links); err != nil {
+		return nil, nil, err
 	}
 	return ids, links, nil
 }
@@ -510,16 +550,16 @@ func addAttachments(entry map[string]any, c commit.Commit, byID map[string]capfi
 // mcpReadMax bounds file content returned inline; larger files are downloaded over HTTP.
 const mcpReadMax = 512 << 10
 
-func (m *Module) uploadFile(ctx context.Context, c call, args map[string]string) (string, error) {
+func (m *Module) uploadFile(ctx context.Context, c call, args arguments) (string, error) {
 	if err := required(args, "task_id", "name"); err != nil {
 		return "", err
 	}
-	text, encoded := args["text"], args["content_base64"]
+	text, encoded := args.str("text"), args.str("content_base64")
 	if (text == "") == (encoded == "") {
 		return "", invalid("text 与 content_base64 须且只能给一个")
 	}
 	content := []byte(text)
-	mediaType := args["media_type"]
+	mediaType := args.str("media_type")
 	if encoded != "" {
 		raw, err := base64.StdEncoding.DecodeString(strings.TrimSpace(encoded))
 		if err != nil {
@@ -528,12 +568,12 @@ func (m *Module) uploadFile(ctx context.Context, c call, args map[string]string)
 		content = raw
 	}
 	if mediaType == "" {
-		mediaType = mime.TypeByExtension(path.Ext(args["name"]))
+		mediaType = mime.TypeByExtension(path.Ext(args.str("name")))
 		if mediaType == "" && encoded == "" {
 			mediaType = "text/plain; charset=utf-8"
 		}
 	}
-	f, err := m.d.Files.Upload(ctx, c.token, c.key("upload_file", args), capfile.Upload{TaskID: args["task_id"], Name: args["name"], MediaType: mediaType}, bytes.NewReader(content))
+	f, err := m.d.Files.Upload(ctx, c.token, c.key("upload_file", args), capfile.Upload{TaskID: args.str("task_id"), Name: args.str("name"), MediaType: mediaType}, bytes.NewReader(content))
 	if err != nil {
 		return "", err
 	}

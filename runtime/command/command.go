@@ -41,8 +41,8 @@ func New(d Deps) (*Runner, error) {
 // The callback must validate resource tenancy/current business versions. It must
 // not perform remote IO or return secrets intended to be shown only once.
 func Run[T any](ctx context.Context, r capcommand.Handler, req capcommand.Request, input T, apply func(context.Context, identity.Principal) ([]byte, error)) ([]byte, error) {
-	if req.Key == "" || len(req.Key) > 128 || req.Operation == "" || len(req.Operation) > 128 {
-		return nil, fault.ErrConflict
+	if e := checkRequest(req); e != nil {
+		return nil, e
 	}
 	canonical, err := json.Marshal(struct {
 		Operation string
@@ -58,8 +58,8 @@ func Run[T any](ctx context.Context, r capcommand.Handler, req capcommand.Reques
 }
 
 func (r *Runner) Do(ctx context.Context, req capcommand.Request, digest string, apply func(context.Context, identity.Principal) ([]byte, error)) ([]byte, error) {
-	if req.Key == "" || len(req.Key) > 128 || req.Operation == "" || len(req.Operation) > 128 {
-		return nil, fault.ErrConflict
+	if e := checkRequest(req); e != nil {
+		return nil, e
 	}
 	var result []byte
 	var actor identity.Principal
@@ -81,7 +81,7 @@ func (r *Runner) Do(ctx context.Context, req capcommand.Request, digest string, 
 		old, err := r.d.Requests.FindReceipt(tx, key)
 		if err == nil {
 			if old.Digest != digest {
-				return fault.ErrConflict
+				return fault.Conflict(fault.CodeIdempotencyKeyReused)
 			}
 			result = append([]byte(nil), old.Result...)
 			return nil
@@ -114,6 +114,18 @@ func (r *Runner) Do(ctx context.Context, req capcommand.Request, digest string, 
 		return nil, err
 	}
 	return result, nil
+}
+
+// checkRequest rejects a write without a usable idempotency key: the caller
+// must fix the request, so it is input, not a state conflict.
+func checkRequest(req capcommand.Request) error {
+	if req.Key == "" || len(req.Key) > 128 {
+		return fault.Input(fault.CodeIdempotencyKeyRequired, "Idempotency-Key")
+	}
+	if req.Operation == "" || len(req.Operation) > 128 {
+		return errors.New("command operation required")
+	}
+	return nil
 }
 
 func actorAudit(p identity.Principal, op, resource, outcome string) record.Audit {

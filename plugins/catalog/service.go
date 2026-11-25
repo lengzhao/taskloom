@@ -99,14 +99,14 @@ func (s *Service) EditSpace(ctx context.Context, token, key string, in api.Space
 	}
 	_, e = command.Run(ctx, s.d.Commands, cmd.Request{Token: token, Key: key, Operation: "space.edit", Resource: p.Tenant}, in, func(tx context.Context, p identity.Principal) ([]byte, error) {
 		if !valid(in.Name, in.Description) {
-			return nil, fault.ErrInput
+			return nil, fault.Input("invalid_name_or_detail", "Name")
 		}
 		old, e := s.d.Store.GetSpace(tx, p.Tenant)
 		if e != nil {
 			return nil, e
 		}
 		if old.Version != in.ExpectedVersion {
-			return nil, fault.ErrConflict
+			return nil, fault.Conflict(fault.CodeVersionChanged)
 		}
 		space := api.Space{Tenant: p.Tenant, Name: strings.TrimSpace(in.Name), Description: in.Description, Version: old.Version + 1}
 		if e = s.d.Store.SaveSpace(tx, space); e != nil {
@@ -147,7 +147,7 @@ func (s *Service) SaveProject(ctx context.Context, token, key string, in api.Pro
 	}}
 	b, e := command.Run(ctx, s.d.Commands, req, in, func(tx context.Context, p identity.Principal) ([]byte, error) {
 		if !valid(in.Name, in.Description) {
-			return nil, fault.ErrInput
+			return nil, fault.Input("invalid_name_or_detail", "Name")
 		}
 		old := api.Project{}
 		if in.ID != "" {
@@ -158,7 +158,7 @@ func (s *Service) SaveProject(ctx context.Context, token, key string, in api.Pro
 			}
 		}
 		if old.Version != in.ExpectedVersion {
-			return nil, fault.ErrConflict
+			return nil, fault.Conflict(fault.CodeVersionChanged)
 		}
 		owner := in.Owner
 		if owner == "" {
@@ -173,11 +173,11 @@ func (s *Service) SaveProject(ctx context.Context, token, key string, in api.Pro
 			kinds[m.Subject] = m.Kind
 		}
 		if kinds[owner] != "human" {
-			return nil, fault.ErrInput
+			return nil, fault.Input("owner_not_person", "Owner")
 		}
 		// Members may be people or Agents; the owner is already included.
 		if len(in.Members) > api.MaxMembers {
-			return nil, fault.ErrInput
+			return nil, fault.Input("too_many_members", "Members")
 		}
 		// A member who has since left the tenant drops out on the next save,
 		// so a client resending the list it read is not refused; naming
@@ -193,7 +193,7 @@ func (s *Service) SaveProject(ctx context.Context, token, key string, in api.Pro
 				if listed[m] {
 					continue
 				}
-				return nil, fault.ErrInput
+				return nil, fault.Input("member_inactive", "Members")
 			}
 			if !seen[m] {
 				seen[m] = true

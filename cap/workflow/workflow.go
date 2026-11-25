@@ -2,13 +2,14 @@ package workflow
 
 import (
 	"context"
-	"time"
 	"github.com/lengzhao/taskloom/cap/acceptance"
 	"github.com/lengzhao/taskloom/cap/commit"
 	"github.com/lengzhao/taskloom/cap/delivery"
 	"github.com/lengzhao/taskloom/cap/execution"
 	"github.com/lengzhao/taskloom/cap/flow"
 	"github.com/lengzhao/taskloom/cap/question"
+	"github.com/lengzhao/taskloom/cap/task"
+	"time"
 )
 
 // Command inputs carry only what each command must pin. Executions,
@@ -21,6 +22,7 @@ type Open struct {
 	TaskID       string
 	BasisVersion int64
 }
+
 // Submit delivers text, files of the same task and links; any one suffices.
 type Submit struct {
 	TaskID, ExecutionID, Body string
@@ -74,6 +76,16 @@ const (
 
 // PlanTask is a readable neighbour in the work breakdown. For a parent,
 // Required says whether this task is required by it.
+// OpenQuestion is an unanswered question with what its commit says.
+type OpenQuestion struct {
+	question.Question
+	Asker, Body string
+	AskedAt     time.Time
+}
+
+// Reason explains why an action is not available to the viewer now.
+type Reason struct{ Code, Message string }
+
 type PlanTask struct {
 	TaskID, Title string
 	Required      bool
@@ -87,15 +99,18 @@ type Snapshot struct {
 	ResultCommit *commit.Commit
 	Assignee     string
 	NextActor    Actor
-	// Blocked holds, for actions relevant to this viewer, why each is not allowed now.
-	Blocked                                             map[string]string `json:",omitempty"`
+	// Blocked holds, for actions relevant to this viewer, why each is not
+	// allowed now: a stable code and its text from fault.Message.
+	Blocked                                             map[string]Reason `json:",omitempty"`
 	CanOpen, CanSubmit, CanReview, CanManage, CanAssign bool
 	Position                                            flow.Position
 	Execution                                           *execution.Execution
 	Result                                              *delivery.Result
 	Review                                              *acceptance.Review
-	// Questions are the open requests for input of the current active round.
-	Questions []question.Question `json:",omitempty"`
+	// Questions are the open requests for input of the current active round,
+	// with the asking commit's author, text and time so a reader need not
+	// find that commit in the timeline.
+	Questions []OpenQuestion `json:",omitempty"`
 	// Parent and Children are the direct relations the viewer may read; a
 	// relation grants no access. HiddenRequired says only that a required
 	// subtask exists that the viewer cannot read.
@@ -154,29 +169,46 @@ type ControlCommands interface {
 	Restart(ctx context.Context, token, key string, in Restart) (Ref, error)
 }
 
-// Pending is one task whose NextActor is the caller, or, with WaitingOnSubtasks, one
-// the caller owns or handles that waits on its required subtasks: still the
-// caller's, but nothing on it can move until they complete.
-type Pending struct {
-	TaskID, Title     string
-	NextActor         Actor
-	WaitingOnSubtasks bool `json:",omitempty"`
-}
-// Overview is what a task list shows beside the task itself, all derived
-// from facts: who handles it, its direct parent (an ID is not a secret; its
-// title shows only if readable) and when its timeline last changed.
-type Overview struct {
-	TaskID, Assignee, ParentID string `json:",omitempty"`
-	UpdatedAt                  time.Time
+// Summary is one row of the task list, all derived from facts on read: the
+// task, its lifecycle position, who handles it, its direct parent (an ID is
+// not a secret; its title shows only if readable), who must act next and when
+// its timeline last changed. ForMe says the caller is that next actor.
+type Summary struct {
+	Task      task.Task
+	Position  flow.Position
+	Assignee  string `json:",omitempty"`
+	ParentID  string `json:",omitempty"`
+	NextActor Actor  `json:",omitempty"`
+	ForMe     bool   `json:",omitempty"`
+	UpdatedAt time.Time
 }
 
+// ListFilter narrows the task list. IDs, when given, limits it to those tasks
+// (at most task.MaxPick), so a client can refresh only what changed. Mine
+// keeps the caller's work: tasks waiting on the caller first, then tasks the
+// caller owns or handles that wait on their required subtasks.
+type ListFilter struct {
+	IDs  []string
+	Mine bool
+}
+
+// View is everything one task page shows: the task, the caller's snapshot and
+// one page of the timeline, the newest unless an earlier one was asked for.
+// Earlier says older commits precede the page.
+type View struct {
+	Task task.Task
+	Snapshot
+	Commits             []commit.Commit
+	Earlier             bool `json:",omitempty"`
+	CanEdit, CanComment bool
+}
+
+// TimelinePage is how many commits one View carries.
+const TimelinePage = 100
+
 type Queries interface {
-	Read(ctx context.Context, token, taskID string) (Snapshot, error)
-	// Inbox lists readable active tasks currently waiting on the caller, then
-	// the caller's own tasks marked WaitingOnSubtasks with no NextActor.
-	// ids, when given, limits Inbox and Overview to those tasks (at most
-	// task.MaxPick), so a client can refresh only the tasks that changed.
-	Inbox(ctx context.Context, token string, ids []string) ([]Pending, error)
-	// Overview lists every task the caller may read, for the task list.
-	Overview(ctx context.Context, token string, ids []string) ([]Overview, error)
+	// Read returns the task the caller may read with one timeline page: the
+	// newest commits, or those just before the given sequence.
+	Read(ctx context.Context, token, taskID string, before int64) (View, error)
+	List(ctx context.Context, token string, filter ListFilter) ([]Summary, error)
 }

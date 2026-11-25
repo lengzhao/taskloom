@@ -143,7 +143,7 @@ func (f *fixture) rpcID(id int, method string, params any) map[string]any {
 	return out["result"].(map[string]any)
 }
 
-func (f *fixture) tool(name string, args map[string]string) (string, bool) {
+func (f *fixture) tool(name string, args any) (string, bool) {
 	f.t.Helper()
 	r := f.rpc("tools/call", map[string]any{"name": name, "arguments": args})
 	text := r["content"].([]any)[0].(map[string]any)["text"].(string)
@@ -151,7 +151,7 @@ func (f *fixture) tool(name string, args map[string]string) (string, bool) {
 	return text, isErr
 }
 
-func (f *fixture) ok(name string, args map[string]string) map[string]any {
+func (f *fixture) ok(name string, args any) map[string]any {
 	f.t.Helper()
 	text, isErr := f.tool(name, args)
 	if isErr {
@@ -190,8 +190,8 @@ func TestAgentWorksATaskThroughMCP(t *testing.T) {
 	f.ownerCall("POST", "/tasks", map[string]string{"Title": "导出报表", "Goal": "导出订单", "Criteria": "包含全部订单"}, &created)
 	id := created.Task.ID
 	var w snapshot
-	f.ownerCall("GET", "/tasks/"+id+"/workflow", nil, &w)
-	f.ownerCall("POST", "/tasks/"+id+"/execution/assign", map[string]any{"Subject": "agent"}, nil)
+	f.ownerCall("GET", "/tasks/"+id, nil, &w)
+	f.ownerCall("POST", "/tasks/"+id+"/assign", map[string]any{"Subject": "agent"}, nil)
 
 	if text, _ := f.tool("inbox", nil); !strings.Contains(text, id) {
 		t.Fatal("inbox misses assigned task", text)
@@ -212,7 +212,7 @@ func TestAgentWorksATaskThroughMCP(t *testing.T) {
 	// A message is progress the owner can see. Resending the same request is
 	// idempotent; a new call with the same text is a new report.
 	var before snapshot
-	f.ownerCall("GET", "/tasks/"+id+"/workflow", nil, &before)
+	f.ownerCall("GET", "/tasks/"+id, nil, &before)
 	time.Sleep(5 * time.Millisecond)
 	msg := map[string]any{"name": "post_message", "arguments": map[string]string{"task_id": id, "text": "开始拉取数据"}}
 	f.seq++
@@ -225,7 +225,7 @@ func TestAgentWorksATaskThroughMCP(t *testing.T) {
 		t.Fatal("a repeated progress report was swallowed", next)
 	}
 	var after snapshot
-	f.ownerCall("GET", "/tasks/"+id+"/workflow", nil, &after)
+	f.ownerCall("GET", "/tasks/"+id, nil, &after)
 	if !after.Execution.ProgressAt.After(before.Execution.ProgressAt) {
 		t.Fatal("message not recorded as progress")
 	}
@@ -233,17 +233,17 @@ func TestAgentWorksATaskThroughMCP(t *testing.T) {
 		t.Fatal("agent cannot see its last progress", task["execution"])
 	}
 	// The directory gives the agent whom it may ask; paging returns next only when more follow.
-	people, _ := json.Marshal(f.ok("list_members", map[string]string{"kind": "human"}))
+	people, _ := json.Marshal(f.ok("list_people", map[string]string{"kind": "human"}))
 	if !strings.Contains(string(people), `"subject":"owner"`) || strings.Contains(string(people), `"agent"`) || strings.Contains(string(people), "next") {
-		t.Fatal("list_members", string(people))
+		t.Fatal("list_people", string(people))
 	}
 	// The agent learns who it is and who is already on the task; it never lists itself.
 	if task["you"] != "agent" || len(task["participants"].([]any)) != 0 {
 		t.Fatal("viewer or askable participants", task["you"], task["participants"])
 	}
 
-	asked := f.ok("ask_owner", map[string]string{"task_id": id, "basis": started["basis"].(string), "question": "CSV 还是 Excel？"})
-	f.ownerCall("GET", "/tasks/"+id+"/workflow", nil, &w)
+	asked := f.ok("ask", map[string]string{"task_id": id, "basis": started["basis"].(string), "question": "CSV 还是 Excel？"})
+	f.ownerCall("GET", "/tasks/"+id, nil, &w)
 	if len(w.Questions) != 1 || w.NextActor != "addressee" {
 		t.Fatal("question not waiting on the owner it was asked of", w.NextActor)
 	}
@@ -257,7 +257,7 @@ func TestAgentWorksATaskThroughMCP(t *testing.T) {
 		t.Fatal("answer not visible to agent", string(timeline))
 	}
 
-	// The basis returned by ask_owner still carries the execution it was asked from.
+	// The basis returned by ask still carries the execution it was asked from.
 	submitted := f.ok("submit_result", map[string]string{"task_id": id, "basis": asked["basis"].(string), "result": "已导出 CSV"})
 	if submitted["next_actor"] != "reviewer" {
 		t.Fatal("result not waiting on reviewer", submitted)
@@ -319,9 +319,9 @@ func TestAgentAnswersAQuestionAskedOfIt(t *testing.T) {
 	f.ownerCall("POST", "/tasks", map[string]string{"Title": "t", "Goal": "g", "Criteria": "c"}, &created)
 	id := created.Task.ID
 	var w snapshot
-	f.ownerCall("GET", "/tasks/"+id+"/workflow", nil, &w)
-	f.ownerCall("POST", "/tasks/"+id+"/execution/assign", map[string]any{"Subject": "agent"}, nil)
-	f.ownerCall("GET", "/tasks/"+id+"/workflow", nil, &w)
+	f.ownerCall("GET", "/tasks/"+id, nil, &w)
+	f.ownerCall("POST", "/tasks/"+id+"/assign", map[string]any{"Subject": "agent"}, nil)
+	f.ownerCall("GET", "/tasks/"+id, nil, &w)
 	f.ownerCall("POST", "/tasks/"+id+"/questions", map[string]string{"RoundID": w.Position.RoundID, "Body": "预计什么时候完成？", "Addressee": "agent"}, nil)
 
 	if text, _ := f.tool("inbox", nil); !strings.Contains(text, "addressee") {
@@ -347,7 +347,7 @@ func TestAgentDeliversFilesThroughMCP(t *testing.T) {
 	var created struct{ Task struct{ ID string } }
 	f.ownerCall("POST", "/tasks", map[string]string{"Title": "写报告", "Goal": "报告", "Criteria": "有文件"}, &created)
 	id := created.Task.ID
-	f.ownerCall("POST", "/tasks/"+id+"/execution/assign", map[string]any{"Subject": "agent"}, nil)
+	f.ownerCall("POST", "/tasks/"+id+"/assign", map[string]any{"Subject": "agent"}, nil)
 	basis := f.ok("read_task", map[string]string{"task_id": id})["basis"].(string)
 	basis = f.ok("start_work", map[string]string{"task_id": id, "basis": basis})["basis"].(string)
 
@@ -357,10 +357,10 @@ func TestAgentDeliversFilesThroughMCP(t *testing.T) {
 	up := f.ok("upload_file", map[string]string{"task_id": id, "name": "report.md", "text": "# 报告\n完成"})
 	fileID := up["file_id"].(string)
 	bin := f.ok("upload_file", map[string]string{"task_id": id, "name": "x.bin", "content_base64": "AAEC/w=="})
-	if text, isErr := f.tool("submit_result", map[string]string{"task_id": id, "basis": basis, "files": "0123456789abcdef0123456789abcdef"}); !isErr || !strings.Contains(text, "不存在") {
+	if text, isErr := f.tool("submit_result", map[string]any{"task_id": id, "basis": basis, "files": []string{"0123456789abcdef0123456789abcdef"}}); !isErr || !strings.Contains(text, "不存在") {
 		t.Fatal("unknown file accepted", text)
 	}
-	f.ok("submit_result", map[string]string{"task_id": id, "basis": basis, "files": fileID + "," + bin["file_id"].(string), "links": "https://example.com/doc 设计文档"})
+	f.ok("submit_result", map[string]any{"task_id": id, "basis": basis, "files": []string{fileID, bin["file_id"].(string)}, "links": []map[string]string{{"url": "https://example.com/doc", "title": "设计文档"}}})
 
 	task := f.ok("read_task", map[string]string{"task_id": id})
 	result := task["current_result"].(map[string]any)
@@ -399,13 +399,13 @@ func TestAgentSplitsATaskThroughMCP(t *testing.T) {
 	if text, isErr := f.tool("create_subtask", map[string]string{"task_id": id, "title": "资料"}); !isErr || !strings.Contains(text, "无权") {
 		t.Fatal("split before taking part", text)
 	}
-	f.ownerCall("POST", "/tasks/"+id+"/execution/assign", map[string]any{"Subject": "agent"}, nil)
+	f.ownerCall("POST", "/tasks/"+id+"/assign", map[string]any{"Subject": "agent"}, nil)
 	basis := f.ok("read_task", map[string]string{"task_id": id})["basis"].(string)
 	basis = f.ok("start_work", map[string]string{"task_id": id, "basis": basis})["basis"].(string)
 	if text, isErr := f.tool("create_subtask", map[string]string{"task_id": id, "title": "资料", "required": "yes"}); !isErr || !strings.Contains(text, "required") {
 		t.Fatal("bad required accepted", text)
 	}
-	out := f.ok("create_subtask", map[string]string{"task_id": id, "title": "资料", "goal": "收集资料", "required": "true"})
+	out := f.ok("create_subtask", map[string]any{"task_id": id, "title": "资料", "goal": "收集资料", "required": true})
 	sub, _ := out["subtask_id"].(string)
 	if sub == "" || !strings.Contains(out["message"].(string), "必需") {
 		t.Fatal("create_subtask", out)

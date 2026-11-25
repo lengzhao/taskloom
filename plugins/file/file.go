@@ -86,8 +86,14 @@ type ref struct{ TaskID, FileID string }
 
 func (m *Module) Upload(ctx context.Context, token, key string, in api.Upload, body io.Reader) (api.File, error) {
 	name, ok := attachment.FileName(in.Name)
-	if !ok || in.TaskID == "" || key == "" || len(key) > 128 {
-		return api.File{}, fault.ErrInput
+	if !ok {
+		return api.File{}, fault.Input("invalid_name", "name")
+	}
+	if key == "" || len(key) > 128 {
+		return api.File{}, fault.Input(fault.CodeIdempotencyKeyRequired, "Idempotency-Key")
+	}
+	if in.TaskID == "" {
+		return api.File{}, fault.Input(fault.CodeRequired, "TaskID")
 	}
 	mediaType, err := cleanMediaType(in.MediaType)
 	if err != nil {
@@ -201,7 +207,7 @@ func cleanMediaType(v string) (string, error) {
 	}
 	mt, params, err := mime.ParseMediaType(v)
 	if err != nil || len(v) > 255 {
-		return "", fault.ErrInput
+		return "", fault.Input(fault.CodeInvalid, "Content-Type")
 	}
 	return mime.FormatMediaType(mt, params), nil
 }

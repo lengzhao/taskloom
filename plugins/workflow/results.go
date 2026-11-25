@@ -47,6 +47,9 @@ func NewResults(_ struct{}, d ResultDeps) (*ResultModule, error) {
 
 func (m *ResultModule) Submit(ctx context.Context, token, key string, in api.Submit) (api.Ref, error) {
 	return run(ctx, m.d.Commands, token, key, "result.submit", in.TaskID, in, func(tx context.Context, p identity.Principal) (api.Ref, error) {
+		if in.ExecutionID == "" {
+			return api.Ref{}, fault.Input(fault.CodeRequired, "ExecutionID")
+		}
 		t, pos, e := load(tx, m.d.Tasks, m.d.Flow, p, in.TaskID)
 		if e != nil {
 			return api.Ref{}, e
@@ -55,12 +58,12 @@ func (m *ResultModule) Submit(ctx context.Context, token, key string, in api.Sub
 		if e != nil {
 			return api.Ref{}, e
 		}
-		if e = m.active(tx, t, pos, v); e != nil {
+		if e = m.active(tx, p, t, pos, v); e != nil {
 			return api.Ref{}, e
 		}
 		// Nothing to deliver is invalid input, not a state conflict.
-		if attachment.Empty(in.Body, in.Files, in.Links) || len(in.Body) > 20000 || attachment.Valid(in.Files, in.Links) != nil {
-			return api.Ref{}, fault.ErrInput
+		if e = attachment.Check(in.Body, in.Files, in.Links); e != nil {
+			return api.Ref{}, e
 		}
 		// The parent delivers only once its required subtasks are completed.
 		if e = m.d.Flow.CheckSubmit(tx, t); e != nil {
@@ -99,32 +102,38 @@ func (m *ResultModule) Review(ctx context.Context, token, key string, in api.Rev
 		if e != nil {
 			return api.Ref{}, e
 		}
-		if pos.Status != flow.PhaseActive || pos.Acceptance != flow.AcceptanceManual {
-			return api.Ref{}, fault.ErrConflict
+		if pos.Status != flow.PhaseActive {
+			return api.Ref{}, fault.Conflict(api.ReasonTaskNotActive)
+		}
+		if pos.Acceptance != flow.AcceptanceManual {
+			return api.Ref{}, fault.Conflict(api.ReasonStepNotOpen)
 		}
 		if p.Kind != "human" || p.ID != t.Owner {
-			return api.Ref{}, az.ErrForbidden
+			return api.Ref{}, fault.Coded(az.ErrForbidden, api.ReasonNotReviewer)
 		}
-		if (in.Outcome != acceptance.OutcomeApproved && in.Outcome != acceptance.OutcomeRejected) || len(in.Reason) > 20000 {
-			return api.Ref{}, fault.ErrInput
+		if in.Outcome != acceptance.OutcomeApproved && in.Outcome != acceptance.OutcomeRejected {
+			return api.Ref{}, fault.Input(fault.CodeInvalid, "Outcome")
+		}
+		if len(in.Reason) > 20000 {
+			return api.Ref{}, fault.Input(fault.CodeInvalid, "Reason")
 		}
 		// A rejection returns work to the executor, which needs to know what to change.
 		if in.Outcome == acceptance.OutcomeRejected && strings.TrimSpace(in.Reason) == "" {
-			return api.Ref{}, fault.ErrInput
+			return api.Ref{}, fault.Input(fault.CodeRequired, "Reason")
 		}
 		v, e := m.d.Results.CurrentResult(tx, t.Tenant, t.ID, pos.RoundID)
 		if e != nil {
 			return api.Ref{}, e
 		}
 		if v.CommitID != in.CommitID {
-			return api.Ref{}, fault.ErrConflict
+			return api.Ref{}, fault.Conflict("result_changed")
 		}
 		result, e := m.d.Commits.Get(tx, t.Tenant, t.ID, v.CommitID)
 		if e != nil {
 			return api.Ref{}, e
 		}
 		if result.BasisVersion != t.BasisVersion {
-			return api.Ref{}, fault.ErrConflict
+			return api.Ref{}, fault.Conflict(api.ReasonBasisChanged)
 		}
 		// The verdict is stored once, as an immutable commit referring to the result.
 		c := commit.Commit{Tenant: t.Tenant, TaskID: t.ID, ID: id(), Kind: acceptance.Kind(in.Outcome), Body: in.Reason, RefID: v.CommitID, Author: p.ID, BasisVersion: t.BasisVersion}
@@ -142,20 +151,23 @@ func (m *ResultModule) owned(ctx context.Context, p identity.Principal, t task.T
 		return v, e
 	}
 	if v.TaskID != t.ID || !ownExecution(p, v) {
-		return v, az.ErrForbidden
+		return v, fault.Coded(az.ErrForbidden, api.ReasonNotYourExecution)
 	}
 	return v, nil
 }
 
 // active requires the execution to be the task's latest, still writable, on
 // the current active round and basis.
-func (m *ResultModule) active(ctx context.Context, t task.Task, pos flow.Position, v execution.Execution) error {
+func (m *ResultModule) active(ctx context.Context, p identity.Principal, t task.Task, pos flow.Position, v execution.Execution) error {
 	latest, e := m.d.Executions.Current(ctx, t.Tenant, t.ID)
 	if e != nil {
 		return e
 	}
-	if pos.Status != flow.PhaseActive || pos.RoundID != v.RoundID || t.BasisVersion != v.BasisVersion || latest.ID != v.ID || !v.Writable {
-		return fault.ErrConflict
+	if latest.ID != v.ID {
+		return fault.Conflict(api.ReasonExecutionFenced)
+	}
+	if code := submitBlock(p, t, pos, v); code != "" {
+		return fault.Conflict(code)
 	}
 	return nil
 }

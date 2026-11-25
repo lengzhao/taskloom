@@ -8,7 +8,7 @@
 http:
   deps:
     # Lists replace the base list whole: keep every base module.
-    modules: [health, workspace-api, workflow-api, plan-api, file-api, mcp-api, audit-api, ownership-api, skills-api]
+    modules: [health, workspace-api, task-api, workflow-api, file-api, mcp-api, audit-api, skills-api]
 
 # embedder:
 #   use: embedding/openai

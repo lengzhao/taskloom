@@ -80,10 +80,10 @@ func TestHTTPAuthenticatedWorkspaceLoop(t *testing.T) {
 	if e = sec.CreateUser(ctx, issued.Secret, "new-member", capsecurity.UserInput{Tenant: "t", Username: "member", Password: "UserPassword123!"}); e != nil {
 		t.Fatal(e)
 	}
-	if w := request("POST", "/v1/members", map[string]any{"Tenant": "t", "Subject": "member", "Role": "member", "Active": false}, "deactivate", true); w.Code != 200 {
+	if w := request("POST", "/v1/admin/members", map[string]any{"Subject": "member", "Role": "member", "Active": false}, "deactivate", true); w.Code != 200 {
 		t.Fatal("member management", w.Code, w.Body.String())
 	}
-	if w := request("POST", "/v1/members", map[string]any{"Tenant": "t", "Subject": "member", "Role": "member", "Active": true, "Action": "task.edit"}, "arbitrary-permission", true); w.Code != 400 {
+	if w := request("POST", "/v1/admin/members", map[string]any{"Subject": "member", "Role": "member", "Active": true, "Action": "task.edit"}, "arbitrary-permission", true); w.Code != 400 {
 		t.Fatal("arbitrary action accepted", w.Code)
 	}
 	if w := request("GET", "/v1/tasks", nil, "", false); w.Code != 401 {
@@ -214,39 +214,39 @@ func TestHTTPMemberAdministration(t *testing.T) {
 			t.Fatalf("status %d expected %d", w.Code, status)
 		}
 	}
-	must(request("", "GET", "/members", "", nil), 401)
+	must(request("", "GET", "/admin/members", "", nil), 401)
 	me := request(admin.Secret, "GET", "/me", "", nil)
 	must(me, 200)
 	if !bytes.Contains(me.Body.Bytes(), []byte(`"CanAdmin":true`)) {
 		t.Fatal("admin entry missing")
 	}
-	must(request(admin.Secret, "POST", "/identities", "create-user", map[string]any{"Subject": "user", "Kind": "human", "Password": "userPassword123!"}), 200)
-	must(request(admin.Secret, "POST", "/identities", "cross-tenant", map[string]any{"Subject": "foreign", "Kind": "human", "Tenant": "other"}), 400)
-	must(request(admin.Secret, "POST", "/identities", "privilege", map[string]any{"Subject": "evil", "Kind": "human", "Role": "admin"}), 400)
-	must(request(admin.Secret, "POST", "/identities", "missing-owner", map[string]any{"Subject": "agent", "Kind": "agent"}), 400)
-	must(request(admin.Secret, "POST", "/identities", "create-agent", map[string]any{"Subject": "agent", "Kind": "agent", "OwnerID": "user"}), 200)
+	must(request(admin.Secret, "POST", "/admin/identities", "create-user", map[string]any{"Subject": "user", "Kind": "human", "Password": "userPassword123!"}), 200)
+	must(request(admin.Secret, "POST", "/admin/identities", "cross-tenant", map[string]any{"Subject": "foreign", "Kind": "human", "Tenant": "other"}), 400)
+	must(request(admin.Secret, "POST", "/admin/identities", "privilege", map[string]any{"Subject": "evil", "Kind": "human", "Role": "admin"}), 400)
+	must(request(admin.Secret, "POST", "/admin/identities", "missing-owner", map[string]any{"Subject": "agent", "Kind": "agent"}), 400)
+	must(request(admin.Secret, "POST", "/admin/identities", "create-agent", map[string]any{"Subject": "agent", "Kind": "agent", "OwnerID": "user"}), 200)
 	expires := time.Now().Add(time.Hour)
 	input := map[string]any{"Subject": "user", "ExpiresAt": expires}
-	must(request(admin.Secret, "POST", "/credentials", "issue-user", input), 400)
+	must(request(admin.Secret, "POST", "/admin/credentials", "issue-user", input), 400)
 	user, e := sec.Login(ctx, capsecurity.LoginInput{Tenant: "t", Username: "user", Password: "userPassword123!"})
 	if e != nil {
 		t.Fatal(e)
 	}
-	must(request(user.Secret, "POST", "/identities", "user-create", map[string]any{"Subject": "intruder", "Kind": "human"}), 403)
-	must(request(user.Secret, "GET", "/members", "", nil), 403)
-	must(request(user.Secret, "POST", "/credentials", "user-issue", input), 403)
+	must(request(user.Secret, "POST", "/admin/identities", "user-create", map[string]any{"Subject": "intruder", "Kind": "human"}), 403)
+	must(request(user.Secret, "GET", "/admin/members", "", nil), 403)
+	must(request(user.Secret, "POST", "/admin/credentials", "user-issue", input), 403)
 	userMe := request(user.Secret, "GET", "/me", "", nil)
 	must(userMe, 200)
 	if !bytes.Contains(userMe.Body.Bytes(), []byte(`"CanAdmin":false`)) {
 		t.Fatal("member admin flag")
 	}
-	must(request(admin.Secret, "POST", "/credentials", "stale-agent-fields", map[string]any{"Subject": "agent", "InstanceID": "machine", "ExpiresAt": expires}), 400)
+	must(request(admin.Secret, "POST", "/admin/credentials", "stale-agent-fields", map[string]any{"Subject": "agent", "InstanceID": "machine", "ExpiresAt": expires}), 400)
 	agentInput := map[string]any{"Subject": "agent", "ExpiresAt": expires}
-	agentResp := request(admin.Secret, "POST", "/credentials", "issue-agent", agentInput)
+	agentResp := request(admin.Secret, "POST", "/admin/credentials", "issue-agent", agentInput)
 	must(agentResp, 200)
 	var agent capsecurity.Issued
 	json.Unmarshal(agentResp.Body.Bytes(), &agent)
-	replay := request(admin.Secret, "POST", "/credentials", "issue-agent", agentInput)
+	replay := request(admin.Secret, "POST", "/admin/credentials", "issue-agent", agentInput)
 	must(replay, 200)
 	var repeated capsecurity.Issued
 	json.Unmarshal(replay.Body.Bytes(), &repeated)
@@ -254,9 +254,9 @@ func TestHTTPMemberAdministration(t *testing.T) {
 		t.Fatal("replay redisclosed/reissued secret")
 	}
 
-	must(request(agent.Secret, "GET", "/members", "", nil), 403)
+	must(request(agent.Secret, "GET", "/admin/members", "", nil), 403)
 	// Administrators can read the audit trail every command writes; nobody else can.
-	auditResp := request(admin.Secret, "GET", "/audit?limit=50", "", nil)
+	auditResp := request(admin.Secret, "GET", "/admin/audit?limit=50", "", nil)
 	must(auditResp, 200)
 	var trail []record.Audit
 	json.Unmarshal(auditResp.Body.Bytes(), &trail)
@@ -269,27 +269,27 @@ func TestHTTPMemberAdministration(t *testing.T) {
 	if !found || len(trail) > 50 {
 		t.Fatal("audit trail missing credential issue", len(trail))
 	}
-	must(request(user.Secret, "GET", "/audit", "", nil), 403)
-	must(request(agent.Secret, "GET", "/audit", "", nil), 403)
-	must(request(agent.Secret, "POST", "/identities", "agent-create", map[string]any{"Subject": "intruder", "Kind": "human"}), 403)
-	list := request(admin.Secret, "GET", "/members", "", nil)
+	must(request(user.Secret, "GET", "/admin/audit", "", nil), 403)
+	must(request(agent.Secret, "GET", "/admin/audit", "", nil), 403)
+	must(request(agent.Secret, "POST", "/admin/identities", "agent-create", map[string]any{"Subject": "intruder", "Kind": "human"}), 403)
+	list := request(admin.Secret, "GET", "/admin/members", "", nil)
 	must(list, 200)
 	if !bytes.Contains(list.Body.Bytes(), []byte(`"Subject":"agent"`)) || bytes.Contains(list.Body.Bytes(), []byte(user.Secret)) || bytes.Contains(list.Body.Bytes(), []byte("Secret")) {
 		t.Fatal("directory metadata or credential leak")
 	}
-	must(request(admin.Secret, "POST", "/credentials/revoke", "revoke", map[string]any{"CredentialID": agent.ID}), 200)
+	must(request(admin.Secret, "POST", "/admin/credentials/revoke", "revoke", map[string]any{"CredentialID": agent.ID}), 200)
 	must(request(agent.Secret, "GET", "/me", "", nil), 401)
-	must(request(admin.Secret, "POST", "/members", "disable-user", map[string]any{"Tenant": "t", "Subject": "user", "Role": "member", "Active": false}), 200)
+	must(request(admin.Secret, "POST", "/admin/members", "disable-user", map[string]any{"Subject": "user", "Role": "member", "Active": false}), 200)
 	must(request(user.Secret, "GET", "/me", "", nil), 403)
-	must(request(admin.Secret, "POST", "/credentials", "inactive-issue", input), 400)
-	must(request(admin.Secret, "POST", "/identities", "inactive-owner", map[string]any{"Subject": "other-agent", "Kind": "agent", "OwnerID": "user"}), 403)
-	list = request(admin.Secret, "GET", "/members", "", nil)
+	must(request(admin.Secret, "POST", "/admin/credentials", "inactive-issue", input), 400)
+	must(request(admin.Secret, "POST", "/admin/identities", "inactive-owner", map[string]any{"Subject": "other-agent", "Kind": "agent", "OwnerID": "user"}), 403)
+	list = request(admin.Secret, "GET", "/admin/members", "", nil)
 	must(list, 200)
 	if !bytes.Contains(list.Body.Bytes(), []byte(`"Active":false`)) {
 		t.Fatal("inactive member missing from management")
 	}
-	must(request(admin.Secret, "POST", "/members", "self-disable", map[string]any{"Tenant": "t", "Subject": "admin", "Role": "admin", "Active": false}), 403)
-	must(request(admin.Secret, "POST", "/members", "reactivate-user", map[string]any{"Tenant": "t", "Subject": "user", "Role": "member", "Active": true}), 200)
+	must(request(admin.Secret, "POST", "/admin/members", "self-disable", map[string]any{"Subject": "admin", "Role": "admin", "Active": false}), 403)
+	must(request(admin.Secret, "POST", "/admin/members", "reactivate-user", map[string]any{"Subject": "user", "Role": "member", "Active": true}), 200)
 	must(request(user.Secret, "GET", "/me", "", nil), 200)
 	// Foreign principals are never enumerated in this administrator's tenant.
 	principals, _ := build.GetByID[identity.Principals](graph, "sql")
@@ -306,7 +306,7 @@ func TestHTTPMemberAdministration(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	foreignList := request(foreign.Secret, "GET", "/members", "", nil)
+	foreignList := request(foreign.Secret, "GET", "/admin/members", "", nil)
 	must(foreignList, 200)
 	if bytes.Contains(foreignList.Body.Bytes(), []byte(`"Subject":"user"`)) {
 		t.Fatal("cross tenant directory leak")
@@ -377,15 +377,15 @@ func TestPasswordLoginCreationAndReset(t *testing.T) {
 		t.Fatal("unsafe session cookie")
 	}
 	userInput := map[string]string{"Subject": "alice", "Kind": "human", "Password": "AlicePassword123!"}
-	must(request("POST", "/identities", "alice", userInput, "", adminCookie), 200)
-	must(request("POST", "/identities", "alice", userInput, "", adminCookie), 200)
+	must(request("POST", "/admin/identities", "alice", userInput, "", adminCookie), 200)
+	must(request("POST", "/admin/identities", "alice", userInput, "", adminCookie), 200)
 	userInput["Password"] = "differentPassword123!"
-	must(request("POST", "/identities", "alice", userInput, "", adminCookie), 409)
+	must(request("POST", "/admin/identities", "alice", userInput, "", adminCookie), 409)
 	userLogin := login("alice", "AlicePassword123!")
 	must(userLogin, 200)
 	userCookie := userLogin.Result().Cookies()[0]
-	must(request("GET", "/members", "", nil, "", userCookie), 403)
-	must(request("POST", "/users/admin/password", "escalate", map[string]string{"Password": "OtherPassword123!"}, "", userCookie), 403)
+	must(request("GET", "/admin/members", "", nil, "", userCookie), 403)
+	must(request("POST", "/admin/users/admin/password", "escalate", map[string]string{"Password": "OtherPassword123!"}, "", userCookie), 403)
 	must(request("POST", "/account/password", "wrong-current", map[string]string{"CurrentPassword": "wrong", "Password": "NewPassword123!"}, "", userCookie), 403)
 	must(request("POST", "/account/password", "change", map[string]string{"CurrentPassword": "AlicePassword123!", "Password": "NewPassword123!"}, "", userCookie), 200)
 	must(request("GET", "/me", "", nil, "", userCookie), 401)
@@ -393,7 +393,7 @@ func TestPasswordLoginCreationAndReset(t *testing.T) {
 	changed := login("alice", "NewPassword123!")
 	must(changed, 200)
 	newCookie := changed.Result().Cookies()[0]
-	must(request("POST", "/users/alice/password", "reset", map[string]string{"Password": "ResetPassword123!"}, "", adminCookie), 200)
+	must(request("POST", "/admin/users/alice/password", "reset", map[string]string{"Password": "ResetPassword123!"}, "", adminCookie), 200)
 	must(request("GET", "/me", "", nil, "", newCookie), 401)
 	must(login("alice", "NewPassword123!"), 401)
 	reset := login("alice", "ResetPassword123!")
@@ -401,7 +401,7 @@ func TestPasswordLoginCreationAndReset(t *testing.T) {
 	resetCookie := reset.Result().Cookies()[0]
 	must(request("DELETE", "/session", "", nil, "", resetCookie), 200)
 	must(request("GET", "/me", "", nil, "", resetCookie), 401)
-	must(request("POST", "/members", "disable", map[string]any{"Tenant": "t", "Subject": "alice", "Role": "member", "Active": false}, "", adminCookie), 200)
+	must(request("POST", "/admin/members", "disable", map[string]any{"Subject": "alice", "Role": "member", "Active": false}, "", adminCookie), 200)
 	must(login("alice", "ResetPassword123!"), 401)
 	passwords, _ := build.GetByID[identity.Passwords](graph, "sql")
 	hash, e := passwords.PasswordHash(ctx, "t", "alice")

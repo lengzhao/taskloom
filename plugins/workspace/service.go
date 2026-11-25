@@ -111,8 +111,19 @@ func id() string {
 	return fmt.Sprintf("%x", b)
 }
 
-func valid(title, goal, criteria string) bool {
-	return strings.TrimSpace(title) != "" && len(title) <= 200 && len(goal) <= 20000 && len(criteria) <= 20000
+// validBasis names the first basis field at fault.
+func validBasis(title, goal, criteria string) error {
+	switch {
+	case strings.TrimSpace(title) == "":
+		return fault.Input(fault.CodeRequired, "Title")
+	case len(title) > 200:
+		return fault.Input("too_long", "Title")
+	case len(goal) > 20000:
+		return fault.Input("too_long", "Goal")
+	case len(criteria) > 20000:
+		return fault.Input("too_long", "Criteria")
+	}
+	return nil
 }
 func (s *Service) allowed(ctx context.Context, p identity.Principal, action, id string) bool {
 	return s.d.Authorization.Check(ctx, p, action, id) == nil
@@ -135,12 +146,12 @@ func (s *Service) event(ctx context.Context, t task.Task) error {
 func (s *Service) Create(ctx context.Context, token, key string, in api.Create) (api.Ref, error) {
 	var out api.Ref
 	if in.Acceptance != "" && in.Acceptance != flow.AcceptanceManual && in.Acceptance != flow.AcceptanceNone {
-		return out, fault.ErrInput
+		return out, fault.Input(fault.CodeInvalid, "Acceptance")
 	}
 	if (in.Required || in.Owner != "") && in.ParentID == "" {
 		// Required describes a relation that would not exist; a top-level
 		// task is owned by the person who creates it.
-		return out, fault.ErrInput
+		return out, fault.Input("relation_needs_parent", "ParentID")
 	}
 	p, e := s.actor(ctx, token)
 	if e != nil {
@@ -163,8 +174,8 @@ func (s *Service) Create(ctx context.Context, token, key string, in api.Create) 
 		}
 	}
 	b, e := command.Run(ctx, s.d.Commands, req, in, func(tx context.Context, p identity.Principal) ([]byte, error) {
-		if !valid(in.Title, in.Goal, in.Criteria) {
-			return nil, fault.ErrInput
+		if e := validBasis(in.Title, in.Goal, in.Criteria); e != nil {
+			return nil, e
 		}
 		owner, held, e := s.creation(tx, p, in)
 		if e != nil {
@@ -277,7 +288,7 @@ func (s *Service) creation(ctx context.Context, p identity.Principal, in api.Cre
 	if len(people) == 1 {
 		return in.Owner, held, nil
 	}
-	return "", nil, fault.ErrInput
+	return "", nil, fault.Input("owner_not_person", "Owner")
 }
 
 func (s *Service) Edit(ctx context.Context, token, key string, in api.Edit) (api.Ref, error) {
@@ -288,17 +299,17 @@ func (s *Service) Edit(ctx context.Context, token, key string, in api.Edit) (api
 			return nil, e
 		}
 		if t.BasisVersion != in.BasisVersion {
-			return nil, fault.ErrConflict
+			return nil, fault.Conflict(fault.CodeBasisChanged)
 		}
-		if !valid(in.Title, in.Goal, in.Criteria) {
-			return nil, fault.ErrInput
+		if e := validBasis(in.Title, in.Goal, in.Criteria); e != nil {
+			return nil, e
 		}
 		// The basis may change at any time on an active task: a claim or result
 		// made on the old basis can no longer submit or complete.
 		if pos, e := s.d.Flow.Read(tx, t); e != nil {
 			return nil, e
 		} else if pos.Status != flow.PhaseActive {
-			return nil, fault.ErrConflict
+			return nil, fault.Conflict(fault.CodeTaskNotActive)
 		}
 		// Saving the same text changes nothing, so no version advances and no
 		// claim or result is invalidated.
@@ -329,8 +340,8 @@ func (s *Service) Edit(ctx context.Context, token, key string, in api.Edit) (api
 func (s *Service) Comment(ctx context.Context, token, key string, in api.Comment) (api.Ref, error) {
 	var out api.Ref
 	b, e := command.Run(ctx, s.d.Commands, capcommand.Request{Token: token, Key: key, Operation: "commit.append", Resource: in.TaskID}, in, func(tx context.Context, p identity.Principal) ([]byte, error) {
-		if attachment.Empty(in.Body, in.Files, in.Links) || len(in.Body) > 20000 || attachment.Valid(in.Files, in.Links) != nil {
-			return nil, fault.ErrInput
+		if e := attachment.Check(in.Body, in.Files, in.Links); e != nil {
+			return nil, e
 		}
 		t, e := s.d.Tasks.GetTask(tx, p.Tenant, in.TaskID)
 		if e != nil {
@@ -363,70 +374,6 @@ func (s *Service) Comment(ctx context.Context, token, key string, in api.Comment
 	return out, e
 }
 
-// summary is a task as a list shows it: no timeline is read.
-func (s *Service) summary(ctx context.Context, p identity.Principal, t task.Task) (api.Detail, error) {
-	if e := s.d.Authorization.Check(ctx, p, "task.read", t.ID); e != nil {
-		return api.Detail{}, e
-	}
-	pos, e := s.d.Flow.Read(ctx, t)
-	if e != nil {
-		return api.Detail{}, e
-	}
-	return api.Detail{Task: t, Position: pos, CanEdit: s.allowed(ctx, p, "task.edit", t.ID), CanComment: s.allowed(ctx, p, "commit.append", t.ID)}, nil
-}
-func (s *Service) detail(ctx context.Context, p identity.Principal, t task.Task, after int64) (api.Detail, error) {
-	d, e := s.summary(ctx, p, t)
-	if e != nil {
-		return d, e
-	}
-	d.Commits, e = s.d.Commits.List(ctx, t.Tenant, t.ID, after, 100)
-	return d, e
-}
-func (s *Service) Get(ctx context.Context, token, id string, after int64) (api.Detail, error) {
-	var out api.Detail
-	e := s.d.Transactions.Do(ctx, func(tx context.Context) error {
-		p, e := s.actor(tx, token)
-		if e != nil {
-			return e
-		}
-		if !s.allowed(tx, p, "task.read", id) {
-			return az.ErrForbidden
-		}
-		t, e := s.d.Tasks.GetTask(tx, p.Tenant, id)
-		if e != nil {
-			return e
-		}
-		out, e = s.detail(tx, p, t, after)
-		return e
-	})
-	return out, e
-}
-func (s *Service) List(ctx context.Context, token string, ids []string) ([]api.Detail, error) {
-	out := []api.Detail{}
-	e := s.d.Transactions.Do(ctx, func(tx context.Context) error {
-		p, e := s.actor(tx, token)
-		if e != nil {
-			return e
-		}
-		ts, e := task.Pick(tx, s.d.Tasks, p.Tenant, ids)
-		if e != nil {
-			return e
-		}
-		for _, t := range ts {
-			d, e := s.summary(tx, p, t)
-			if errors.Is(e, az.ErrForbidden) {
-				continue
-			}
-			if e != nil {
-				return e
-			}
-			out = append(out, d)
-		}
-		return nil
-	})
-	return out, e
-}
-
 // Changes reads the change feed after a cursor. The cursor is the plain event
 // sequence: every event is re-authorized for the caller when read, so a cursor
 // grants nothing and needs no signature or expiry. An empty cursor returns the
@@ -438,7 +385,7 @@ func (s *Service) Changes(ctx context.Context, token, raw string) (api.Page, err
 	if !start {
 		n, e := strconv.ParseInt(raw, 10, 64)
 		if e != nil || n < 0 {
-			return out, fault.ErrInput
+			return out, fault.Input(fault.CodeInvalid, "cursor")
 		}
 		after = n
 	}
@@ -508,7 +455,7 @@ func (s *Service) SetParticipant(ctx context.Context, token, key string, in api.
 func (s *Service) People(ctx context.Context, token string, q az.MemberQuery) (api.PeoplePage, error) {
 	out := api.PeoplePage{Items: []az.MemberOption{}}
 	if q.Kind != "" && q.Kind != "human" && q.Kind != "agent" {
-		return out, fault.ErrInput
+		return out, fault.Input(fault.CodeInvalid, "kind")
 	}
 	switch {
 	case q.Limit <= 0:
@@ -581,7 +528,7 @@ func (s *Service) projectOpen(ctx context.Context, p identity.Principal, id stri
 		return e
 	}
 	if project.Archived {
-		return fault.ErrConflict
+		return fault.Conflict("project_archived")
 	}
 	return s.d.Authorization.Check(ctx, p, "project.file", id)
 }

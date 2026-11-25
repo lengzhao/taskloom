@@ -49,17 +49,17 @@ func (m *ExecutionModule) Open(ctx context.Context, token, key string, in api.Op
 			return api.Ref{}, e
 		}
 		if in.BasisVersion != t.BasisVersion {
-			return api.Ref{}, fault.ErrConflict
+			return api.Ref{}, fault.Conflict(api.ReasonBasisChanged)
 		}
 		if p.Kind != "human" && (p.Kind != "agent" || p.CredentialID == "") {
-			return api.Ref{}, az.ErrForbidden
+			return api.Ref{}, fault.Coded(az.ErrForbidden, api.ReasonCredential)
 		}
 		assigned, e := m.d.Executions.Assignee(tx, t.Tenant, t.ID)
 		if e != nil {
 			return api.Ref{}, e
 		}
 		if assigned != p.ID {
-			return api.Ref{}, az.ErrForbidden
+			return api.Ref{}, fault.Coded(az.ErrForbidden, api.ReasonNotAssigned)
 		}
 		if _, e = m.d.Flow.CheckOpen(tx, t); e != nil {
 			return api.Ref{}, e
@@ -69,7 +69,7 @@ func (m *ExecutionModule) Open(ctx context.Context, token, key string, in api.Op
 		old, e := m.d.Executions.Current(tx, t.Tenant, t.ID)
 		if e == nil {
 			if old.Writable && old.RoundID == pos.RoundID && old.BasisVersion == t.BasisVersion && ownExecution(p, old) {
-				return api.Ref{}, fault.ErrConflict
+				return api.Ref{}, fault.Conflict(api.ReasonExecutionInProgress)
 			}
 			old.Writable = false
 			if e = m.d.Executions.SaveExecution(tx, old); e != nil {
@@ -125,7 +125,7 @@ func (m *ExecutionModule) AssignCreated(ctx context.Context, tenant, taskID, sub
 // the execution to one credential.
 func (m *ExecutionModule) assign(tx context.Context, t task.Task, pos flow.Position, subject string) (execution.Execution, error) {
 	if pos.Status != flow.PhaseActive {
-		return execution.Execution{}, fault.ErrConflict
+		return execution.Execution{}, fault.Conflict(api.ReasonTaskNotActive)
 	}
 	if _, e := m.d.Flow.CheckOpen(tx, t); e != nil {
 		return execution.Execution{}, e
@@ -135,11 +135,11 @@ func (m *ExecutionModule) assign(tx context.Context, t task.Task, pos flow.Posit
 		return execution.Execution{}, e
 	}
 	if who.Kind != "agent" && who.Kind != "human" {
-		return execution.Execution{}, fault.ErrInput
+		return execution.Execution{}, fault.Input(fault.CodeInvalid, "Subject")
 	}
 	member, e := m.d.Members.GetMember(tx, t.Tenant, who.ID)
 	if e != nil || !member.Active {
-		return execution.Execution{}, az.ErrForbidden
+		return execution.Execution{}, fault.Coded(az.ErrForbidden, "member_inactive", "Subject")
 	}
 	if e = fence(tx, m.d.Executions, t); e != nil {
 		return execution.Execution{}, e
@@ -178,13 +178,13 @@ func (m *ExecutionModule) Hold(ctx context.Context, p identity.Principal, tenant
 	}
 	v, e := m.d.Executions.Current(ctx, tenant, taskID)
 	if errors.Is(e, fault.ErrNotFound) {
-		return execution.Execution{}, fault.ErrConflict
+		return execution.Execution{}, fault.Conflict(api.ReasonExecutionFenced)
 	}
 	if e != nil {
 		return execution.Execution{}, e
 	}
-	if pos.Status != flow.PhaseActive || !v.Writable || !ownExecution(p, v) || v.RoundID != pos.RoundID || v.BasisVersion != t.BasisVersion {
-		return execution.Execution{}, fault.ErrConflict
+	if code := submitBlock(p, t, pos, v); code != "" {
+		return execution.Execution{}, fault.Conflict(code)
 	}
 	return v, nil
 }
@@ -233,7 +233,7 @@ func (m *ExecutionModule) RecordProgress(ctx context.Context, p identity.Princip
 		return e
 	}
 	if bound {
-		return fault.ErrConflict
+		return fault.Conflict(api.ReasonExecutionFenced)
 	}
 	return nil
 }

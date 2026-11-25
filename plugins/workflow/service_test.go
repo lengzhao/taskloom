@@ -32,11 +32,11 @@ type fixture struct {
 	graph        *build.Result
 	ctx          context.Context
 	tasks        taskCommands
-	taskQueries  workspace.Queries
 	ex           executionCommands
 	results      resultCommands
 	controls     controlCommands
 	query        api.Queries
+	taskQueries  workspace.Queries
 	security     *security.Service
 	owner, agent string
 	tx           unitofwork.Manager
@@ -71,8 +71,8 @@ func setup(t *testing.T, override map[string]any) *fixture {
 	f := &fixture{ctx: ctx, graph: graph}
 	commands, _ := build.GetByID[workspace.Commands](graph, "workspace")
 	f.taskQueries, _ = build.GetByID[workspace.Queries](graph, "workspace")
-	f.tasks = taskCommands{commands, f.taskQueries}
 	f.query, _ = build.GetByID[api.Queries](graph, "workflow-query")
+	f.tasks = taskCommands{commands, f.query}
 	ex, _ := build.GetByID[api.ExecutionCommands](graph, "execution-commands")
 	results, _ := build.GetByID[api.ResultCommands](graph, "result-commands")
 	controls, _ := build.GetByID[api.ControlCommands](graph, "flow-commands")
@@ -105,7 +105,7 @@ func setup(t *testing.T, override map[string]any) *fixture {
 	}
 	return f
 }
-func (f *fixture) create(t *testing.T) workspace.Detail {
+func (f *fixture) create(t *testing.T) api.View {
 	t.Helper()
 	d, e := f.tasks.Create(f.ctx, f.owner, "create", workspace.Create{Title: "task", Goal: "goal", Criteria: "criteria"})
 	if e != nil {
@@ -115,13 +115,13 @@ func (f *fixture) create(t *testing.T) workspace.Detail {
 }
 func (f *fixture) read(t *testing.T, id string) api.Snapshot {
 	t.Helper()
-	s, e := f.query.Read(f.ctx, f.owner, id)
+	v, e := f.query.Read(f.ctx, f.owner, id, 0)
 	if e != nil {
 		t.Fatal(e)
 	}
-	return s
+	return v.Snapshot
 }
-func (f *fixture) open(t *testing.T, d workspace.Detail) api.Snapshot {
+func (f *fixture) open(t *testing.T, d api.View) api.Snapshot {
 	t.Helper()
 	s := f.read(t, d.Task.ID)
 	s, e := f.ex.Assign(f.ctx, f.owner, "assign", api.Assignment{TaskID: d.Task.ID, Subject: "agent"})
@@ -206,8 +206,8 @@ func TestBasisEditDuringWorkRequiresNewClaim(t *testing.T) {
 	if _, e = f.results.Submit(f.ctx, f.agent, "stale", api.Submit{TaskID: d.Task.ID, ExecutionID: old.ID, Body: "stale"}); !errors.Is(e, fault.ErrConflict) {
 		t.Fatal("old basis submitted", e)
 	}
-	agentView, e := f.query.Read(f.ctx, f.agent, d.Task.ID)
-	if e != nil || agentView.Blocked[api.ActionSubmit] != api.ReasonBasisChanged || !agentView.CanOpen {
+	agentView, e := f.query.Read(f.ctx, f.agent, d.Task.ID, 0)
+	if e != nil || agentView.Blocked[api.ActionSubmit].Code != api.ReasonBasisChanged || !agentView.CanOpen {
 		t.Fatal("agent not told to claim again", agentView.Blocked, agentView.CanOpen, e)
 	}
 	if _, e = f.ex.Open(f.ctx, f.agent, "stale-open", api.Open{TaskID: d.Task.ID, BasisVersion: d.Task.BasisVersion}); !errors.Is(e, fault.ErrConflict) {
@@ -238,7 +238,7 @@ func TestCancelFencesWritesImmediately(t *testing.T) {
 	if _, e = f.results.Submit(f.ctx, f.agent, "late", api.Submit{TaskID: d.Task.ID, ExecutionID: old.ID, Body: "late"}); !errors.Is(e, fault.ErrConflict) {
 		t.Fatal("late write", e)
 	}
-	if items, _ := f.query.Inbox(f.ctx, f.agent, nil); len(items) != 0 {
+	if items, _ := inbox(f.ctx, f.query, f.agent, nil); len(items) != 0 {
 		t.Fatal("cancelled task still waits on the agent", items)
 	}
 	s, e = f.controls.Restart(f.ctx, f.owner, "reopen", api.Restart{TaskID: d.Task.ID, RoundID: s.Position.RoundID})

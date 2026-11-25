@@ -206,7 +206,7 @@ func TestUploadLimitsReplayAndAccess(t *testing.T) {
 	}
 
 	// A comment may carry only a file and a link.
-	var ref struct{ CommitID string }
+	var ref struct{ Commits []struct{ ID string } }
 	if code := f.json("POST", "/tasks/"+id+"/commits", f.owner, "c1", map[string]any{"Files": []string{up.ID}, "Links": []map[string]string{{"URL": "https://example.com", "Title": "x"}}}, &ref); code != 200 {
 		t.Fatal("comment with file", code)
 	}
@@ -227,7 +227,7 @@ func TestUploadLimitsReplayAndAccess(t *testing.T) {
 	}
 	f.json("GET", "/tasks/"+id, f.owner, "", nil, &d)
 	last := d.Commits[len(d.Commits)-1]
-	if last.ID != ref.CommitID || len(last.Files) != 1 || last.Files[0] != up.ID {
+	if len(ref.Commits) == 0 || last.ID != ref.Commits[len(ref.Commits)-1].ID || len(last.Files) != 1 || last.Files[0] != up.ID {
 		t.Fatal("timeline", d.Commits)
 	}
 	var listed []file
@@ -245,12 +245,12 @@ func TestResultDeliversFiles(t *testing.T) {
 		Result       *struct{ CommitID string }
 		ResultCommit *struct{ Files []string }
 	}
-	if code := f.json("POST", "/tasks/"+id+"/execution/assign", f.owner, "assign", map[string]string{"Subject": "agent"}, nil); code != 200 {
+	if code := f.json("POST", "/tasks/"+id+"/assign", f.owner, "assign", map[string]string{"Subject": "agent"}, nil); code != 200 {
 		t.Fatal("assign", code)
 	}
 	var task struct{ Task struct{ BasisVersion int64 } }
 	f.json("GET", "/tasks/"+id, f.agent, "", nil, &task)
-	if code := f.json("POST", "/tasks/"+id+"/execution/open", f.agent, "open", map[string]any{"BasisVersion": task.Task.BasisVersion}, &w); code != 200 || w.Execution == nil {
+	if code := f.json("POST", "/tasks/"+id+"/start", f.agent, "open", map[string]any{"BasisVersion": task.Task.BasisVersion}, &w); code != 200 || w.Execution == nil {
 		t.Fatal("open", code)
 	}
 	exec := w.Execution.ID
@@ -273,7 +273,7 @@ func TestResultDeliversFiles(t *testing.T) {
 	if code := f.json("POST", "/tasks/"+id+"/results", f.agent, "r-missing", map[string]any{"ExecutionID": exec, "Files": []string{"0123456789abcdef0123456789abcdef"}}, nil); code != 404 {
 		t.Fatal("missing file", code)
 	}
-	f.json("GET", "/tasks/"+id+"/workflow", f.agent, "", nil, &w)
+	f.json("GET", "/tasks/"+id, f.agent, "", nil, &w)
 	if w.Result != nil {
 		t.Fatal("result leaked from failed submit")
 	}

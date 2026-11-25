@@ -57,7 +57,7 @@ func valid(s string) bool {
 }
 func credential(p identity.Principal, expires time.Time) (identity.Credential, capsecurity.Issued, error) {
 	if !expires.After(time.Now()) || expires.After(time.Now().Add(90*24*time.Hour)) {
-		return identity.Credential{}, capsecurity.Issued{}, fault.ErrInput
+		return identity.Credential{}, capsecurity.Issued{}, fault.Input("invalid_expiry", "ExpiresAt")
 	}
 	var b [32]byte
 	if _, err := rand.Read(b[:]); err != nil {
@@ -104,8 +104,11 @@ func (s *Service) Create(ctx context.Context, token, key string, p identity.Prin
 		}
 		// Humans are created with a password (CreateUser); this creates Agents,
 		// which authenticate only with issued credentials.
-		if !valid(p.ID) || p.Kind != "agent" || p.CredentialID != "" || !valid(p.OwnerID) {
-			return nil, fault.ErrInput
+		if !valid(p.ID) || p.Kind != "agent" || p.CredentialID != "" {
+			return nil, fault.Input("invalid_subject", "Subject")
+		}
+		if !valid(p.OwnerID) {
+			return nil, fault.Input(fault.CodeRequired, "OwnerID")
 		}
 		owner, err := s.d.Principals.Resolve(tx, p.Tenant, p.OwnerID)
 		if err != nil || owner.Kind != "human" {
@@ -136,7 +139,7 @@ func (s *Service) Issue(ctx context.Context, token, key string, in capsecurity.I
 		}
 		// Only Agents hold issued credentials; people sign in with a password.
 		if subject.Kind != "agent" {
-			return nil, fault.ErrInput
+			return nil, fault.Input("not_an_agent", "Subject")
 		}
 		member, err := s.d.Members.GetMember(tx, in.Tenant, in.Subject)
 		if err != nil || !member.Active {

@@ -24,7 +24,7 @@ func (f *fixture) plan(t *testing.T) plan.Commands {
 	return p
 }
 
-func (f *fixture) named(t *testing.T, title string) workspace.Detail {
+func (f *fixture) named(t *testing.T, title string) api.View {
 	t.Helper()
 	d, e := f.tasks.Create(f.ctx, f.owner, "create-"+title, workspace.Create{Title: title, Goal: "goal", Criteria: "criteria"})
 	if e != nil {
@@ -35,7 +35,7 @@ func (f *fixture) named(t *testing.T, title string) workspace.Detail {
 
 func (f *fixture) basis(t *testing.T, id string) int64 {
 	t.Helper()
-	d, e := f.taskQueries.Get(f.ctx, f.owner, id, 0)
+	d, e := f.query.Read(f.ctx, f.owner, id, 0)
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -93,7 +93,7 @@ func TestRequiredSubtaskGatesParentSubmission(t *testing.T) {
 		t.Fatal(e)
 	}
 	work := s.Execution.ID
-	if v, _ := f.query.Read(f.ctx, f.agent, parent.Task.ID); v.CanSubmit || v.Blocked[api.ActionSubmit] != api.ReasonChildrenPending {
+	if v, _ := f.query.Read(f.ctx, f.agent, parent.Task.ID, 0); v.CanSubmit || v.Blocked[api.ActionSubmit].Code != api.ReasonChildrenPending {
 		t.Fatal("submit not blocked by the subtask", v.Blocked)
 	}
 	if _, e = f.results.Submit(f.ctx, f.agent, "early", api.Submit{TaskID: parent.Task.ID, ExecutionID: work, Body: "too early"}); !errors.Is(e, fault.ErrConflict) {
@@ -268,14 +268,14 @@ func TestHiddenSubtaskRevealsNothing(t *testing.T) {
 	if e := f.tasks.Commands.SetParticipant(f.ctx, f.owner, "join", workspace.Participation{TaskID: parent.Task.ID, Subject: "agent", Present: true}); e != nil {
 		t.Fatal(e)
 	}
-	v, e := f.query.Read(f.ctx, f.agent, parent.Task.ID)
+	v, e := f.query.Read(f.ctx, f.agent, parent.Task.ID, 0)
 	if e != nil {
 		t.Fatal(e)
 	}
 	if len(v.Children) != 0 || !v.HiddenRequired {
 		t.Fatal("hidden subtask leaked or unannounced", v.Children, v.HiddenRequired)
 	}
-	if _, e = f.query.Read(f.ctx, f.agent, child.Task.ID); !errors.Is(e, az.ErrForbidden) {
+	if _, e = f.query.Read(f.ctx, f.agent, child.Task.ID, 0); !errors.Is(e, az.ErrForbidden) {
 		t.Fatal("relation granted access to the subtask", e)
 	}
 }
@@ -325,12 +325,12 @@ func TestBlockedParentLeavesInboxUntilSubtasksComplete(t *testing.T) {
 	if !s.Position.WaitingOnSubtasks || s.NextActor != "" || s.Position.State != "executing" {
 		t.Fatal("waiting on subtasks is not a blocked wait", s.Position, s.NextActor)
 	}
-	inbox := func(token string) map[string]api.Pending {
-		items, e := f.query.Inbox(f.ctx, token, nil)
+	inbox := func(token string) map[string]pending {
+		items, e := inbox(f.ctx, f.query, token, nil)
 		if e != nil {
 			t.Fatal(e)
 		}
-		out := map[string]api.Pending{}
+		out := map[string]pending{}
 		for _, x := range items {
 			out[x.TaskID] = x
 		}
@@ -398,12 +398,12 @@ func TestCreateUnderParentIsAtomic(t *testing.T) {
 	if _, e = f.controls.Cancel(f.ctx, f.owner, "cancel", api.Cancel{TaskID: parent.Task.ID}); e != nil {
 		t.Fatal(e)
 	}
-	before, _ := f.taskQueries.List(f.ctx, f.owner, nil)
+	before, _ := f.query.List(f.ctx, f.owner, api.ListFilter{})
 	in.Title = "late"
 	if _, e = f.tasks.Commands.Create(f.ctx, f.owner, "create-late", in); !errors.Is(e, fault.ErrConflict) {
 		t.Fatal("subtask created under a cancelled parent", e)
 	}
-	if after, _ := f.taskQueries.List(f.ctx, f.owner, nil); len(after) != len(before) {
+	if after, _ := f.query.List(f.ctx, f.owner, api.ListFilter{}); len(after) != len(before) {
 		t.Fatal("failed placement left a task behind", len(before), len(after))
 	}
 	if _, e = f.tasks.Commands.Create(f.ctx, f.agent, "agent-create", workspace.Create{Title: "x", ParentID: parent.Task.ID}); e == nil {

@@ -6,7 +6,6 @@ import (
 
 	"github.com/lengzhao/taskloom/cap/commit"
 	"github.com/lengzhao/taskloom/cap/flow"
-	"github.com/lengzhao/taskloom/cap/task"
 )
 
 // Create may place the new task under ParentID in the same transaction; the
@@ -61,16 +60,10 @@ type Comment struct {
 	Files               []string      `json:",omitempty"`
 	Links               []commit.Link `json:",omitempty"`
 }
-type Detail struct {
-	Task                task.Task
-	Position            flow.Position
-	Commits             []commit.Commit
-	CanEdit, CanComment bool
-}
 
 // Ref is what a task command fixed: the task and, for a comment, the commit it
 // appended. Its receipt stores only this, so a replay returns the same Ref;
-// callers read current facts through Queries.Get.
+// callers read current facts through the workflow queries.
 type Ref struct {
 	TaskID   string
 	CommitID string `json:",omitempty"`
@@ -115,10 +108,6 @@ type Queries interface {
 	// People pages the active member directory, readable by any active member,
 	// Agents included: it is where an addressee or assignee is picked.
 	People(ctx context.Context, credential string, q authorization.MemberQuery) (PeoplePage, error)
-	// List returns readable tasks without their timelines; ids, when given,
-	// limits it to those tasks (at most task.MaxPick).
-	List(ctx context.Context, credential string, ids []string) ([]Detail, error)
-	Get(ctx context.Context, credential, taskID string, after int64) (Detail, error)
 }
 type ChangeFeed interface {
 	Changes(ctx context.Context, credential, cursor string) (Page, error)

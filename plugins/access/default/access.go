@@ -53,6 +53,12 @@ func (s *Service) Check(ctx context.Context, p identity.Principal, op, resource 
 			return nil
 		}
 		return az.ErrForbidden
+	case "tasks.list":
+		// Any active member may list; each task is still filtered by task.read.
+		if resource == p.Tenant {
+			return nil
+		}
+		return az.ErrForbidden
 	case "project.file":
 		// Filing a task under a project shares it with the project's people,
 		// so only those who belong to the project, or administrators, file there.

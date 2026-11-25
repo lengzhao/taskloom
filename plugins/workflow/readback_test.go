@@ -17,7 +17,29 @@ func (r readBack) after(ctx context.Context, token string, ref api.Ref, e error)
 	if e != nil {
 		return api.Snapshot{}, e
 	}
-	return r.q.Read(ctx, token, ref.TaskID)
+	v, e := r.q.Read(ctx, token, ref.TaskID, 0)
+	return v.Snapshot, e
+}
+
+// pending is one inbox row as the tests assert on it.
+type pending struct {
+	TaskID, Title     string
+	NextActor         api.Actor
+	WaitingOnSubtasks bool
+}
+
+// inbox lists the caller's work (List with Mine).
+func inbox(ctx context.Context, q api.Queries, token string, ids []string) ([]pending, error) {
+	rows, e := q.List(ctx, token, api.ListFilter{IDs: ids, Mine: true})
+	out := []pending{}
+	for _, r := range rows {
+		x := pending{TaskID: r.Task.ID, Title: r.Task.Title, WaitingOnSubtasks: !r.ForMe}
+		if r.ForMe {
+			x.NextActor = r.NextActor
+		}
+		out = append(out, x)
+	}
+	return out, e
 }
 
 type executionCommands struct {
@@ -85,23 +107,29 @@ func (f *fixture) questions() questionCommands {
 	return questionCommands{c, readBack{f.query}}
 }
 
-// taskCommands reads task details back after workspace commands.
+// taskCommands reads task views back after workspace commands.
 type taskCommands struct {
 	workspace.Commands
-	q workspace.Queries
+	q api.Queries
 }
 
-func (x taskCommands) Create(ctx context.Context, token, key string, in workspace.Create) (workspace.Detail, error) {
+func (x taskCommands) Create(ctx context.Context, token, key string, in workspace.Create) (api.View, error) {
 	ref, e := x.Commands.Create(ctx, token, key, in)
 	if e != nil {
-		return workspace.Detail{}, e
+		return api.View{}, e
 	}
-	return x.q.Get(ctx, token, ref.TaskID, 0)
+	return x.q.Read(ctx, token, ref.TaskID, 0)
 }
-func (x taskCommands) Edit(ctx context.Context, token, key string, in workspace.Edit) (workspace.Detail, error) {
+func (x taskCommands) Edit(ctx context.Context, token, key string, in workspace.Edit) (api.View, error) {
 	ref, e := x.Commands.Edit(ctx, token, key, in)
 	if e != nil {
-		return workspace.Detail{}, e
+		return api.View{}, e
 	}
-	return x.q.Get(ctx, token, ref.TaskID, 0)
+	return x.q.Read(ctx, token, ref.TaskID, 0)
+}
+
+// snap reads the caller's snapshot of a task.
+func (f *fixture) snap(token, id string) (api.Snapshot, error) {
+	v, e := f.query.Read(f.ctx, token, id, 0)
+	return v.Snapshot, e
 }

@@ -38,11 +38,11 @@ func TestHumanProcessesAndSubmitsWithoutRuntimeProof(t *testing.T) {
 		t.Fatal(e)
 	}
 	// Assigning a person starts their manual work; there is no separate claim.
-	s, e = f.query.Read(f.ctx, worker, d.Task.ID)
+	s, e = f.snap(worker, d.Task.ID)
 	if e != nil || s.CanOpen || !s.CanSubmit || !s.CanAssign || s.CanManage {
 		t.Fatalf("human flags %+v %v", s, e)
 	}
-	items, e := f.query.Inbox(f.ctx, worker, nil)
+	items, e := inbox(f.ctx, f.query, worker, nil)
 	if e != nil || len(items) != 1 || items[0].NextActor != api.ActorAssignee {
 		t.Fatal(items, e)
 	}
@@ -117,7 +117,7 @@ func TestHumanCanDelegateButOldWorkCannotSubmit(t *testing.T) {
 	if _, e = f.results.Submit(f.ctx, f.agent, "stale-agent-result", api.Submit{TaskID: d.Task.ID, ExecutionID: agentRun.ID, Body: "too late"}); e == nil {
 		t.Fatal("fenced agent submitted")
 	}
-	d2, e := f.taskQueries.Get(f.ctx, f.owner, d.Task.ID, 0)
+	d2, e := f.query.Read(f.ctx, f.owner, d.Task.ID, 0)
 	if e != nil || d2.Task.Owner != "owner" {
 		t.Fatal("delegation changed owner", e)
 	}
@@ -149,7 +149,7 @@ func TestHumanDelegationRevokedWithParticipation(t *testing.T) {
 	}
 }
 
-// The overview shows, for each readable task, who handles it, its parent and
+// The task list shows, for each readable task, who handles it, its parent and
 // when its timeline last changed; a task the caller cannot read is left out.
 // Assigning the owner records no participation: the owner already holds every right.
 func TestOverviewAndOwnerSelfAssignment(t *testing.T) {
@@ -166,45 +166,42 @@ func TestOverviewAndOwnerSelfAssignment(t *testing.T) {
 	if s := f.read(t, child.Task.ID); s.Assignee != "owner" || len(s.Participants) != 0 {
 		t.Fatal("owner self-assignment", s.Assignee, s.Participants)
 	}
-	items, e := f.query.Overview(f.ctx, f.owner, nil)
+	list := func(token string, ids []string) ([]api.Summary, error) {
+		return f.query.List(f.ctx, token, api.ListFilter{IDs: ids})
+	}
+	items, e := list(f.owner, nil)
 	if e != nil {
 		t.Fatal(e)
 	}
-	byID := map[string]api.Overview{}
+	byID := map[string]api.Summary{}
 	for _, x := range items {
-		byID[x.TaskID] = x
+		byID[x.Task.ID] = x
 	}
-	if c := byID[child.Task.ID]; c.Assignee != "owner" || c.ParentID != parent.Task.ID || c.UpdatedAt.IsZero() {
-		t.Fatal("child overview", c)
+	if c := byID[child.Task.ID]; c.Assignee != "owner" || c.ParentID != parent.Task.ID || c.UpdatedAt.IsZero() || c.Position.Status != "active" {
+		t.Fatal("child row", c)
 	}
 	if p := byID[parent.Task.ID]; p.Assignee != "" || p.ParentID != "" || p.UpdatedAt.IsZero() {
-		t.Fatal("parent overview", p)
+		t.Fatal("parent row", p)
 	}
-	if mine, e := f.query.Overview(f.ctx, outsider, nil); e != nil || len(mine) != 0 {
-		t.Fatal("overview leaked unreadable tasks", mine, e)
+	if mine, e := list(outsider, nil); e != nil || len(mine) != 0 {
+		t.Fatal("list leaked unreadable tasks", mine, e)
 	}
 
 	// Naming tasks limits every list to them; a missing or unreadable task is
 	// left out exactly as in the full list.
 	ids := []string{child.Task.ID, "missing", child.Task.ID}
-	if items, e := f.query.Overview(f.ctx, f.owner, ids); e != nil || len(items) != 1 || items[0] != byID[child.Task.ID] {
-		t.Fatal("overview by id", items, e)
+	if items, e := list(f.owner, ids); e != nil || len(items) != 1 || items[0] != byID[child.Task.ID] {
+		t.Fatal("list by id", items, e)
 	}
-	if items, e := f.query.Overview(f.ctx, outsider, ids); e != nil || len(items) != 0 {
-		t.Fatal("overview by id leaked", items, e)
+	if items, e := list(outsider, ids); e != nil || len(items) != 0 {
+		t.Fatal("list by id leaked", items, e)
 	}
-	if list, e := f.taskQueries.List(f.ctx, f.owner, []string{parent.Task.ID, "missing"}); e != nil || len(list) != 1 || list[0].Task.ID != parent.Task.ID || list[0].Commits != nil {
-		t.Fatal("list by id", list, e)
-	}
-	if list, e := f.taskQueries.List(f.ctx, outsider, []string{parent.Task.ID}); e != nil || len(list) != 0 {
-		t.Fatal("list by id leaked", list, e)
-	}
-	full, e := f.query.Inbox(f.ctx, f.owner, nil)
+	full, e := inbox(f.ctx, f.query, f.owner, nil)
 	if e != nil {
 		t.Fatal(e)
 	}
 	for _, x := range full {
-		if items, e := f.query.Inbox(f.ctx, f.owner, []string{x.TaskID, "missing"}); e != nil || len(items) != 1 || items[0] != x {
+		if items, e := inbox(f.ctx, f.query, f.owner, []string{x.TaskID, "missing"}); e != nil || len(items) != 1 || items[0] != x {
 			t.Fatal("inbox by id", x, items, e)
 		}
 	}
@@ -216,10 +213,9 @@ func TestOverviewAndOwnerSelfAssignment(t *testing.T) {
 		many[i] = fmt.Sprint("t", i)
 	}
 	for _, e := range []error{
-		func() error { _, e := f.query.Overview(f.ctx, f.owner, many); return e }(),
-		func() error { _, e := f.query.Inbox(f.ctx, f.owner, many); return e }(),
-		func() error { _, e := f.taskQueries.List(f.ctx, f.owner, many); return e }(),
-		func() error { _, e := f.taskQueries.List(f.ctx, f.owner, []string{""}); return e }(),
+		func() error { _, e := list(f.owner, many); return e }(),
+		func() error { _, e := inbox(f.ctx, f.query, f.owner, many); return e }(),
+		func() error { _, e := list(f.owner, []string{""}); return e }(),
 	} {
 		if !errors.Is(e, fault.ErrInput) {
 			t.Fatal("bad id list accepted", e)

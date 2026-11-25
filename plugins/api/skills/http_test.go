@@ -482,8 +482,8 @@ func TestWithoutEmbedder(t *testing.T) {
 func TestDeactivatedMemberLosesAccess(t *testing.T) {
 	f := setup(t)
 	f.publish(f.agent, "p", skill(t, "gone", "1.0.0", "Gone."))
-	raw, _ := json.Marshal(map[string]any{"Tenant": "t", "Subject": "agent", "Role": "member"})
-	req, _ := http.NewRequest("DELETE", f.srv.URL+"/v1/members", bytes.NewReader(raw))
+	raw, _ := json.Marshal(map[string]any{"Subject": "agent", "Role": "member", "Active": false})
+	req, _ := http.NewRequest("POST", f.srv.URL+"/v1/admin/members", bytes.NewReader(raw))
 	req.Header.Set("Authorization", "Bearer "+f.owner)
 	req.Header.Set("Idempotency-Key", "m")
 	req.Header.Set("Content-Type", "application/json")

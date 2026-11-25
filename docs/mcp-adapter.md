@@ -17,22 +17,25 @@ claude mcp add --transport http taskloom http://localhost:8899/v1/mcp \
 
 | 工具 | 对应命令 | 说明 |
 | --- | --- | --- |
-| inbox | workflow.Inbox | 等我处理的任务；不含阻塞任务（Agent 只看到现在能做的事，阻塞任务用 read_task 查看，其中 `waiting_on_subtasks` 为 true） |
-| read_task | workspace.Get + workflow.Read + file.Queries.List | 你是谁（you）、目标、标准、状态、等谁、can/blocked 原因、待答问题（for_you 标出问你的）、已在任务中的其他参与者（participants）、当前结果、最近进展时间、可读的父任务与子任务、最近 20 条时间线（带文件名与链接）及 basis |
+| inbox | workflow.List（mine） | 等我处理的任务；不含阻塞任务（Agent 只看到现在能做的事，阻塞任务用 read_task 查看，其中 `waiting_on_subtasks` 为 true） |
+| read_task | workflow.Read（最新一页）+ file.Queries.List | 你是谁（you）、目标、标准、状态、等谁、can/blocked 原因、待答问题（for_you 标出问你的）、已在任务中的其他参与者（participants）、当前结果、最近进展时间、可读的父任务与子任务、最近 20 条时间线（带文件名与链接）及 basis |
 | start_work | ExecutionCommands.Open | 认领执行 |
-| post_message | workspace.Comment | 留言：进度、回复人的引导，可带 files（逗号分隔 file_id）与 links（每行一个 URL，可空格加标题）；记录最近进展，不算交付 |
-| list_members | workspace.People | 空间内有效成员（subject、kind），可按 ID 片段与 kind 过滤，按 subject 分页（next/after，每页 50）；供 ask_owner 的 `to` 选人 |
-| ask_owner | QuestionCommands.Ask | 提问或请求协助：默认问负责人，`to` 可填任一有效成员（不在任务中时自动加为参与者）；未答前任务不能完成 |
+| post_message | workspace.Comment | 留言：进度、回复人的引导，可带 files（file_id 字符串数组）与 links（`{url, title}` 对象数组）；记录最近进展，不算交付 |
+| list_people | workspace.People | 空间内有效成员（subject、kind），可按 ID 片段与 kind 过滤，按 subject 分页（next/after，每页 50）；供 ask 的 `to` 与 create_subtask 的 owner/assignee 选人 |
+| ask | QuestionCommands.Ask | 提问或请求协助：默认问负责人，`to` 可填任一有效成员（不在任务中时自动加为参与者）；未答前任务不能完成 |
 | answer_question | QuestionCommands.Answer | 回答别人向自己提的问题（open_questions 中 for_you 为 true） |
 | close_question | QuestionCommands.Close | 撤回自己提的、已不需要回答的问题（须写理由），撤回后不再阻止完成 |
 | submit_result | ResultCommands.Submit | 明确提交结果；result、files、links 至少一项 |
-| create_subtask | workspace.Create | 把自己正在执行的任务拆出子任务：title 必填，可带 goal、criteria、required（true/false）、owner（有效用户，默认本任务负责人）、acceptance（manual/none，默认 none）、assignee（同事务分配的处理人，可分配范围由部署配置决定；分配给 Agent 后仍须认领）；自己成为子任务参与者，必需子任务不使自己的执行失效，见[任务拆分](core-contracts.md#任务拆分) |
+| create_subtask | workspace.Create | 把自己正在执行的任务拆出子任务：title 必填，可带 goal、criteria、required（布尔值）、owner（有效用户，默认本任务负责人）、acceptance（manual/none，默认 none）、assignee（同事务分配的处理人，可分配范围由部署配置决定；分配给 Agent 后仍须认领）；自己成为子任务参与者，必需子任务不使自己的执行失效，见[任务拆分](core-contracts.md#任务拆分) |
 | upload_file | file.Commands.Upload | 上传 text 或 content_base64（MCP 请求上限 1MiB，约 700KB 内容），返回 file_id；只上传不进入时间线，更大的文件用 HTTP `POST /v1/tasks/{id}/files` |
 | read_file | file.Queries.Open | 读取文件：UTF-8 文本直接返回，其他 base64；超过 512KB 只返回元数据与下载路径 |
 
 分配、验收、取消与重开不对模型开放：插件以局部窄接口注入，只拿到上表能力，这些都属于人。
 
 ## 约束
+
+- **参数类型**：工具参数按 JSON Schema 声明的类型传：文本为字符串，`required` 为布尔值，`files`、`links` 为数组；类型不符直接报错，不做字符串解析。
+- **错误**：工具错误以 `[code]` 开头（与 HTTP 错误的 `Code` 同一套），随后是说明、出错字段和下一步建议，模型可按 code 决定是否 read_task 后重试。
 
 - **basis**：read_task 和每次写操作返回不透明 basis（任务、轮次、依据版本、执行 ID），写操作须原样带回；不会替模型取最新版本写入，过期视图得到冲突和“先 read_task”的提示。
 - **幂等**：幂等键由会话、JSON-RPC 请求 id、工具与参数派生：客户端原样重发同一请求不会重复写入；新的调用即使正文相同（如重复的进度汇报）也是新写入。缺少会话时按凭据派生，客户端重启后请求 id 从头计数，正文也相同的调用会被当作重发。
@@ -45,7 +48,7 @@ claude mcp add --transport http taskloom http://localhost:8899/v1/mcp \
 
 常驻执行 Agent 由 AgentKit 提供（v0.4.46 起）：平台插件 `platform/taskloom`（AgentKit 仓库 `runtime/platform/taskloom`）与 preset `presets/taskloom.yaml`，用 AgentKit 自带的 `cmd/agent` 运行，本仓库不再包含 Agent 代码。该 preset 只开放 Taskloom MCP 工具与 todo/finish，没有 shell、文件或网络工具，所有写入仍由 Taskloom 鉴权；提示词与模型在 preset 中，可用自己的 overlay 覆盖。
 
-`platform/taskloom` 是 Agent 层的适配，不是 Taskloom 服务端插件，也不新增 Taskloom 接口：它用该 Agent 自己的业务凭据只读 `GET /v1/me`、`/v1/changes`、`/v1/inbox` 与 `/v1/tasks/{id}?after=`，决定何时唤醒或 steer 会话；唤醒、退避与重启行为以 AgentKit 文档为准。这几个接口的字段与语义、以及 MCP 工具名（preset 提示词引用 `read_task`、`finish` 等）是跨仓库契约，变更时须同步 AgentKit。适配插件不主动停止 turn：取消或改派后旧执行的写入被拒，由 Agent 读任务后结束；给 Agent 开放外部工具时须重新评估。
+`platform/taskloom` 是 Agent 层的适配，不是 Taskloom 服务端插件，也不新增 Taskloom 接口：它用该 Agent 自己的业务凭据只读 `GET /v1/me`、`/v1/changes`、`/v1/tasks?mine=true` 与 `/v1/tasks/{id}`，决定何时唤醒或 steer 会话；唤醒、退避与重启行为以 AgentKit 文档为准。这几个接口的字段与语义、以及 MCP 工具名（preset 提示词引用 `read_task`、`finish` 等）是跨仓库契约，变更时须同步 AgentKit。适配插件不主动停止 turn：取消或改派后旧执行的写入被拒，由 Agent 读任务后结束；给 Agent 开放外部工具时须重新评估。
 
 ```sh
 # 1. 为 Agent 签发业务凭据（一张凭据即一个运行实例，30 天），不打印；

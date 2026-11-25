@@ -41,6 +41,11 @@ func (noExecutor) Hold(context.Context, identity.Principal, string, string) (exe
 }
 func (noExecutor) Follow(context.Context, execution.Execution) error { return fault.ErrConflict }
 
+// noAssigner stands in for the execution module; these tests assign nothing.
+type noAssigner struct{}
+
+func (noAssigner) AssignCreated(context.Context, string, string, string) error { return fault.ErrInput }
+
 // noPlacer stands in for the plan module; these tests create no subtasks.
 type noPlacer struct{}
 
@@ -96,7 +101,7 @@ func fixtureWithStore(t *testing.T) (readBack, *security.Service, string, *store
 	if e != nil {
 		t.Fatal(e)
 	}
-	inner, e := workspace.New(workspace.Deps{Catalog: s, Transactions: s, Tasks: s, Commits: s, Flow: f, Identity: id, Authorization: az, Commands: r, Events: s, Members: s, Participants: s, Executor: noExecutor{}, Placer: noPlacer{}})
+	inner, e := workspace.New(workspace.Deps{Catalog: s, Transactions: s, Tasks: s, Commits: s, Flow: f, Identity: id, Authorization: az, Commands: r, Events: s, Members: s, Participants: s, Executor: noExecutor{}, Placer: noPlacer{}, Assigner: noAssigner{}})
 	if e != nil {
 		t.Fatal(e)
 	}

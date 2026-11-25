@@ -54,6 +54,15 @@ type Progress interface {
 	RecordProgress(ctx context.Context, p identity.Principal, tenant, taskID string) error
 }
 
+// Assigner assigns a task created in the caller's command transaction, so
+// creating and assigning it is one atomic command. The caller has
+// authenticated and authorized the actor; Assigner checks the subject is an
+// active member, makes it a participant, fences the current execution and,
+// for a person, starts their manual work. It writes no change event.
+type Assigner interface {
+	AssignCreated(ctx context.Context, tenant, taskID, subject string) error
+}
+
 // Executor is what a task command needs from the caller's own execution of
 // that task, inside the command's transaction.
 type Executor interface {

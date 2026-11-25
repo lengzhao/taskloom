@@ -8,7 +8,7 @@
 | --- | --- |
 | Status | active / cancelled / completed，只由流程控制器写入 |
 | RoundID | 一轮工作；只有 Restart（重开已取消任务）新建轮次，正常推进不变 |
-| Acceptance | `manual` 或 `none`，创建任务时按部署配置写入，此后固定；部署配置变更不暗改旧任务 |
+| Acceptance | `manual` 或 `none`，创建时写入、此后固定：创建请求指定优先，否则人建任务取部署默认、Agent 建子任务为 none，见[交付与验收](core-contracts.md#交付与验收)；部署配置变更不暗改旧任务 |
 
 缺少 Acceptance 的旧位置记录被明确拒绝（冲突），不猜测其验收方式。
 
@@ -36,7 +36,7 @@
 
 | 方法 | 语义 |
 | --- | --- |
-| Initialize | 同事务创建位置：新 RoundID、active、当前配置的 Acceptance |
+| Initialize | 同事务创建位置：新 RoundID、active、本次创建确定的 Acceptance |
 | Read | 读存储字段并推导步骤 |
 | Refresh | 每个改变事实的命令在同事务末尾调用；达成完成条件即写 completed |
 | CheckOpen | 分配和认领的前提：任务 active 且依据完整（非 ready） |

@@ -26,7 +26,7 @@ claude mcp add --transport http taskloom http://localhost:8899/v1/mcp \
 | answer_question | QuestionCommands.Answer | 回答别人向自己提的问题（open_questions 中 for_you 为 true） |
 | close_question | QuestionCommands.Close | 撤回自己提的、已不需要回答的问题（须写理由），撤回后不再阻止完成 |
 | submit_result | ResultCommands.Submit | 明确提交结果；result、files、links 至少一项 |
-| create_subtask | workspace.Create | 把自己正在执行的任务拆出子任务：title 必填，可带 goal、criteria、required（true/false）、owner（有效用户，默认本任务负责人）；自己成为子任务参与者，必需子任务不使自己的执行失效，见[任务拆分](core-contracts.md#任务拆分) |
+| create_subtask | workspace.Create | 把自己正在执行的任务拆出子任务：title 必填，可带 goal、criteria、required（true/false）、owner（有效用户，默认本任务负责人）、acceptance（manual/none，默认 none）、assignee（同事务分配的处理人，可分配范围由部署配置决定；分配给 Agent 后仍须认领）；自己成为子任务参与者，必需子任务不使自己的执行失效，见[任务拆分](core-contracts.md#任务拆分) |
 | upload_file | file.Commands.Upload | 上传 text 或 content_base64（MCP 请求上限 1MiB，约 700KB 内容），返回 file_id；只上传不进入时间线，更大的文件用 HTTP `POST /v1/tasks/{id}/files` |
 | read_file | file.Queries.Open | 读取文件：UTF-8 文本直接返回，其他 base64；超过 512KB 只返回元数据与下载路径 |
 

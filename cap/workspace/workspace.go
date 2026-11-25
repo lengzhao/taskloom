@@ -14,10 +14,17 @@ import (
 // parent's current execution. Required says whether the parent's delivery
 // waits for it. Owner, only for a subtask, names any active human member;
 // empty means the creator, or the parent's owner when an Agent creates it.
+// Acceptance fixes the task's acceptance mode; empty is the deployment
+// default for a person and none for an Agent's subtask. Assignee assigns the
+// new task in the same transaction, as the assign command would; a person
+// needs assignment rights on the new task, an Agent is limited by the
+// deployment's agent assignment policy.
 type Create struct {
 	Title, Goal, Criteria, ProjectID, ParentID string
-	Owner                                      string `json:",omitempty"`
-	Required                                   bool   `json:",omitempty"`
+	Owner                                      string          `json:",omitempty"`
+	Required                                   bool            `json:",omitempty"`
+	Acceptance                                 flow.Acceptance `json:",omitempty"`
+	Assignee                                   string          `json:",omitempty"`
 }
 
 // Handover makes Owner, an active person, responsible for the task. It pins

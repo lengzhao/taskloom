@@ -56,7 +56,7 @@ func TestStepIsDerivedFromFacts(t *testing.T) {
 		if e := s.CreateTask(ctx, tk); e != nil {
 			return e
 		}
-		p, e := c.Initialize(ctx, tk)
+		p, e := c.Initialize(ctx, tk, "")
 		expect(t, p, e, capflow.PhaseActive, capflow.StepReady, "请补充任务目标")
 		if _, e = c.CheckOpen(ctx, tk); !errors.Is(e, fault.ErrConflict) {
 			t.Fatal("claim allowed without a basis", e)
@@ -123,7 +123,7 @@ func TestAcceptanceIsFixedPerTask(t *testing.T) {
 		if e := s.CreateTask(ctx, tk); e != nil {
 			return e
 		}
-		p, e := manual.Initialize(ctx, tk)
+		p, e := manual.Initialize(ctx, tk, "")
 		if e != nil {
 			return e
 		}

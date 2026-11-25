@@ -66,7 +66,10 @@ type PositionStore interface {
 // Controller is the only writer of phase and round. Every method runs inside
 // the caller's command transaction.
 type Controller interface {
-	Initialize(ctx context.Context, value task.Task) (Position, error)
+	// Initialize creates the position with the given acceptance mode, fixed
+	// from then on; empty takes the deployment default, an unknown mode is
+	// fault.ErrInput.
+	Initialize(ctx context.Context, value task.Task, acceptance Acceptance) (Position, error)
 	// Read returns the stored position with its derived step.
 	Read(ctx context.Context, value task.Task) (Position, error)
 	// Refresh completes the task once its facts satisfy completion.

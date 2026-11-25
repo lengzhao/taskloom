@@ -114,4 +114,16 @@ type Service interface {
 	Tags(ctx context.Context, credential string) ([]Tag, error)
 	Tag(ctx context.Context, credential, id string) (Tag, error)
 	SaveTag(ctx context.Context, credential, idempotencyKey string, value TagEdit) (tagID string, err error)
+	// RecommendedTags lists the deployment's recommended tags the space does
+	// not have yet by name (ignoring case, archived included); any active
+	// member may read it. ImportRecommendedTags adds them as ordinary tags,
+	// for human administrators only.
+	RecommendedTags(ctx context.Context, credential string) ([]TagSpec, error)
+	ImportRecommendedTags(ctx context.Context, credential, idempotencyKey string) (tagIDs []string, err error)
+}
+
+// TagSpec is a recommended tag from the deployment configuration. Config
+// files may write its keys in lower case (name, description).
+type TagSpec struct {
+	Name, Description string
 }

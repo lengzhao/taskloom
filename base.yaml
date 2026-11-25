@@ -73,6 +73,17 @@ security:
     events: sql
 catalog:
   use: catalog/projects
+  config:
+    # Recommended tags an administrator may import; config.yaml replaces the
+    # whole list, and an empty list recommends none. Never written on its own.
+    recommendedTags:
+      - {name: 需求, description: 新功能或改进}
+      - {name: 缺陷, description: 需要修复的问题}
+      - {name: 调研, description: 收集信息、比较方案}
+      - {name: 技术债, description: 需要偿还的历史问题}
+      - {name: 文档, description: 对内对外的文档与示例}
+      - {name: 安全, description: 安全风险与合规}
+      - {name: 客户反馈, description: 来自客户工单与问卷}
   deps:
     transactions: sql
     identity: identity

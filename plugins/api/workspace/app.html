@@ -578,7 +578,7 @@ let createTags=null;
 function tagPicker(chosen=[]){
  const set=new Set(chosen),box=h('div','tag-picker');
  for(const t of tags.filter(t=>!t.Archived||set.has(t.ID))){const c=el('input');c.type='checkbox';c.value=t.ID;c.checked=set.has(t.ID);c.style.width='auto';const l=el('label');l.title=t.Description||'';l.append(c,document.createTextNode('#'+t.Name+(t.Archived?'（已归档）':'')));box.append(l)}
- if(!box.children.length)box.append(el('span','空间还没有标签，'+(viewer.CanAdmin?'可在「空间设置」中添加。':'由管理员在「空间设置」中维护。'),'muted small'));
+ if(!box.children.length)box.append(el('span','空间还没有标签，'+(viewer.CanAdmin?'可在「空间设置」中导入推荐标签或自行添加。':'请联系管理员在「空间设置」中导入推荐标签。'),'muted small'));
  return {node:box,value:()=>[...box.querySelectorAll('input:checked')].map(c=>c.value)};
 }
 // renderGoals rolls each goal up over its whole readable subtree. Only the
@@ -612,6 +612,14 @@ function renderTagAdmin(){
  const box=h('div','tag-admin',el('h3','标签'),el('p','标签只用于分类和筛选，不影响流程和权限。归档后不能再加到任务上，已打上的保留。','muted small'));
  const list=h('div','tag-admin');list.style.marginTop='8px';box.append(list);
  if(!viewer.CanAdmin){list.append(...(tags.length?tagPills(tags.filter(t=>!t.Archived).map(t=>t.ID)):[el('span','还没有标签。','muted small')]));return box}
+ // Recommended tags come from the deployment; the administrator previews
+ // the missing ones and imports them explicitly.
+ const recommend=h('div');list.append(recommend);
+ api('/tags/recommended').then(missing=>{
+  if(!missing.length)return;
+  const names=missing.map(r=>r.Name).join('、');
+  recommend.append(h('div','actions',button('导入推荐标签（'+missing.length+' 个）',()=>confirmThen('将添加：'+names+'。导入后可以像其他标签一样改名或归档。继续？',async()=>{await api('/tags/recommended','POST');await list();notice('已导入推荐标签')}),'primary'),el('span',names,'muted small')));
+ }).catch(e=>notice(e.message));
  const save=(t,v)=>api(t?'/tags/'+t.ID:'/tags',t?'PATCH':'POST',{Name:v.Name,Description:v.Description||'',Archived:v.Archived||false,ExpectedVersion:t?.Version||0});
  for(const t of [...tags].sort((a,b)=>a.Archived-b.Archived)){
   const name=el('input');name.name='Name';name.value=t.Name;name.maxLength=40;name.required=true;

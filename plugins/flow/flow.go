@@ -84,8 +84,14 @@ func id() string {
 	return fmt.Sprintf("%x", b)
 }
 
-func (c *Controller) Initialize(ctx context.Context, t task.Task) (capflow.Position, error) {
-	p := capflow.Position{Status: capflow.PhaseActive, Tenant: t.Tenant, TaskID: t.ID, RoundID: id(), Acceptance: c.c.Acceptance}
+func (c *Controller) Initialize(ctx context.Context, t task.Task, acceptance capflow.Acceptance) (capflow.Position, error) {
+	if acceptance == "" {
+		acceptance = c.c.Acceptance
+	}
+	if !knownAcceptance(acceptance) {
+		return capflow.Position{}, fault.ErrInput
+	}
+	p := capflow.Position{Status: capflow.PhaseActive, Tenant: t.Tenant, TaskID: t.ID, RoundID: id(), Acceptance: acceptance}
 	if e := c.d.Positions.CreatePosition(ctx, p); e != nil {
 		return p, e
 	}

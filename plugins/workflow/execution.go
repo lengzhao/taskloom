@@ -94,47 +94,69 @@ func (m *ExecutionModule) Assign(ctx context.Context, token, key string, in api.
 		if e != nil {
 			return api.Ref{}, e
 		}
-		if pos.Status != flow.PhaseActive {
-			return api.Ref{}, fault.ErrConflict
-		}
-		if _, e = m.d.Flow.CheckOpen(tx, t); e != nil {
-			return api.Ref{}, e
-		}
-		subject, e := m.d.Principals.Resolve(tx, t.Tenant, in.Subject)
+		started, e := m.assign(tx, t, pos, in.Subject)
 		if e != nil {
 			return api.Ref{}, e
-		}
-		if subject.Kind != "agent" && subject.Kind != "human" {
-			return api.Ref{}, fault.ErrInput
-		}
-		member, e := m.d.Members.GetMember(tx, t.Tenant, subject.ID)
-		if e != nil || !member.Active {
-			return api.Ref{}, az.ErrForbidden
-		}
-		if e = fence(tx, m.d.Executions, t); e != nil {
-			return api.Ref{}, e
-		}
-		// The owner already holds every task right; a participation row would add nothing.
-		if in.Subject != t.Owner {
-			if e = m.d.Participants.SetParticipant(tx, az.Participant{Tenant: t.Tenant, TaskID: t.ID, Subject: in.Subject}, true); e != nil {
-				return api.Ref{}, e
-			}
-		}
-		if e = m.d.Executions.AssignSubject(tx, t.Tenant, t.ID, in.Subject); e != nil {
-			return api.Ref{}, e
-		}
-		// A person needs no separate claim: assignment starts their manual work.
-		// An Agent still claims, binding the execution to one credential.
-		var started execution.Execution
-		if subject.Kind == "human" {
-			if started, e = m.start(tx, t, pos, subject.ID, ""); e != nil {
-				return api.Ref{}, e
-			}
 		}
 		ref, e := finish(tx, m.d.Flow, m.d.Events, t)
 		ref.ExecutionID = started.ID
 		return ref, e
 	})
+}
+
+// AssignCreated implements execution.Assigner for a command that creates the
+// task in the same transaction; that command announces the change itself.
+func (m *ExecutionModule) AssignCreated(ctx context.Context, tenant, taskID, subject string) error {
+	t, e := m.d.Tasks.GetTask(ctx, tenant, taskID)
+	if e != nil {
+		return e
+	}
+	pos, e := m.d.Flow.Read(ctx, t)
+	if e != nil {
+		return e
+	}
+	_, e = m.assign(ctx, t, pos, subject)
+	return e
+}
+
+// assign makes subject the task's handler: an active member who becomes a
+// participant, fencing the current execution. A person needs no separate
+// claim, so their manual work starts here; an Agent still claims, binding
+// the execution to one credential.
+func (m *ExecutionModule) assign(tx context.Context, t task.Task, pos flow.Position, subject string) (execution.Execution, error) {
+	if pos.Status != flow.PhaseActive {
+		return execution.Execution{}, fault.ErrConflict
+	}
+	if _, e := m.d.Flow.CheckOpen(tx, t); e != nil {
+		return execution.Execution{}, e
+	}
+	who, e := m.d.Principals.Resolve(tx, t.Tenant, subject)
+	if e != nil {
+		return execution.Execution{}, e
+	}
+	if who.Kind != "agent" && who.Kind != "human" {
+		return execution.Execution{}, fault.ErrInput
+	}
+	member, e := m.d.Members.GetMember(tx, t.Tenant, who.ID)
+	if e != nil || !member.Active {
+		return execution.Execution{}, az.ErrForbidden
+	}
+	if e = fence(tx, m.d.Executions, t); e != nil {
+		return execution.Execution{}, e
+	}
+	// The owner already holds every task right; a participation row would add nothing.
+	if subject != t.Owner {
+		if e = m.d.Participants.SetParticipant(tx, az.Participant{Tenant: t.Tenant, TaskID: t.ID, Subject: subject}, true); e != nil {
+			return execution.Execution{}, e
+		}
+	}
+	if e = m.d.Executions.AssignSubject(tx, t.Tenant, t.ID, subject); e != nil {
+		return execution.Execution{}, e
+	}
+	if who.Kind == "human" {
+		return m.start(tx, t, pos, who.ID, "")
+	}
+	return execution.Execution{}, nil
 }
 
 // start opens a writable execution on the current round and basis. Agent work

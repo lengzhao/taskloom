@@ -421,4 +421,13 @@ func TestAgentSplitsATaskThroughMCP(t *testing.T) {
 		t.Fatal("execution fenced by the Agent's own split")
 	}
 	f.ok("read_task", map[string]string{"task_id": sub})
+	if text, isErr := f.tool("create_subtask", map[string]string{"task_id": id, "title": "x", "acceptance": "later"}); !isErr || !strings.Contains(text, "acceptance") {
+		t.Fatal("bad acceptance accepted", text)
+	}
+	out = f.ok("create_subtask", map[string]string{"task_id": id, "title": "自己做", "goal": "g", "criteria": "c", "assignee": "agent"})
+	mine, _ := out["subtask_id"].(string)
+	if mine == "" || !strings.Contains(out["message"].(string), "start_work") {
+		t.Fatal("self-assigned subtask", out)
+	}
+	f.ok("start_work", map[string]string{"task_id": mine, "basis": f.ok("read_task", map[string]string{"task_id": mine})["basis"].(string)})
 }

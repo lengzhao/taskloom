@@ -82,6 +82,9 @@ catalog:
     events: sql
 workspace:
   use: workspace/tasks
+  config:
+    # Whom an Agent may assign a subtask it creates to: any, self or none.
+    agentAssign: any
   deps:
     catalog: sql
     members: sql
@@ -96,6 +99,7 @@ workspace:
     events: sql
     executor: execution-commands
     placer: plan-commands
+    assigner: execution-commands
 workspace-api:
   use: api/workspace
   deps:

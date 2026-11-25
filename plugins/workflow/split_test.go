@@ -7,6 +7,7 @@ import (
 	"github.com/lengzhao/taskloom/cap/acceptance"
 	az "github.com/lengzhao/taskloom/cap/authorization"
 	"github.com/lengzhao/taskloom/cap/fault"
+	"github.com/lengzhao/taskloom/cap/flow"
 	api "github.com/lengzhao/taskloom/cap/workflow"
 	workspace "github.com/lengzhao/taskloom/cap/workspace"
 )
@@ -19,7 +20,8 @@ func TestAgentSplitsTaskItExecutes(t *testing.T) {
 	lead := f.human(t, "lead")
 	parent := f.create(t)
 	work := f.open(t, parent).Execution.ID
-	in := workspace.Create{Title: "part", Goal: "goal", Criteria: "criteria", ParentID: parent.Task.ID, Owner: "lead", Required: true}
+	// The Agent asks for the owner's review of this step.
+	in := workspace.Create{Title: "part", Goal: "goal", Criteria: "criteria", ParentID: parent.Task.ID, Owner: "lead", Required: true, Acceptance: flow.AcceptanceManual}
 	ref, e := f.tasks.Commands.Create(f.ctx, f.agent, "split", in)
 	if e != nil {
 		t.Fatal(e)

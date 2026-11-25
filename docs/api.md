@@ -22,7 +22,7 @@
 | 当前人工处理人（仍参与） | 提交结果并转交；不取得负责人或验收资格 |
 | 任务参与者 | 读取、评论（只能更正自己的评论）、提问（可问任一有效成员，被问者随之成为参与者） |
 | 项目负责人与项目成员（人或 Agent） | 对项目内每个任务等同参与者；不能管理、移动、移交或验收 |
-| Agent | 不继承所属人任何权限；须显式参与任务（被分配或被提问）；只能认领分配给自己的任务；持有当前执行时可在该任务下新建子任务；可读成员目录 |
+| Agent | 不继承所属人任何权限；须显式参与任务（被分配或被提问）；只能认领分配给自己的任务；持有当前执行时可在该任务下新建子任务，并按部署配置同时分配处理人（默认任一有效成员）；可读成员目录 |
 | Skill（启用时） | 有效成员读取可见目录并新建 skill；拥有者与协作者发布新版本；拥有者管理可见性、协作者与归档；人类管理员管理本租户全部 skill、审核（不审自己发布的版本）与重建索引，见 [Skill](skills.md#权限) |
 | 停用或不存在的成员 | 无任何访问，即使保留负责人/参与历史 |
 
@@ -52,7 +52,7 @@
 | GET/PATCH /space | 读取；管理员更新 Name、Description、ExpectedVersion，响应为当前空间 |
 | GET/POST /projects、PATCH /projects/{id} | 目录、创建（Name、Description、Owner、Members）与编辑/归档（另带 Archived、ExpectedVersion），整项替换，省略 Members 即清空成员；Members 为有效成员（人或 Agent），最多 200 个，自动去重并去掉负责人；管理员或项目负责人可编辑；写入响应为该项目当前状态，回执只存项目 ID |
 | GET /people | 有效成员目录（Subject、Kind、OwnerID），任一有效成员（含 Agent）可读；`?q=` 按 Subject 片段搜索、`kind=human\|agent`、按 Subject 分页（`after`，`limit` 默认 50、最多 200），返回 `{Items, Next}`；供选项目负责人、处理人、参与者和被提问人，不按任务过滤 |
-| GET/POST /tasks | 当前可读任务列表（不含时间线；可用 `?id=` 限定，见[变化补拉](#变化补拉)）；创建（Title、Goal、Criteria、可选 ProjectID；可选 ParentID、Required 与 Owner 直接建为子任务，同一事务内创建并放置，需父任务调整子任务的资格，Agent 则需持有父任务当前可写执行，任一步失败都不留下任务；Owner 为空间内有效人类成员，空时人为本人、Agent 为父任务负责人；只传 Required 或 Owner 不传 ParentID 返回 400，Owner 不是有效人类成员返回 400），响应为调用者此刻读到的任务详情 |
+| GET/POST /tasks | 当前可读任务列表（不含时间线；可用 `?id=` 限定，见[变化补拉](#变化补拉)）；创建（Title、Goal、Criteria、可选 ProjectID；可选 ParentID、Required 与 Owner 直接建为子任务，同一事务内创建并放置，需父任务调整子任务的资格，Agent 则需持有父任务当前可写执行，任一步失败都不留下任务；Owner 为空间内有效人类成员，空时人为本人、Agent 为父任务负责人；只传 Required 或 Owner 不传 ParentID 返回 400，Owner 不是有效人类成员返回 400；可选 Acceptance（`manual`/`none`，其他值 400，空时的默认见[核心契约](core-contracts.md#标识与版本)）；可选 Assignee 同事务分配，人的资格同分配命令，Agent 可填的范围由部署配置决定，超出返回 403，依据不完整时 409，见[任务拆分](core-contracts.md#任务拆分)），响应为调用者此刻读到的任务详情 |
 | GET/PATCH /tasks/{id} | 详情与 commit 分页（`?after=<Sequence>`，每页 100）；修改约定（Title、Goal、Criteria、BasisVersion），响应为当前任务详情 |
 | POST /tasks/{id}/commits | 评论或更正（Body、可选 RefID，只能引用自己的评论；可选 Files、Links，见[文件](#文件)，三者至少一项）；响应为 `{TaskID, CommitID}`，重放返回同一 CommitID；已失效执行的 Agent 实例返回 409，见[写入隔离](core-contracts.md#执行与写入隔离) |
 | POST /tasks/{id}/participants | 负责人或管理员加入/移出参与者（Subject、Present） |

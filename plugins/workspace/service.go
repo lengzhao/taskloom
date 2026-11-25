@@ -45,25 +45,63 @@ type Deps struct {
 	// keeps it across the basis change it made.
 	Executor execution.Executor `json:"executor"`
 	// Placer places a task created under a parent in the same transaction.
-	// Thirteen fields, reviewed: the placement rule stays in the plan module;
-	// this field only lets creation and placement be one atomic command.
 	Placer plan.Placer `json:"placer"`
+	// Assigner assigns a task created in the same transaction.
+	// Fourteen fields, reviewed: placement and assignment rules stay in the
+	// plan and execution modules; these two fields only let creation, placing
+	// and assigning be one atomic command.
+	Assigner execution.Assigner `json:"assigner"`
 }
+
+// Agent assignment policies: whom an Agent may assign a subtask it creates to.
+const (
+	AgentAssignAny  = "any"  // any active member, person or Agent
+	AgentAssignSelf = "self" // only the creating Agent
+	AgentAssignNone = "none" // nobody; the subtask's owner assigns it
+)
+
+type Config struct {
+	// AgentAssign limits the Assignee an Agent may name when it creates a
+	// subtask: any (default), self or none. It constrains later creations only.
+	AgentAssign string `json:"agentAssign"`
+}
+
+func (c *Config) SetDefaults() {
+	if c.AgentAssign == "" {
+		c.AgentAssign = AgentAssignAny
+	}
+}
+func (c *Config) Validate() error {
+	switch c.AgentAssign {
+	case AgentAssignAny, AgentAssignSelf, AgentAssignNone:
+		return nil
+	}
+	return fmt.Errorf("unknown agentAssign %q", c.AgentAssign)
+}
+
 type Service struct {
+	c Config
 	d Deps
 }
 
 func init() {
-	pluginkit.Register("workspace/tasks", func(_ struct{}, d Deps) (*Service, error) { return New(d) })
+	pluginkit.Register("workspace/tasks", NewWithConfig)
 }
-func New(d Deps) (*Service, error) {
-	if d.Catalog == nil || d.Transactions == nil || d.Tasks == nil || d.Commits == nil || d.Flow == nil || d.Members == nil || d.Participants == nil || d.Identity == nil || d.Authorization == nil || d.Events == nil || d.Executor == nil || d.Placer == nil {
+
+// New builds the service with the default configuration.
+func New(d Deps) (*Service, error) { return NewWithConfig(Config{}, d) }
+func NewWithConfig(c Config, d Deps) (*Service, error) {
+	c.SetDefaults()
+	if e := c.Validate(); e != nil {
+		return nil, e
+	}
+	if d.Catalog == nil || d.Transactions == nil || d.Tasks == nil || d.Commits == nil || d.Flow == nil || d.Members == nil || d.Participants == nil || d.Identity == nil || d.Authorization == nil || d.Events == nil || d.Executor == nil || d.Placer == nil || d.Assigner == nil {
 		return nil, errors.New("task capabilities required")
 	}
 	if d.Commands == nil {
 		return nil, errors.New("command lifecycle required")
 	}
-	return &Service{d: d}, nil
+	return &Service{c: c, d: d}, nil
 }
 func id() string {
 	var b [16]byte
@@ -96,6 +134,9 @@ func (s *Service) event(ctx context.Context, t task.Task) error {
 }
 func (s *Service) Create(ctx context.Context, token, key string, in api.Create) (api.Ref, error) {
 	var out api.Ref
+	if in.Acceptance != "" && in.Acceptance != flow.AcceptanceManual && in.Acceptance != flow.AcceptanceNone {
+		return out, fault.ErrInput
+	}
 	if (in.Required || in.Owner != "") && in.ParentID == "" {
 		// Required describes a relation that would not exist; a top-level
 		// task is owned by the person who creates it.
@@ -136,11 +177,25 @@ func (s *Service) Create(ctx context.Context, token, key string, in api.Create) 
 		if e := s.d.Tasks.CreateTask(tx, t); e != nil {
 			return nil, e
 		}
-		if _, e := s.d.Flow.Initialize(tx, t); e != nil {
+		acceptance := in.Acceptance
+		if acceptance == "" && p.Kind == "agent" {
+			// The person answers for the task the Agent split; its steps
+			// complete on a valid result unless the Agent asks for review.
+			acceptance = flow.AcceptanceNone
+		}
+		if _, e := s.d.Flow.Initialize(tx, t, acceptance); e != nil {
 			return nil, e
 		}
 		if _, e := s.append(tx, p, t, "task.created", in.Title, ""); e != nil {
 			return nil, e
+		}
+		if in.Assignee != "" {
+			if e := s.mayAssign(tx, p, t.ID, in.Assignee); e != nil {
+				return nil, e
+			}
+			if e := s.d.Assigner.AssignCreated(tx, p.Tenant, t.ID, in.Assignee); e != nil {
+				return nil, e
+			}
 		}
 		if in.ParentID != "" {
 			// The placement announces the new task and its parent itself.
@@ -167,6 +222,23 @@ func (s *Service) Create(ctx context.Context, token, key string, in api.Create) 
 		e = json.Unmarshal(b, &out)
 	}
 	return out, e
+}
+
+// mayAssign decides whether the creator may assign the task it just created:
+// a person needs assignment rights on it, an Agent the deployment's policy.
+func (s *Service) mayAssign(ctx context.Context, p identity.Principal, taskID, subject string) error {
+	if p.Kind != "agent" {
+		return s.d.Authorization.Check(ctx, p, "execution.assign", taskID)
+	}
+	switch s.c.AgentAssign {
+	case AgentAssignAny:
+		return nil
+	case AgentAssignSelf:
+		if subject == p.ID {
+			return nil
+		}
+	}
+	return az.ErrForbidden
 }
 
 // creation decides who owns a new task. A person owns a top-level task they

@@ -150,15 +150,16 @@ func (s *Service) Create(ctx context.Context, token, key string, in api.Create) 
 	if in.Acceptance != "" && in.Acceptance != flow.AcceptanceManual && in.Acceptance != flow.AcceptanceNone {
 		return out, fault.Input(fault.CodeInvalid, "Acceptance")
 	}
-	if (in.Required || in.Owner != "") && in.ParentID == "" {
-		// Required describes a relation that would not exist; a top-level
-		// task is owned by the person who creates it.
+	if in.Required && in.ParentID == "" {
+		// Required describes a relation that would not exist.
 		return out, fault.Input("relation_needs_parent", "ParentID")
 	}
 	p, e := s.actor(ctx, token)
 	if e != nil {
 		return out, e
 	}
+	// People and Agents create through the same command; a top-level task
+	// and a subtask differ only in ParentID.
 	req := capcommand.Request{Token: token, Key: key, Operation: "task.create", Resource: p.Tenant}
 	if in.ParentID != "" {
 		// Creating under a parent changes the parent's plan, so it also needs
@@ -219,12 +220,6 @@ func (s *Service) Create(ctx context.Context, token, key string, in api.Create) 
 			if e := s.d.Placer.Apply(tx, p, plan.Placement{ChildID: t.ID, ParentID: in.ParentID, Required: in.Required}); e != nil {
 				return nil, e
 			}
-			// A creator who does not own the subtask follows it as a participant.
-			if owner != p.ID {
-				if e := s.d.Participants.SetParticipant(tx, az.Participant{Tenant: p.Tenant, TaskID: t.ID, Subject: p.ID}, true); e != nil {
-					return nil, e
-				}
-			}
 			if held != nil {
 				if e := s.d.Executor.Follow(tx, *held); e != nil {
 					return nil, e
@@ -232,6 +227,12 @@ func (s *Service) Create(ctx context.Context, token, key string, in api.Create) 
 			}
 		} else if e := s.event(tx, t); e != nil {
 			return nil, e
+		}
+		// A creator who does not own the task follows it as a participant.
+		if owner != p.ID {
+			if e := s.d.Participants.SetParticipant(tx, az.Participant{Tenant: p.Tenant, TaskID: t.ID, Subject: p.ID}, true); e != nil {
+				return nil, e
+			}
 		}
 		return json.Marshal(api.Ref{TaskID: t.ID})
 	})
@@ -258,9 +259,10 @@ func (s *Service) mayAssign(ctx context.Context, p identity.Principal, taskID, s
 	return az.ErrForbidden
 }
 
-// creation decides who owns a new task. A person owns a top-level task they
-// create. A subtask may name any active human member as owner; otherwise its
-// creator owns it, or, for an Agent, the parent's owner. An Agent creates
+// creation decides who owns a new task; a top-level task and a subtask
+// differ only in ParentID. Owner may name any active person. Otherwise a
+// person owns what they create; an Agent's subtask belongs to the parent's
+// owner and its top-level task to the Agent's own owner. An Agent creates
 // subtasks only under the task it holds the current execution of, returned
 // so that execution can follow the parent's basis.
 func (s *Service) creation(ctx context.Context, p identity.Principal, in api.Create) (string, *execution.Execution, error) {
@@ -269,32 +271,51 @@ func (s *Service) creation(ctx context.Context, p identity.Principal, in api.Cre
 	switch p.Kind {
 	case "human":
 	case "agent":
-		if in.ParentID == "" {
-			return "", nil, az.ErrForbidden
+		owner = p.OwnerID
+		if in.ParentID != "" {
+			v, e := s.d.Executor.Hold(ctx, p, p.Tenant, in.ParentID)
+			if e != nil {
+				return "", nil, e
+			}
+			parent, e := s.d.Tasks.GetTask(ctx, p.Tenant, in.ParentID)
+			if e != nil {
+				return "", nil, e
+			}
+			held, owner = &v, parent.Owner
 		}
-		v, e := s.d.Executor.Hold(ctx, p, p.Tenant, in.ParentID)
-		if e != nil {
-			return "", nil, e
-		}
-		parent, e := s.d.Tasks.GetTask(ctx, p.Tenant, in.ParentID)
-		if e != nil {
-			return "", nil, e
-		}
-		held, owner = &v, parent.Owner
 	default:
 		return "", nil, az.ErrForbidden
 	}
 	if in.Owner == "" {
+		if p.Kind == "agent" && in.ParentID == "" {
+			ok, e := s.person(ctx, p.Tenant, owner)
+			if e != nil {
+				return "", nil, e
+			}
+			if !ok {
+				// The Agent's owner has left; someone must answer for the task.
+				return "", nil, fault.Input("owner_ambiguous", "Owner")
+			}
+		}
 		return owner, held, nil
 	}
-	people, e := s.d.Members.ListActiveMembers(ctx, p.Tenant, az.MemberQuery{Subject: in.Owner, Kind: "human"})
+	ok, e := s.person(ctx, p.Tenant, in.Owner)
 	if e != nil {
 		return "", nil, e
 	}
-	if len(people) == 1 {
-		return in.Owner, held, nil
+	if !ok {
+		return "", nil, fault.Input("owner_not_person", "Owner")
 	}
-	return "", nil, fault.Input("owner_not_person", "Owner")
+	return in.Owner, held, nil
+}
+
+// person says whether subject is an active human member.
+func (s *Service) person(ctx context.Context, tenant, subject string) (bool, error) {
+	if subject == "" {
+		return false, nil
+	}
+	people, e := s.d.Members.ListActiveMembers(ctx, tenant, az.MemberQuery{Subject: subject, Kind: "human"})
+	return len(people) == 1, e
 }
 
 func (s *Service) Edit(ctx context.Context, token, key string, in api.Edit) (api.Ref, error) {

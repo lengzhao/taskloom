@@ -69,8 +69,8 @@ func TestAgentSplitsTaskItExecutes(t *testing.T) {
 	}
 }
 
-// Only the Agent holding the task's current execution may split it, never at
-// the top level, and only to a human owner. A plan change by anyone else
+// Only the Agent holding the task's current execution may split it, and only
+// to a human owner. A plan change by anyone else
 // still fences the execution.
 func TestAgentSplitGuards(t *testing.T) {
 	f := setup(t, nil)
@@ -86,9 +86,6 @@ func TestAgentSplitGuards(t *testing.T) {
 	if e := split(f.agent, "unrelated", workspace.Create{ParentID: parent.Task.ID}); !errors.Is(e, az.ErrForbidden) {
 		t.Fatal("Agent split a task it does not take part in", e)
 	}
-	if e := split(f.agent, "top", workspace.Create{}); !errors.Is(e, az.ErrForbidden) {
-		t.Fatal("Agent created a top-level task", e)
-	}
 	if _, e := f.ex.Assign(f.ctx, f.owner, "assign", api.Assignment{TaskID: parent.Task.ID, Subject: "agent"}); e != nil {
 		t.Fatal(e)
 	}
@@ -103,9 +100,6 @@ func TestAgentSplitGuards(t *testing.T) {
 		if e := split(f.agent, "owner-"+owner, workspace.Create{ParentID: parent.Task.ID, Owner: owner}); !errors.Is(e, fault.ErrInput) {
 			t.Fatal("subtask owner must be an active person", owner, e)
 		}
-	}
-	if e := split(f.owner, "top-owner", workspace.Create{Owner: "lead"}); !errors.Is(e, fault.ErrInput) {
-		t.Fatal("top-level task named another owner", e)
 	}
 	ref, e := f.tasks.Commands.Create(f.ctx, f.agent, "optional", workspace.Create{Title: "side", Goal: "g", Criteria: "c", ParentID: parent.Task.ID})
 	if e != nil {

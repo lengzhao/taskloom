@@ -77,7 +77,9 @@ func (s *Service) Check(ctx context.Context, p identity.Principal, op, resource 
 		}
 		return az.ErrForbidden
 	case "task.create":
-		if resource == p.Tenant && p.Kind == "human" {
+		// Any active member, person or Agent, may create a task; a subtask
+		// also needs task.plan or, for an Agent, task.split on the parent.
+		if resource == p.Tenant && (p.Kind == "human" || p.Kind == "agent") {
 			return nil
 		}
 		return az.ErrForbidden

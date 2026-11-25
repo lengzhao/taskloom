@@ -21,13 +21,13 @@ claude mcp add --transport http taskloom http://localhost:8899/v1/mcp \
 | read_task | workflow.Read（最新一页）+ file.Queries.List | 你是谁（you）、目标、标准、标签名称（tags）、状态、等谁、can/blocked 原因、待答问题（for_you 标出问你的）、已在任务中的其他参与者（participants）、当前结果、最近进展时间、可读的父任务与子任务、最近 20 条时间线（每条带 id、文件名与链接）及 basis；更早的记录存在时返回 `earlier_before`，作为 `before` 传入向前翻页 |
 | start_work | ExecutionCommands.Open | 认领执行 |
 | post_message | workspace.Comment | 留言：进度、回复人的引导，可带 files（file_id 字符串数组）与 links（`{url, title}` 对象数组）；记录最近进展，不算交付 |
-| list_people | workspace.People | 空间内有效成员（subject、kind），可按 ID 片段与 kind 过滤，按 subject 分页（next/after，每页 50）；供 ask 的 `to` 与 create_subtask 的 owner/assignee 选人 |
+| list_people | workspace.People | 空间内有效成员（subject、kind），可按 ID 片段与 kind 过滤，按 subject 分页（next/after，每页 50）；供 ask 的 `to` 与 create_task 的 owner/assignee 选人 |
 | ask | QuestionCommands.Ask | 提问或请求协助：默认问负责人，`to` 可填任一有效成员（不在任务中时自动加为参与者）；未答前任务不能完成 |
 | answer_question | QuestionCommands.Answer | 回答别人向自己提的问题（open_questions 中 for_you 为 true） |
 | close_question | QuestionCommands.Close | 撤回自己提的、已不需要回答的问题（须写理由），撤回后不再阻止完成 |
 | submit_result | ResultCommands.Submit | 明确提交结果；result、files、links 至少一项 |
-| create_subtask | workspace.Create | 把自己正在执行的任务拆出子任务：title 必填，可带 goal、criteria、required（布尔值）、owner（有效用户，默认本任务负责人）、acceptance（manual/none，默认 none）、assignee（同事务分配的处理人，可分配范围由部署配置决定；分配给 Agent 后仍须认领）、tags（标签名称数组，不区分大小写解析为标签 ID；未知名称提示用 list_tags，已归档或超过上限由创建命令拒绝）；自己成为子任务参与者，必需子任务不使自己的执行失效，见[任务拆分](core-contracts.md#任务拆分) |
-| list_tags | catalog.Tags | 空间中未归档的标签（name、description），供 create_subtask 的 tags 选择；标签只能在创建时选，创建后由负责人或管理员修改，规则见[层级与标签](core-contracts.md#层级与标签) |
+| create_task | workspace.Create | 新建任务：title 必填；不带 parent_task_id 为顶层任务（负责人默认为你的所属人），带上则把你正在执行的该任务拆出子任务（须已 start_work，负责人默认为该任务负责人，可带 required 布尔值）；可带 goal、criteria、owner（有效用户）、acceptance（manual/none，默认 none）、assignee（同事务分配的处理人，可分配范围由部署配置决定；分配给 Agent 后仍须认领）、tags（标签名称数组，不区分大小写解析为标签 ID；未知名称提示用 list_tags，已归档或超过上限由创建命令拒绝）；自己不是负责人时成为参与者，必需子任务不使自己的执行失效，见[任务拆分](core-contracts.md#任务拆分) |
+| list_tags | catalog.Tags | 空间中未归档的标签（name、description），供 create_task 的 tags 选择；标签只能在创建时选，创建后由负责人或管理员修改，规则见[层级与标签](core-contracts.md#层级与标签) |
 | reassign | ExecutionCommands.Assign | 改派给他人（to）：调用者须是当前处理人或当前这次分配的派送人，规则见[分配、认领与转交](task-flow.md#分配认领与转交)；原执行立即失效 |
 | upload_file | file.Commands.Upload | 上传 text 或 content_base64（MCP 请求上限 1MiB，约 700KB 内容），返回 file_id；只上传不进入时间线，更大的文件用 HTTP `POST /v1/tasks/{id}/files` |
 | read_file | file.Queries.Open | 读取文件：UTF-8 文本直接返回，其他 base64；超过 512KB 只返回元数据与下载路径 |

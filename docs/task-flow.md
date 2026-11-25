@@ -8,7 +8,7 @@
 | --- | --- |
 | Status | active / cancelled / completed，只由流程控制器写入 |
 | RoundID | 一轮工作；只有 Restart（重开已取消任务）新建轮次，正常推进不变 |
-| Acceptance | `manual` 或 `none`，创建时写入、此后固定：创建请求指定优先，否则人建任务取部署默认、Agent 建子任务为 none，见[交付与验收](core-contracts.md#交付与验收)；部署配置变更不暗改旧任务 |
+| Acceptance | `manual` 或 `none`，创建时写入、此后固定：创建请求指定优先，否则人建任务取部署默认、Agent 建的任务为 none，见[交付与验收](core-contracts.md#交付与验收)；部署配置变更不暗改旧任务 |
 
 缺少 Acceptance 的旧位置记录被明确拒绝（冲突），不猜测其验收方式。
 

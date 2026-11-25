@@ -206,3 +206,23 @@ func TestSkillOperations(t *testing.T) {
 		}
 	}
 }
+
+// Any active member, person or Agent, may create a task in its own tenant.
+func TestTaskCreate(t *testing.T) {
+	ctx := context.Background()
+	s, e := access.New(access.Deps{Store: relations{}, Tasks: filedTask{}, Projects: projects{}, Skills: skillCaps{}})
+	if e != nil {
+		t.Fatal(e)
+	}
+	for _, kind := range []string{"human", "agent"} {
+		if e := s.Check(ctx, identity.Principal{Tenant: "t", ID: "lead", Kind: kind}, "task.create", "t"); e != nil {
+			t.Fatal(kind, e)
+		}
+		if e := s.Check(ctx, identity.Principal{Tenant: "t", ID: "lead", Kind: kind}, "task.create", "other"); !errors.Is(e, az.ErrForbidden) {
+			t.Fatal("created in another tenant", kind, e)
+		}
+	}
+	if e := s.Check(ctx, identity.Principal{Tenant: "t", ID: "lead", Kind: "service"}, "task.create", "t"); !errors.Is(e, az.ErrForbidden) {
+		t.Fatal("unknown principal kind", e)
+	}
+}

@@ -16,14 +16,14 @@
 
 | 身份/关系 | 能力 |
 | --- | --- |
-| 有效人类成员 | 创建任务并成为负责人；读空间与项目目录，创建项目；列出可读任务 |
+| 有效人类成员 | 创建任务（默认自己为负责人，也可指定其他有效用户）；读空间与项目目录，创建项目；列出可读任务 |
 | 有效人类管理员 | 管理本租户成员、身份、凭据、空间资料与标签表；读取和管理本租户任务；查询审计 |
 | 任务负责人（有效人类） | 读写约定、追加 commit、管理参与者、分配、取消、重开、验收、调整子任务、移动项目、增删标签、移交负责人 |
 | 当前处理人（人或 Agent，仍参与） | 提交结果（Agent 须先认领）并改派给他人；不取得负责人或验收资格 |
 | 当前分配的派送人（仍参与） | 改派：做出当前这次分配的人或 Agent 可以再改给别人 |
 | 任务参与者 | 读取、评论（只能更正自己的评论）、提问（可问任一有效成员，被问者随之成为参与者） |
 | 项目负责人与项目成员（人或 Agent） | 对项目内每个任务等同参与者；项目负责人还可改派处理人；不能管理、移动、移交负责人或验收 |
-| Agent | 不继承所属人任何权限；须显式参与任务（被分配或被提问）；只能认领分配给自己的任务；持有当前执行时可在该任务下新建子任务，并按部署配置同时分配处理人（默认任一有效成员）、选择标签；可读成员目录与标签表 |
+| Agent | 不继承所属人任何权限；须显式参与任务（被分配或被提问）；只能认领分配给自己的任务；可新建顶层任务（负责人默认为所属人），持有当前执行时可在该任务下新建子任务；新建时按部署配置同时分配处理人（默认任一有效成员）、选择标签；可读成员目录与标签表 |
 | Skill（启用时） | 有效成员读取可见目录并新建 skill；拥有者与协作者发布新版本；拥有者管理可见性、协作者与归档；人类管理员管理本租户全部 skill、审核（不审自己发布的版本）与重建索引，见 [Skill](skills.md#权限) |
 | 停用或不存在的成员 | 无任何访问，即使保留负责人/参与历史 |
 
@@ -57,7 +57,7 @@
 | GET /tags、POST /tags、PATCH /tags/{id} | 标签表：任一有效成员（含 Agent）可读，按名称排序，含已归档的；人类管理员新建（Name 1–40 字、可选 Description）或编辑/归档（另带 Archived、ExpectedVersion，整项替换）；名称在空间内唯一（忽略大小写），重名 409，最多 200 个；写入响应为该标签当前状态。规则见[层级与标签](core-contracts.md#层级与标签) |
 | GET /people | 有效成员目录（Subject、Kind、OwnerID），任一有效成员（含 Agent）可读；`?q=` 按 Subject 片段搜索、`kind=human\|agent`、按 Subject 分页（`after`，`limit` 默认 50、最多 200），返回 `{Items, Next}`；供选项目负责人、处理人、参与者和被提问人，不按任务过滤 |
 | GET /tasks | 任务列表，每行是推导出的 `{Task, Position, Assignee, ParentID, NextActor, ForMe, UpdatedAt}`（UpdatedAt 为时间线最后一条 commit 的时间），不保存，读取时推导；`?mine=true` 只列调用者的工作：先是 NextActor 指向自己的任务（`ForMe`），再是自己负责或处理、正在等待必需子任务的任务（`Position.WaitingOnSubtasks`）；可重复 `?id=`（最多 100 个，空值 400）只返回这些任务中可读的部分，不存在与不可读一样不出现；`?limit=N`（1–200）分页：响应体仍是数组，还有下一页时响应头 `X-Next-Cursor` 给出游标，用 `?cursor=` 续读，页按任务 ID 排序（`mine` 时页内先 ForMe 后阻塞），`limit` 不与 `id` 同用；不带 `limit` 返回全表（兼容旧客户端） |
-| POST /tasks | 创建（Title 必填，Goal、Criteria 可选、可后补；可选 ProjectID；可选 ParentID、Required 与 Owner 直接建为子任务，同一事务内创建并放置，需父任务调整子任务的资格，Agent 则需持有父任务当前可写执行，任一步失败都不留下任务；Owner 为空间内有效人类成员，空时人为本人、Agent 为父任务负责人；只传 Required 或 Owner 不传 ParentID 返回 400，Owner 不是有效人类成员返回 400；可选 Acceptance（`manual`/`none`，其他值 400，空时的默认见[核心契约](core-contracts.md#标识与版本)）；可选 Tags（标签 ID，最多 10 个，须是未归档的标签，否则 400）；可选 Assignee 同事务分配，人的资格同分配命令，Agent 可填的范围由部署配置决定，超出返回 403，缺少目标时 409，见[任务拆分](core-contracts.md#任务拆分)） |
+| POST /tasks | 创建（Title 必填，Goal、Criteria 可选、可后补；可选 ProjectID；人和 Agent 都可调用，顶层任务与子任务只差是否带 ParentID；可选 ParentID 与 Required 直接建为子任务，同一事务内创建并放置，需父任务调整子任务的资格，Agent 则需持有父任务当前可写执行，任一步失败都不留下任务；只传 Required 不传 ParentID 返回 400；可选 Owner 为空间内有效人类成员，空时人为本人，Agent 建子任务为父任务负责人、建顶层任务为其所属人（所属人已停用时 400 `owner_ambiguous`），Owner 不是有效人类成员返回 400；创建者不是负责人时成为参与者；可选 Acceptance（`manual`/`none`，其他值 400，空时的默认见[核心契约](core-contracts.md#标识与版本)）；可选 Tags（标签 ID，最多 10 个，须是未归档的标签，否则 400）；可选 Assignee 同事务分配，人的资格同分配命令，Agent 可填的范围由部署配置决定，超出返回 403，缺少目标时 409，见[任务拆分](core-contracts.md#任务拆分)） |
 | GET /tasks/{id} | 任务视图：任务、调用者的流程快照（见[执行、交付与验收](#执行交付与验收)）、`CanEdit`/`CanComment` 与一页时间线：默认是最新的 100 条（页内按时间正序），`Earlier: true` 表示前面还有，用 `?before=<页内最早一条的 Sequence>` 往前翻 |
 | PATCH /tasks/{id} | 修改任务要求（Title、Goal、Criteria、BasisVersion） |
 | POST /tasks/{id}/commits | 评论或更正（Body、可选 RefID，只能引用自己的评论；可选 Files、Links，见[文件](#文件)，三者至少一项）；已失效执行的 Agent 实例返回 409，见[写入隔离](core-contracts.md#执行与写入隔离) |

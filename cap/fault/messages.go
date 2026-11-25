@@ -33,7 +33,7 @@ var messages = map[string]string{
 	"parent_changed":               "子任务关系已变化，请刷新",
 	"parent_newer":                 "子任务须比父任务创建得晚",
 	"not_cancelled":                "只有已取消的任务可以重开",
-	"relation_needs_parent":        "Required 与 Owner 只用于子任务，须同时给出 ParentID",
+	"relation_needs_parent":        "Required 只用于子任务，须同时给出 ParentID",
 
 	// Files and links.
 	"too_many_files": "附件数量超过上限",

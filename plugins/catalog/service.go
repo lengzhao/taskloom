@@ -15,7 +15,9 @@ import (
 	"github.com/lengzhao/taskloom/cap/record"
 	"github.com/lengzhao/taskloom/cap/unitofwork"
 	"github.com/lengzhao/taskloom/runtime/command"
+	"sort"
 	"strings"
+	"unicode/utf8"
 )
 
 // Deps has six fields: projects and spaces are tenant-wide metadata whose
@@ -213,6 +215,110 @@ func (s *Service) SaveProject(ctx context.Context, token, key string, in api.Pro
 			return nil, e
 		}
 		if e = s.d.Events.AppendEvent(tx, record.Event{Tenant: p.Tenant, Resource: id, Kind: record.EventAccessChanged}); e != nil {
+			return nil, e
+		}
+		return json.Marshal(id)
+	})
+	var id string
+	if e == nil {
+		e = json.Unmarshal(b, &id)
+	}
+	return id, e
+}
+
+// Tags lists the vocabulary by name, archived included, for any active member.
+func (s *Service) Tags(ctx context.Context, token string) ([]api.Tag, error) {
+	out := []api.Tag{}
+	e := s.d.Transactions.View(ctx, func(tx context.Context) error {
+		p, e := s.actor(tx, token)
+		if e != nil {
+			return e
+		}
+		if out, e = s.d.Store.ListTags(tx, p.Tenant); e != nil {
+			return e
+		}
+		sort.SliceStable(out, func(i, j int) bool { return strings.ToLower(out[i].Name) < strings.ToLower(out[j].Name) })
+		return nil
+	})
+	return out, e
+}
+
+func (s *Service) Tag(ctx context.Context, token, id string) (api.Tag, error) {
+	var out api.Tag
+	e := s.d.Transactions.View(ctx, func(tx context.Context) error {
+		p, e := s.actor(tx, token)
+		if e != nil {
+			return e
+		}
+		out, e = s.d.Store.GetTag(tx, p.Tenant, id)
+		return e
+	})
+	return out, e
+}
+
+// SaveTag creates or replaces a tag; only a human administrator may.
+func (s *Service) SaveTag(ctx context.Context, token, key string, in api.TagEdit) (string, error) {
+	p, e := s.actor(ctx, token)
+	if e != nil {
+		return "", e
+	}
+	op := "tag.edit"
+	if in.ID == "" {
+		op = "tag.create"
+	}
+	req := cmd.Request{Token: token, Key: key, Operation: op, Resource: p.Tenant + "/" + in.ID, Authorize: func(tx context.Context, p identity.Principal) error {
+		m, e := s.d.Members.GetMember(tx, p.Tenant, p.ID)
+		if e != nil || !m.Active || m.Role != "admin" || p.Kind != "human" {
+			return az.ErrForbidden
+		}
+		return nil
+	}}
+	b, e := command.Run(ctx, s.d.Commands, req, in, func(tx context.Context, p identity.Principal) ([]byte, error) {
+		name := strings.TrimSpace(in.Name)
+		if name == "" {
+			return nil, fault.Input(fault.CodeRequired, "Name")
+		}
+		if utf8.RuneCountInString(name) > api.MaxTagName {
+			return nil, fault.Input("too_long", "Name")
+		}
+		if utf8.RuneCountInString(in.Description) > api.MaxTagDetails {
+			return nil, fault.Input("too_long", "Description")
+		}
+		tags, e := s.d.Store.ListTags(tx, p.Tenant)
+		if e != nil {
+			return nil, e
+		}
+		old := api.Tag{}
+		for _, t := range tags {
+			if t.ID == in.ID {
+				old = t
+			} else if strings.EqualFold(t.Name, name) {
+				return nil, fault.Conflict("tag_name_taken")
+			}
+		}
+		if in.ID != "" && old.ID == "" {
+			return nil, fault.ErrNotFound
+		}
+		if old.Version != in.ExpectedVersion {
+			return nil, fault.Conflict(fault.CodeVersionChanged)
+		}
+		id := in.ID
+		if id == "" {
+			if len(tags) >= api.MaxTags {
+				return nil, fault.Conflict("too_many_tags")
+			}
+			var b [16]byte
+			if _, e = rand.Read(b[:]); e != nil {
+				return nil, e
+			}
+			id = hex.EncodeToString(b[:])
+		}
+		tag := api.Tag{Tenant: p.Tenant, ID: id, Name: name, Description: in.Description, Archived: in.Archived, Version: old.Version + 1}
+		if e = s.d.Store.SaveTag(tx, tag); e != nil {
+			return nil, e
+		}
+		// Every reader of the vocabulary refreshes it; no task changes.
+		if e = s.d.Events.AppendEvent(tx, record.Event{Tenant: p.Tenant, Resource: p.Tenant, Kind: record.EventAccessChanged}); e != nil {
 			return nil, e
 		}
 		return json.Marshal(id)

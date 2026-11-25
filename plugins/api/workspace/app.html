@@ -78,6 +78,20 @@ dialog::backdrop { background: #0006 }
 .pill.stopped { background: var(--danger-soft); color: var(--danger); border-color: transparent }
 .pill.mine { background: var(--warn-soft); color: var(--warn); border-color: transparent }
 .pill.blocked { background: var(--bg); color: var(--warn); border-color: var(--warn) }
+.pill.tag { background: var(--panel); color: var(--ink); border-color: var(--line) }
+.pill.goal { background: var(--accent); color: #fff; border-color: transparent }
+.tag-picker { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 4px 0 8px }
+.tag-picker label { display: inline-flex; gap: 4px; align-items: center; font-weight: normal }
+.progress { height: 6px; border-radius: 3px; background: var(--bg); overflow: hidden; margin: 8px 0 }
+.progress > span { display: block; height: 100%; background: var(--ok) }
+.goal-card { display: block; width: 100%; text-align: left; margin-bottom: 10px }
+.tag-admin { display: grid; gap: 8px; margin: 8px 0 14px }
+.tag-admin form { display: flex; gap: 8px; flex-wrap: wrap; align-items: center }
+.tag-admin { margin-top: 18px }
+.tag-admin form { flex-wrap: nowrap }
+.tag-admin input { width: auto; min-width: 0; flex: 1 1 0 }
+.tag-admin input[name=Name] { flex: 0 1 140px }
+.tag-admin button { flex: none }
 
 /* Detail */
 .head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px }
@@ -158,6 +172,7 @@ ul.attachments.chosen li { margin: 2px 0 }
   <p class="muted small">工作空间</p><h2 id="space-name">当前空间</h2>
   <nav aria-label="工作台导航">
    <button id="tab-mine">等我处理<span id="mine-count" class="count" hidden></span></button>
+   <button id="tab-goals">目标</button>
    <button id="tab-all">全部任务</button>
    <button id="tab-projects">项目</button>
    <button id="tab-skills" hidden>Skill</button>
@@ -173,6 +188,8 @@ ul.attachments.chosen li { margin: 2px 0 }
     <div class="toolbar">
      <input id="task-search" aria-label="搜索任务" placeholder="搜索标题、目标或任务编号">
      <select id="project-filter" aria-label="筛选项目"></select>
+     <select id="level-filter" aria-label="筛选层级"><option value="">全部层级</option><option value="goal">目标</option><option value="top">顶层任务</option><option value="sub">子任务</option></select>
+     <select id="tag-filter" aria-label="筛选标签"></select>
      <select id="owner-filter" aria-label="筛选负责人"></select>
      <select id="assignee-filter" aria-label="筛选处理人"></select>
      <select id="status-filter" aria-label="筛选状态"><option value="">全部状态</option><option value="unassigned">待分配</option><option value="handling">处理中</option><option value="blocked">已阻塞</option><option value="accepting">验收中</option><option value="completed">已完成</option><option value="cancelled">已取消</option></select>
@@ -186,6 +203,7 @@ ul.attachments.chosen li { margin: 2px 0 }
       <label>验收标准（可选）<textarea name="Criteria" placeholder="怎样算完成；不填则由负责人验收时判断"></textarea></label>
       <label>验收方式<select name="Acceptance" id="create-acceptance"></select></label>
       <label>处理人（可选）<select name="Assignee" id="create-assignee"></select></label>
+      <div><span class="small">标签（可选）</span><div id="create-tags"></div></div>
       <p class="muted small">可以先只写标题记下来，分配处理人前再补全目标；创建时就选处理人则目标必填。</p>
       <div class="actions"><button class="primary">创建</button></div>
      </form>
@@ -429,6 +447,7 @@ $('desktop-notify').onclick = handle(async () => {
   notice(r === 'granted' ? '已开启桌面通知：页面打开期间，有任务新开始等你时会弹出提醒。' : '浏览器未允许桌面通知。');
 });
 
+let tags=[]; // the space's tag vocabulary, archived included
 let spaceInfo=null, projects=[], projectID='', taskCache=[], inboxMap=new Map(), overview=new Map(), editingProject=null;
 // ---------- Task list ----------
 // index derives the list views from task rows: rows waiting on me, and my
@@ -444,9 +463,9 @@ function index(rows) {
  inboxIDs = new Set(inboxMap.keys());
 }
 async function list() {
- const [tasks,ps,sp]=await Promise.all([allTasks(),api('/projects'),api('/space')]);
+ const [tasks,ps,sp,tg]=await Promise.all([allTasks(),api('/projects'),api('/space'),api('/tags')]);
  const before=inboxMap;
- taskCache=tasks;projects=ps;spaceInfo=sp;overview=new Map();inboxMap=new Map();blockedMine=new Set();index(tasks);
+ taskCache=tasks;projects=ps;spaceInfo=sp;tags=tg;overview=new Map();inboxMap=new Map();blockedMine=new Set();index(tasks);
  pendingIDs.clear();
  arrivals(before, null);
  render();
@@ -467,8 +486,9 @@ async function refresh(ids) {
 function render() {
  const sp=spaceInfo;
  $('space-name').textContent=sp.Name;$('mine-count').hidden=!inboxMap.size;$('mine-count').textContent=inboxMap.size;
- for(const name of ['mine','all','projects','skills','space'])$('tab-'+name).classList.toggle('on',view===name);
- peopleFilters();
+ for(const name of ['mine','goals','all','projects','skills','space'])$('tab-'+name).classList.toggle('on',view===name);
+ peopleFilters();tagFilter();
+ if(!$('create-box').open)$('create-tags').replaceChildren((createTags=tagPicker()).node);
  const prev=$('project-filter').value;projectOptions($('project-filter'),true);$('project-filter').value=prev;
  const createPrev=$('create-project').value;projectOptions($('create-project'),false);$('create-project').value=projectID||createPrev;if(!$('create-project').value)$('create-project').value='';
  renderBrowse();
@@ -484,11 +504,12 @@ function projectOptions(select,filter=false,current=''){
 const memberText=p=>'成员 '+((p.Members||[]).join('、')||'无');
 function counts(id){const ts=taskCache.filter(d=>d.Task.ProjectID===id);const done=ts.filter(d=>d.Position.Status==='completed').length;const cancelled=ts.filter(d=>d.Position.Status==='cancelled').length;return `可见任务 ${ts.length} · 完成 ${done} · 未完成 ${ts.length-done-cancelled} · 取消 ${cancelled}`}
 function renderBrowse(){
- const root=$('catalog-content');root.replaceChildren();$('task-area').hidden=view==='projects'||view==='space'||view==='skills';
- $('page-title').textContent=({mine:'等我处理',all:'全部任务',projects:'项目',skills:'Skill',space:'空间设置',project:'项目任务'})[view];
+ const root=$('catalog-content');root.replaceChildren();$('task-area').hidden=view==='projects'||view==='space'||view==='skills'||view==='goals';
+ $('page-title').textContent=({mine:'等我处理',goals:'目标',all:'全部任务',projects:'项目',skills:'Skill',space:'空间设置',project:'项目任务'})[view];
  $('create-box').hidden=false;$('project-filter').hidden=view==='project';
  // The Skill page loads when its tab is opened or its filter changes; task
  // refreshes re-render the page around the same, already loaded list.
+ if(view==='goals'){renderGoals(root);return}
  if(view==='skills'){if(!skillsView){skillsView=h('div');renderSkills(skillsView).catch(e=>notice(e.message))}root.append(skillsView);return}
  if(view==='space'){
   const name=el('input');name.name='Name';name.required=true;name.value=spaceInfo.Name;name.maxLength=200;
@@ -499,6 +520,7 @@ function renderBrowse(){
   root.append(form);
   if(viewer.CanAdmin){const b=button('用户与 Agent',()=>openMembers());b.id='members-admin';root.append(h('div','actions',b))}
   else root.append(el('p','空间资料由管理员维护。','muted'));
+  root.append(renderTagAdmin());
   return;
  }
  if(view==='projects'){
@@ -539,9 +561,76 @@ function byPeople(d){
  const me=v=>v==='me'?viewer.Subject:v;
  return (!owner||d.Task.Owner===me(owner))&&(!assignee||(assignee==='none'?!who:who===me(assignee)));
 }
+// ---------- Hierarchy and tags ----------
+// Levels are derived from parent links, never stored: a goal is a top-level
+// task that has been split, a subtask has a parent (readable or not).
+const parentOf=id=>overview.get(id)?.ParentID||'';
+function childrenIndex(){const m=new Map();for(const d of taskCache){const p=parentOf(d.Task.ID);if(p){if(!m.has(p))m.set(p,[]);m.get(p).push(d)}}return m}
+function levelOf(d,kids){return parentOf(d.Task.ID)?'sub':kids.has(d.Task.ID)?'goal':'top'}
+function subtree(id,kids){const out=[],stack=[...(kids.get(id)||[])];while(stack.length){const d=stack.pop();out.push(d);stack.push(...(kids.get(d.Task.ID)||[]))}return out}
+const tagByID=id=>tags.find(t=>t.ID===id);
+function tagPills(ids){return (ids||[]).map(id=>{const t=tagByID(id);return t?el('span','#'+t.Name,'pill tag'):null})}
+function tagFilter(){const sel=$('tag-filter'),prev=sel.value;sel.replaceChildren();sel.hidden=!tags.length;
+ for(const [v,t] of [['','全部标签'],...tags.map(t=>[t.ID,'#'+t.Name+(t.Archived?'（已归档）':'')])]){const o=el('option',t);o.value=v;sel.append(o)}
+ sel.value=[...sel.options].some(o=>o.value===prev)?prev:''}
+// tagPicker offers active tags, plus archived ones already chosen so they can be kept or removed.
+let createTags=null;
+function tagPicker(chosen=[]){
+ const set=new Set(chosen),box=h('div','tag-picker');
+ for(const t of tags.filter(t=>!t.Archived||set.has(t.ID))){const c=el('input');c.type='checkbox';c.value=t.ID;c.checked=set.has(t.ID);c.style.width='auto';const l=el('label');l.title=t.Description||'';l.append(c,document.createTextNode('#'+t.Name+(t.Archived?'（已归档）':'')));box.append(l)}
+ if(!box.children.length)box.append(el('span','空间还没有标签，'+(viewer.CanAdmin?'可在「空间设置」中添加。':'由管理员在「空间设置」中维护。'),'muted small'));
+ return {node:box,value:()=>[...box.querySelectorAll('input:checked')].map(c=>c.value)};
+}
+// renderGoals rolls each goal up over its whole readable subtree. Only the
+// caller's goals by default; everything shown is derived from the loaded list.
+let goalsMine=true;
+function renderGoals(root){
+ const kids=childrenIndex();
+ const mine=el('input');mine.type='checkbox';mine.style.width='auto';mine.checked=goalsMine;mine.onchange=()=>{goalsMine=mine.checked;renderBrowse()};
+ root.append(el('p','目标是已经拆出子任务的顶层任务。这里按整棵子任务树汇总进度，并列出需要你处理的事。','muted'),field(' 只看我负责的目标',mine));
+ const rank=d=>d.Position.Status==='active'?0:d.Position.Status==='completed'?1:2;
+ const goals=taskCache.filter(d=>levelOf(d,kids)==='goal'&&(!goalsMine||d.Task.Owner===viewer.Subject)).sort((a,b)=>rank(a)-rank(b)||(overview.get(b.Task.ID)?.UpdatedAt||'').localeCompare(overview.get(a.Task.ID)?.UpdatedAt||''));
+ if(!goals.length){root.append(el('p',goalsMine?'你负责的任务还没有拆分出子任务。':'还没有拆分出子任务的顶层任务。','empty'));return}
+ const open=id=>async()=>{selected=id;render();await show()};
+ for(const g of goals){
+  const all=subtree(g.Task.ID,kids),live=all.filter(d=>d.Position.Status!=='cancelled');
+  const done=live.filter(d=>d.Position.Status==='completed'),auto=done.filter(d=>d.Position.Acceptance==='none');
+  const unassigned=live.filter(d=>d.Position.Status==='active'&&!overview.get(d.Task.ID)?.Assignee);
+  const forMe=[g,...all].filter(d=>inboxIDs.has(d.Task.ID));
+  const pct=live.length?Math.round(done.length*100/live.length):0;
+  const card=h('div','panel goal-card');
+  const head=h('div','head',h('div',null,button(g.Task.Title,open(g.Task.ID),'link'),h('div','meta muted small',el('span','负责人 '+g.Task.Owner),el('span',projects.find(p=>p.ID===g.Task.ProjectID)?.Name||'未归属项目'),...tagPills(g.Task.Tags))),pill(stateOf(g.Position,overview.get(g.Task.ID)?.Assignee)));
+  const bar=h('div','progress');const fill=el('span');fill.style.width=pct+'%';bar.append(fill);
+  const facts=[`子任务完成 ${done.length}/${live.length}`,auto.length?`其中免验收自动完成 ${auto.length}`:null,unassigned.length?`待分配 ${unassigned.length}`:null,all.length-live.length?`已取消 ${all.length-live.length}`:null].filter(Boolean).join(' · ');
+  card.append(head,bar,el('p',facts,'small'));
+  if(forMe.length){const ul=el('ul',undefined,'timeline');for(const d of forMe)ul.append(h('li',null,el('span',ARRIVAL_LABEL[inboxMap.get(d.Task.ID)]||'等你处理','pill mine'),' ',button(d.Task.Title,open(d.Task.ID),'link')));card.append(ul)}
+  root.append(card);
+ }
+}
+// renderTagAdmin shows the vocabulary; administrators add, rename and archive.
+function renderTagAdmin(){
+ const box=h('div','tag-admin',el('h3','标签'),el('p','标签只用于分类和筛选，不影响流程和权限。归档后不能再加到任务上，已打上的保留。','muted small'));
+ const list=h('div','tag-admin');list.style.marginTop='8px';box.append(list);
+ if(!viewer.CanAdmin){list.append(...(tags.length?tagPills(tags.filter(t=>!t.Archived).map(t=>t.ID)):[el('span','还没有标签。','muted small')]));return box}
+ const save=(t,v)=>api(t?'/tags/'+t.ID:'/tags',t?'PATCH':'POST',{Name:v.Name,Description:v.Description||'',Archived:v.Archived||false,ExpectedVersion:t?.Version||0});
+ for(const t of [...tags].sort((a,b)=>a.Archived-b.Archived)){
+  const name=el('input');name.name='Name';name.value=t.Name;name.maxLength=40;name.required=true;
+  const desc=el('input');desc.name='Description';desc.value=t.Description||'';desc.placeholder='说明（可选）';
+  const f=h('form',null,name,desc,el('button','保存'),button(t.Archived?'恢复':'归档',async()=>{await save(t,{Name:t.Name,Description:t.Description,Archived:!t.Archived});await list()}),t.Archived?el('span','已归档','pill stopped'):null);
+  f.onsubmit=handle(async()=>{await save(t,{Name:name.value,Description:desc.value,Archived:t.Archived});await list();notice('标签已保存')});
+  list.append(f);
+ }
+ const name=el('input');name.name='Name';name.placeholder='新标签名称';name.maxLength=40;name.required=true;
+ const desc=el('input');desc.name='Description';desc.placeholder='说明（可选）';
+ const add=h('form',null,name,desc,el('button','添加标签','primary'));
+ add.onsubmit=handle(async()=>{await save(null,{Name:name.value,Description:desc.value});await list();notice('标签已添加')});
+ list.append(add);
+ return box;
+}
 function renderTasks(){
  const search=$('task-search').value.trim().toLowerCase(),filter=$('project-filter').value,status=$('status-filter').value;
- const shown=taskCache.filter(d=>(view!=='mine'||inboxIDs.has(d.Task.ID)||blockedMine.has(d.Task.ID))&&byPeople(d)&&(view!=='project'||d.Task.ProjectID===projectID)&&(!filter||view==='project'||(filter==='none'?!d.Task.ProjectID:d.Task.ProjectID===filter))&&(!status||(status==='blocked'?!!d.Position.WaitingOnSubtasks:stateOf(d.Position,overview.get(d.Task.ID)?.Assignee).key===status))&&(!search||[d.Task.Title,d.Task.Goal,d.Task.ID].some(x=>(x||'').toLowerCase().includes(search))));
+ const kids=childrenIndex(),level=$('level-filter').value,tag=$('tag-filter').value;
+ const shown=taskCache.filter(d=>(view!=='mine'||inboxIDs.has(d.Task.ID)||blockedMine.has(d.Task.ID))&&byPeople(d)&&(!level||levelOf(d,kids)===level)&&(!tag||(d.Task.Tags||[]).includes(tag))&&(view!=='project'||d.Task.ProjectID===projectID)&&(!filter||view==='project'||(filter==='none'?!d.Task.ProjectID:d.Task.ProjectID===filter))&&(!status||(status==='blocked'?!!d.Position.WaitingOnSubtasks:stateOf(d.Position,overview.get(d.Task.ID)?.Assignee).key===status))&&(!search||[d.Task.Title,d.Task.Goal,d.Task.ID].some(x=>(x||'').toLowerCase().includes(search))));
  const nav=$('tasks');nav.replaceChildren();const board=$('task-layout').value==='board';nav.classList.toggle('board',board);
  if(!shown.length){nav.append(el('p','没有符合条件的任务','empty'));return}
  // Board lanes follow the work's order; empty lanes are not drawn. Newest activity first.
@@ -556,9 +645,10 @@ function renderTasks(){
   const state=stateOf(d.Position,o.Assignee);
   // Only the exception is named in the list; the detail names either mode.
   const facts=[project?.Name||'未归属项目','处理人 '+(o.Assignee||'—'),d.Position.Acceptance==='none'?'免验收':null,o.UpdatedAt?'最近动态 '+ago(o.UpdatedAt):null].filter(Boolean).join(' · ');
-  b.append(el('strong',d.Task.Title),h('span','meta',pill(state),d.Position.WaitingOnSubtasks?el('span','阻塞：等待子任务','pill blocked'):null,inboxIDs.has(d.Task.ID)?el('span','等你：'+ACTOR_LABEL[inboxMap.get(d.Task.ID)],'pill mine'):null,freshIDs.has(d.Task.ID)?el('span','新','pill mine'):null),
+  b.append(el('strong',d.Task.Title),h('span','meta',levelOf(d,kids)==='goal'?el('span','目标','pill goal'):null,pill(state),d.Position.WaitingOnSubtasks?el('span','阻塞：等待子任务','pill blocked'):null,inboxIDs.has(d.Task.ID)?el('span','等你：'+ACTOR_LABEL[inboxMap.get(d.Task.ID)],'pill mine'):null,freshIDs.has(d.Task.ID)?el('span','新','pill mine'):null),
    el('p',facts,'muted small'));
   if(titles.has(o.ParentID))b.append(el('p','属于「'+titles.get(o.ParentID)+'」','muted small'));
+  if(d.Task.Tags?.length)b.append(h('span','meta',...tagPills(d.Task.Tags)));
   if(board)lanes.get(state.key).append(b);else nav.append(b);
  }
  if(board)for(const lane of lanes.values())if(lane.children.length>1)nav.append(lane);
@@ -576,8 +666,8 @@ async function openProject(p=null){
 }
 $('project-close').onclick=()=>$('project-dialog').close();
 $('project-form').onsubmit=handle(async()=>{const p=editingProject;const result=await api(p?'/projects/'+p.ID:'/projects',p?'PATCH':'POST',{Name:$('project-name').value,Description:$('project-description').value,Owner:$('project-owner').value,Members:[...$('project-members').querySelectorAll('input:checked')].map(c=>c.value).filter(v=>v!==$('project-owner').value),Archived:p?.Archived||false,ExpectedVersion:p?.Version||0});$('project-dialog').close();projectID=result.ID;view='project';selected='';await list();notice('项目已保存')});
-for(const id of ['task-search','status-filter','project-filter','owner-filter','assignee-filter','task-layout'])$(id).addEventListener(id==='task-search'?'input':'change',()=>renderTasks());
-for(const name of ['mine','all','projects','skills','space'])$('tab-'+name).onclick=handle(async()=>{view=name;projectID='';selected='';skillsView=null;await list()});
+for(const id of ['task-search','status-filter','project-filter','level-filter','tag-filter','owner-filter','assignee-filter','task-layout'])$(id).addEventListener(id==='task-search'?'input':'change',()=>renderTasks());
+for(const name of ['mine','goals','all','projects','skills','space'])$('tab-'+name).onclick=handle(async()=>{view=name;projectID='';selected='';skillsView=null;await list()});
 $('detail-back').onclick=handle(async()=>{selected='';render()});
 
 // ---------- Skills ----------
@@ -709,6 +799,15 @@ function renderHead(ctx) {
   const mode = ACCEPTANCE_LABEL[ctx.w.Position.Acceptance];
   const meta = h('div', 'meta muted small', el('span', '负责人 ' + d.Task.Owner), el('span', '项目 ' + (p?.Name || '未归属')), mode ? el('span', mode) : null);
   const panel = h('div', 'panel', h('div', 'head', h('div', null, el('h2', d.Task.Title), meta)));
+  if (d.Task.Tags?.length) panel.append(h('div', 'meta', ...tagPills(d.Task.Tags)));
+  // Tags only classify; the owner or an administrator (who may edit) changes them.
+  if (d.CanEdit && tags.length) {
+    const picker = tagPicker(d.Task.Tags || []);
+    panel.append(h('details', null, el('summary', '编辑标签'), picker.node, h('div', 'actions', button('保存标签', async () => {
+      const now = new Set(picker.value()), was = new Set(d.Task.Tags || []);
+      await settle(await api(ctx.path + '/tags', 'POST', { Add: [...now].filter(x => !was.has(x)), Remove: [...was].filter(x => !now.has(x)) }));
+    }, 'primary'))));
+  }
   if (d.CanEdit) {
     const select = el('select'); projectOptions(select, false, d.Task.ProjectID); select.value = d.Task.ProjectID || '';
     panel.append(h('details', null, el('summary', '移动到其他项目'),
@@ -1093,11 +1192,12 @@ function renderPlan(ctx) {
     const title = el('input'); title.name = 'Title'; title.required = true;
     const required = el('input'); required.type = 'checkbox'; required.style.width = 'auto'; required.checked = true;
     const requiredLabel = el('label', ' 必需：完成后本任务才能提交结果'); requiredLabel.prepend(required);
+    let subTags;
     const acceptance = el('select'); acceptance.name = 'Acceptance'; acceptanceOptions(acceptance);
     const assignee = el('select'); assignee.name = 'Assignee'; assigneeOptions(assignee, ctx.candidates);
     const goal = textarea('Goal', false);
     f.append(field('标题', title), field('目标（分配前必填）', goal), field('验收标准（可选）', textarea('Criteria', false)), requiredLabel,
-      field('验收方式', acceptance), field('处理人（可选）', assignee),
+      field('验收方式', acceptance), field('处理人（可选）', assignee), h('div', null, el('span', '标签（可选）', 'small'), (subTags = tagPicker()).node),
       el('p', '已完成的任务不能重开；需要返工时在这里新建子任务。', 'muted small'),
       h('div', 'actions', el('button', '创建子任务', 'primary')));
     // One command creates the subtask, places it under this task and, when
@@ -1105,7 +1205,7 @@ function renderPlan(ctx) {
     f.onsubmit = handle(async () => {
       const v = formdata(f);
       checkCreate(v, goal);
-      const created = await api('/tasks', 'POST', { Title: v.Title, Goal: v.Goal, Criteria: v.Criteria, ProjectID: d.Task.ProjectID || '', ParentID: d.Task.ID, Required: required.checked, Acceptance: v.Acceptance, Assignee: v.Assignee });
+      const created = await api('/tasks', 'POST', { Title: v.Title, Goal: v.Goal, Criteria: v.Criteria, ProjectID: d.Task.ProjectID || '', ParentID: d.Task.ID, Required: required.checked, Acceptance: v.Acceptance, Assignee: v.Assignee, Tags: subTags.value() });
       // A subtask without a goal is opened at once so it gets filled in.
       if (!created.Task.Goal.trim()) await settle(created, created.Task.ID);
       else { await refresh([created.Task.ID, d.Task.ID]); await show() }
@@ -1322,7 +1422,7 @@ $('create-box').addEventListener('toggle', () => { if ($('create-box').open) dir
 $('create').onsubmit = handle(async () => {
   const v = formdata($('create'));
   checkCreate(v, $('create').elements.Goal);
-  const d = await api('/tasks', 'POST', v);
+  const d = await api('/tasks', 'POST', { ...v, Tags: createTags ? createTags.value() : [] });
   $('create').reset();
   $('create-box').open = false;
   if(view!=='project') view = 'all';

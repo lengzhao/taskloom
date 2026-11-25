@@ -44,6 +44,7 @@ var migrations = []migration{
 		return auditTimeIndexDDL(db)
 	}},
 	{"workflow/002", "assignment-assigner-v1", []any{&assignmentRecord{}}, nil},
+	{"catalog/002", "tenant-tag-vocabulary-v1", []any{&tagRow{}}, nil},
 }
 
 func migrate(ctx context.Context, db *gorm.DB, driver string) error {

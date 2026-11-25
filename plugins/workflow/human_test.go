@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	capsecurity "github.com/lengzhao/taskloom/cap/security"
+	"reflect"
 	"testing"
 
 	"github.com/lengzhao/pluginkit/build"
@@ -199,7 +200,7 @@ func TestOverviewAndOwnerSelfAssignment(t *testing.T) {
 	// Naming tasks limits every list to them; a missing or unreadable task is
 	// left out exactly as in the full list.
 	ids := []string{child.Task.ID, "missing", child.Task.ID}
-	if items, e := list(f.owner, ids); e != nil || len(items) != 1 || items[0] != byID[child.Task.ID] {
+	if items, e := list(f.owner, ids); e != nil || len(items) != 1 || !reflect.DeepEqual(items[0], byID[child.Task.ID]) {
 		t.Fatal("list by id", items, e)
 	}
 	if items, e := list(outsider, ids); e != nil || len(items) != 0 {

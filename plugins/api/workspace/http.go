@@ -58,6 +58,7 @@ func (m *Module) Routes() []httpapi.Route {
 		{"GET", "/me", "session.viewer"}, {"POST", "/account/password", "identity.password.change"},
 		{"GET", "/space", "space.read"}, {"PATCH", "/space", "space.edit"},
 		{"GET", "/projects", "projects.list"}, {"POST", "/projects", "project.create"}, {"PATCH", "/projects/{id}", "project.edit"},
+		{"GET", "/tags", "tags.list"}, {"POST", "/tags", "tag.create"}, {"PATCH", "/tags/{id}", "tag.edit"},
 		{"GET", "/people", "people.list"}, {"GET", "/changes", "changes.read"},
 		{"GET", "/admin/members", "members.list"}, {"POST", "/admin/members", "members.set"},
 		{"POST", "/admin/identities", "identity.create"}, {"POST", "/admin/users/{id}/password", "identity.password"},
@@ -120,6 +121,20 @@ func (m *Module) serve(w http.ResponseWriter, r *http.Request) {
 			var id string
 			if id, err = m.d.Catalog.SaveProject(ctx, token, key, in); err == nil {
 				result, err = m.d.Catalog.Project(ctx, token, id)
+			}
+		}
+	case strings.Contains(path, "/tags"):
+		if r.Method == "GET" {
+			result, err = m.d.Catalog.Tags(ctx, token)
+		} else {
+			var in catalog.TagEdit
+			if !httpx.Decode(w, r, &in) {
+				return
+			}
+			in.ID = r.PathValue("id")
+			var id string
+			if id, err = m.d.Catalog.SaveTag(ctx, token, key, in); err == nil {
+				result, err = m.d.Catalog.Tag(ctx, token, id)
 			}
 		}
 	case strings.HasSuffix(path, "/me"):

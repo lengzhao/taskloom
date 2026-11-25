@@ -110,7 +110,7 @@ func (s *Service) Check(ctx context.Context, p identity.Principal, op, resource 
 			return nil
 		}
 		return az.ErrForbidden
-	case "task.project", "task.owner", "task.read", "task.edit", "commit.append", "file.upload", "participant.set", "execution.open", "execution.assign", "result.submit", "result.review", "task.cancel", "task.restart", "task.plan", "task.split":
+	case "task.project", "task.owner", "task.tag", "task.read", "task.edit", "commit.append", "file.upload", "participant.set", "execution.open", "execution.assign", "result.submit", "result.review", "task.cancel", "task.restart", "task.plan", "task.split":
 		t, e := s.d.Tasks.GetTask(ctx, p.Tenant, resource)
 		if errors.Is(e, fault.ErrNotFound) {
 			return az.ErrForbidden
@@ -144,7 +144,7 @@ func (s *Service) Check(ctx context.Context, p identity.Principal, op, resource 
 		}
 		// Filing a task decides who else may read it, and a handover decides who
 		// answers for it: both stay with the owner and administrators.
-		if op == "task.edit" || op == "participant.set" || op == "execution.assign" || op == "task.cancel" || op == "task.restart" || op == "task.plan" || op == "task.project" || op == "task.owner" {
+		if op == "task.edit" || op == "participant.set" || op == "execution.assign" || op == "task.cancel" || op == "task.restart" || op == "task.plan" || op == "task.project" || op == "task.owner" || op == "task.tag" {
 			return az.ErrForbidden
 		}
 		// Execution commands recheck explicit assignment and instance/generation in

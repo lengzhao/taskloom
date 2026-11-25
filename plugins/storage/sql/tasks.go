@@ -90,6 +90,10 @@ func (s *Store) SetProject(ctx context.Context, tenant, taskID, projectID string
 	return s.updateTask(ctx, tenant, taskID, func(t *task.Task) { t.ProjectID = projectID })
 }
 
+func (s *Store) SetTags(ctx context.Context, tenant, taskID string, tags []string) (task.Task, error) {
+	return s.updateTask(ctx, tenant, taskID, func(t *task.Task) { t.Tags = tags })
+}
+
 func (s *Store) updateTask(ctx context.Context, tenant, taskID string, change func(*task.Task)) (task.Task, error) {
 	var out task.Task
 	e := s.use(ctx, true, func(db *gorm.DB) error {

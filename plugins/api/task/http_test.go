@@ -166,3 +166,42 @@ func TestErrorsExplainTheFix(t *testing.T) {
 		t.Fatalf("project name %d %s", status, raw)
 	}
 }
+
+// Tags travel through the vocabulary routes, task creation and the task's
+// own tags route; every task write answers with the task view.
+func TestTagRoutes(t *testing.T) {
+	call := serve(t)
+	status, body := call("POST", "/tags", "tag-a", map[string]any{"Name": "安全"})
+	var tag struct{ ID, Name string }
+	if status != 200 || json.Unmarshal(body, &tag) != nil || tag.Name != "安全" {
+		t.Fatal("create tag", status, string(body))
+	}
+	if status, body = call("POST", "/tags", "tag-dup", map[string]any{"Name": "安全"}); status != 409 {
+		t.Fatal("duplicate tag", status, string(body))
+	}
+	status, body = call("GET", "/tags", "", nil)
+	var tags []struct{ ID string }
+	if status != 200 || json.Unmarshal(body, &tags) != nil || len(tags) != 1 {
+		t.Fatal("list tags", status, string(body))
+	}
+	status, body = call("POST", "/tasks", "create", map[string]any{"Title": "t", "Tags": []string{tag.ID}})
+	var view struct {
+		Task struct {
+			ID   string
+			Tags []string
+		}
+	}
+	if status != 200 || json.Unmarshal(body, &view) != nil || len(view.Task.Tags) != 1 {
+		t.Fatal("create tagged task", status, string(body))
+	}
+	var p problem
+	status, body = call("POST", "/tasks", "bad", map[string]any{"Title": "t", "Tags": []string{"nope"}})
+	if status != 400 || json.Unmarshal(body, &p) != nil || p.Code != "tag_unknown" || p.Field != "Tags" {
+		t.Fatal("unknown tag", status, string(body))
+	}
+	status, body = call("POST", "/tasks/"+view.Task.ID+"/tags", "untag", map[string]any{"Remove": []string{tag.ID}})
+	view.Task.Tags = nil
+	if status != 200 || json.Unmarshal(body, &view) != nil || len(view.Task.Tags) != 0 {
+		t.Fatal("remove tag", status, string(body))
+	}
+}

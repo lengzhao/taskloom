@@ -17,6 +17,7 @@ import (
 
 	"github.com/lengzhao/pluginkit"
 	"github.com/lengzhao/taskloom/cap/authorization"
+	"github.com/lengzhao/taskloom/cap/catalog"
 	"github.com/lengzhao/taskloom/cap/fault"
 	capfile "github.com/lengzhao/taskloom/cap/file"
 	"github.com/lengzhao/taskloom/cap/httpapi"
@@ -48,12 +49,17 @@ type asker interface {
 	Close(ctx context.Context, token, key string, in work.CloseQuestion) (work.Ref, error)
 }
 
+// tagReader is the tag vocabulary an Agent picks subtask tags from.
+type tagReader interface {
+	Tags(ctx context.Context, credential string) ([]catalog.Tag, error)
+}
+
 type files interface {
 	capfile.Commands
 	capfile.Queries
 }
 
-// Deps has seven fields, one per Agent-facing capability. Like api/workflow it
+// Deps has eight fields, one per Agent-facing capability. Like api/workflow it
 // only translates a protocol; splitting it would scatter one tool table across
 // adapters without separating any rule.
 type Deps struct {
@@ -66,12 +72,14 @@ type Deps struct {
 	People directory `json:"people"`
 	// Files uploads and reads task files an Agent attaches or receives.
 	Files files `json:"files"`
+	// Tags is the vocabulary read to name tags and resolve them to IDs.
+	Tags tagReader `json:"tags"`
 }
 type Module struct{ d Deps }
 
 func init() {
 	pluginkit.Register("api/mcp", func(_ struct{}, d Deps) (*Module, error) {
-		if d.Comments == nil || d.Workflow == nil || d.Executions == nil || d.Results == nil || d.Questions == nil || d.People == nil || d.Files == nil {
+		if d.Comments == nil || d.Workflow == nil || d.Executions == nil || d.Results == nil || d.Questions == nil || d.People == nil || d.Files == nil || d.Tags == nil {
 			return nil, fault.ErrInput
 		}
 		return &Module{d}, nil

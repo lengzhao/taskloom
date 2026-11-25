@@ -177,7 +177,8 @@ func toolList() []tool {
 		{"answer_question", "回答别人向你提的问题（read_task 的 open_questions 中 for_you 为 true 的那条）。", schema([]string{"task_id", "question_id", "text"}, map[string]any{"task_id": task, "question_id": str("问题 ID（open_questions 中的 id）"), "text": str("回答内容")})},
 		{"close_question", "撤回你提的、已不再需要回答的问题（open_questions 中 asked_by 为你的那条），须写明理由；撤回后它不再阻止任务完成。", schema([]string{"task_id", "question_id", "reason"}, map[string]any{"task_id": task, "question_id": str("问题 ID（open_questions 中的 id）"), "reason": str("为什么不再需要回答")})},
 		{"submit_result", "明确提交本轮的正式结果（交付物），可带文件和链接。需要已认领执行；再次提交会替换当前结果。result、files、links 至少一项。", schema([]string{"task_id", "basis"}, map[string]any{"task_id": task, "basis": basis, "result": str("结果正文"), "files": filesProp, "links": linksProp})},
-		{"create_subtask", "把你正在执行的任务拆出一个子任务，交给别人并行处理。需要你持有该任务当前有效的执行（已 start_work）。required 为 true 时，本任务要等该子任务完成才能提交结果；你的执行仍然有效，可以继续做你自己的部分。子任务负责人默认是本任务负责人，也可以用 owner 指定空间内任一有效用户（list_people 且 kind 为 human）。子任务默认不需要负责人验收（提交有效结果即完成），需要时 acceptance 填 manual。可用 assignee 同时指定处理人（可以是你自己），能指定谁由部署配置决定；指定 Agent 后它仍须 start_work 认领，指定人则对方立即开始；不指定则由子任务负责人安排。指定处理人时 goal 必填。你会成为子任务的参与者，可用 read_task 查看进度。", schema([]string{"task_id", "title"}, map[string]any{"task_id": str("你正在执行的任务 ID（子任务的父任务）"), "title": str("子任务标题"), "goal": str("子任务目标"), "criteria": str("可选：子任务验收标准"), "required": prop("boolean", "可选：true 表示本任务必须等它完成才能提交；默认 false"), "owner": str("可选：子任务负责人的 ID（用户，不能是 Agent）；留空为本任务负责人"), "acceptance": map[string]any{"type": "string", "enum": []string{"manual", "none"}, "description": "可选：manual 表示子任务结果须负责人验收；默认 none"}, "assignee": str("可选：子任务处理人的 ID（用户或 Agent，可以是你自己）")})},
+		{"create_subtask", "把你正在执行的任务拆出一个子任务，交给别人并行处理。需要你持有该任务当前有效的执行（已 start_work）。required 为 true 时，本任务要等该子任务完成才能提交结果；你的执行仍然有效，可以继续做你自己的部分。子任务负责人默认是本任务负责人，也可以用 owner 指定空间内任一有效用户（list_people 且 kind 为 human）。子任务默认不需要负责人验收（提交有效结果即完成），需要时 acceptance 填 manual。可用 assignee 同时指定处理人（可以是你自己），能指定谁由部署配置决定；指定 Agent 后它仍须 start_work 认领，指定人则对方立即开始；不指定则由子任务负责人安排。指定处理人时 goal 必填。可用 tags 从空间标签中选择分类（list_tags）。你会成为子任务的参与者，可用 read_task 查看进度。", schema([]string{"task_id", "title"}, map[string]any{"task_id": str("你正在执行的任务 ID（子任务的父任务）"), "title": str("子任务标题"), "goal": str("子任务目标"), "criteria": str("可选：子任务验收标准"), "required": prop("boolean", "可选：true 表示本任务必须等它完成才能提交；默认 false"), "owner": str("可选：子任务负责人的 ID（用户，不能是 Agent）；留空为本任务负责人"), "acceptance": map[string]any{"type": "string", "enum": []string{"manual", "none"}, "description": "可选：manual 表示子任务结果须负责人验收；默认 none"}, "assignee": str("可选：子任务处理人的 ID（用户或 Agent，可以是你自己）"), "tags": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "可选：标签名称列表（list_tags 列出的 name），最多 10 个；只能在创建时选择"}})},
+		{"list_tags", "列出空间的标签（名称和说明），用于 create_subtask 的 tags。标签由管理员维护，只用于分类和筛选，不影响流程。", schema(nil, map[string]any{})},
 		{"reassign", "把任务改派给别人（用户或 Agent），例如任务不适合你或需要别人接手。你是当前处理人，或当前这次分配是你做的时可用；改派后原执行立即失效，接手的 Agent 须 start_work 认领，接手的人立即开始。", schema([]string{"task_id", "to"}, map[string]any{"task_id": task, "to": str("新处理人的 ID（list_people 返回的 subject）")})},
 		{"upload_file", "把一个文件上传到任务，返回 file_id，供 submit_result 或 post_message 的 files 引用；只上传不会出现在时间线中。text 与 content_base64 二选一。经本工具上传的内容上限约 700KB，更大的文件用 HTTP POST /v1/tasks/{id}/files 上传（同一凭据）。", schema([]string{"task_id", "name"}, map[string]any{"task_id": task, "name": str("文件名，如 report.md"), "text": str("文本文件的内容（UTF-8）"), "content_base64": str("二进制文件内容的 base64"), "media_type": str("可选：如 text/markdown、image/png；留空按文件名推断")})},
 		{"read_file", "读取任务中的一个文件（read_task 的 files 中列出）。UTF-8 文本直接返回内容，其他文件返回 base64；超过 512KB 时只返回元数据和 HTTP 下载路径。", schema([]string{"task_id", "file_id"}, map[string]any{"task_id": task, "file_id": str("文件 ID")})},
@@ -205,7 +206,7 @@ func (a arguments) check() error {
 			if _, ok := v.(bool); !ok {
 				return invalid("参数 required 须为布尔值 true 或 false")
 			}
-		case "files", "links":
+		case "files", "links", "tags":
 			if _, ok := v.([]any); !ok {
 				return invalid("参数 " + name + " 须为数组")
 			}
@@ -328,7 +329,11 @@ func (m *Module) call(ctx context.Context, c call, name string, rawArgs json.Raw
 			return "", invalid("acceptance 只能是 manual 或 none")
 		}
 		assignee := strings.TrimSpace(args.str("assignee"))
-		ref, err := m.d.Comments.Create(ctx, c.token, c.key(name, args), workspace.Create{Title: args.str("title"), Goal: args.str("goal"), Criteria: args.str("criteria"), ParentID: args.str("task_id"), Owner: args.str("owner"), Required: req, Acceptance: mode, Assignee: assignee})
+		tagIDs, err := m.tagIDs(ctx, c, args)
+		if err != nil {
+			return "", err
+		}
+		ref, err := m.d.Comments.Create(ctx, c.token, c.key(name, args), workspace.Create{Title: args.str("title"), Goal: args.str("goal"), Criteria: args.str("criteria"), ParentID: args.str("task_id"), Owner: args.str("owner"), Required: req, Acceptance: mode, Assignee: assignee, Tags: tagIDs})
 		if err != nil {
 			return "", err
 		}
@@ -342,6 +347,21 @@ func (m *Module) call(ctx context.Context, c call, name string, rawArgs json.Raw
 			msg += "已分配给 " + assignee + "；Agent（包括你自己）须用 start_work 认领后开始。"
 		}
 		return pretty(map[string]any{"message": msg, "subtask_id": ref.TaskID}), nil
+	case "list_tags":
+		tags, err := m.d.Tags.Tags(ctx, c.token)
+		if err != nil {
+			return "", err
+		}
+		out := []map[string]string{}
+		for _, t := range tags {
+			if !t.Archived {
+				out = append(out, map[string]string{"name": t.Name, "description": t.Description})
+			}
+		}
+		if len(out) == 0 {
+			return "空间还没有标签。", nil
+		}
+		return pretty(out), nil
 	case "reassign":
 		if err := required(args, "task_id", "to"); err != nil {
 			return "", err
@@ -476,6 +496,7 @@ func (m *Module) readTask(ctx context.Context, c call, taskID string, before int
 		addAttachments(entry, cm, fileByID)
 		timeline = append(timeline, entry)
 	}
+	tagNames := m.tagNames(ctx, c, d.Task.Tags)
 	out := map[string]any{
 		"you":                 w.Viewer,
 		"task_id":             d.Task.ID,
@@ -483,6 +504,7 @@ func (m *Module) readTask(ctx context.Context, c call, taskID string, before int
 		"goal":                d.Task.Goal,
 		"criteria":            d.Task.Criteria,
 		"owner":               d.Task.Owner,
+		"tags":                tagNames,
 		"status":              w.Position.Status,
 		"step":                w.Position.State,
 		"waiting":             w.Position.Waiting,
@@ -631,4 +653,56 @@ func (m *Module) readFile(ctx context.Context, c call, taskID, fileID string) (s
 		meta["content_base64"] = base64.StdEncoding.EncodeToString(raw)
 	}
 	return pretty(meta), nil
+}
+
+// tagIDs resolves the tag names an Agent gave, ignoring case, to IDs. Whether
+// a tag may be attached (archived, too many) stays the create command's rule.
+func (m *Module) tagIDs(ctx context.Context, c call, args arguments) ([]string, error) {
+	raw, _ := args["tags"].([]any)
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	vocabulary, err := m.d.Tags.Tags(ctx, c.token)
+	if err != nil {
+		return nil, err
+	}
+	ids := []string{}
+	for _, v := range raw {
+		name, ok := v.(string)
+		if !ok {
+			return nil, invalid("tags 须为标签名称字符串数组")
+		}
+		found := ""
+		for _, t := range vocabulary {
+			if strings.EqualFold(t.Name, strings.TrimSpace(name)) {
+				found = t.ID
+			}
+		}
+		if found == "" {
+			return nil, invalid("没有名为「" + name + "」的标签：用 list_tags 查看可用标签")
+		}
+		ids = append(ids, found)
+	}
+	return ids, nil
+}
+
+// tagNames names a task's tags for read_task; a tag the reader cannot
+// resolve is left out rather than shown as an ID.
+func (m *Module) tagNames(ctx context.Context, c call, ids []string) []string {
+	out := []string{}
+	if len(ids) == 0 {
+		return out
+	}
+	vocabulary, err := m.d.Tags.Tags(ctx, c.token)
+	if err != nil {
+		return out
+	}
+	for _, id := range ids {
+		for _, t := range vocabulary {
+			if t.ID == id {
+				out = append(out, t.Name)
+			}
+		}
+	}
+	return out
 }

@@ -232,6 +232,7 @@ mcp-api:
     questions: question-commands
     people: workspace
     files: files
+    tags: catalog
 audit-api:
   use: api/audit
   deps:

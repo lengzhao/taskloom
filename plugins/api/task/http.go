@@ -1,5 +1,5 @@
 // Package task adapts the task's own commands to HTTP: listing, reading,
-// creating and editing a task, its timeline, participants, project, owner and
+// creating and editing a task, its timeline, participants, project, tags, owner and
 // place in the work breakdown. Rules live in the commands; every task write
 // answers with the caller's current task view, the same as GET /tasks/{id}.
 package task
@@ -47,6 +47,7 @@ func (m *Module) Routes() []httpapi.Route {
 		h("POST", "/tasks/{id}/commits", "commits.append", m.comment),
 		h("POST", "/tasks/{id}/participants", "participants.set", m.participants),
 		h("POST", "/tasks/{id}/project", "task.project", m.project),
+		h("POST", "/tasks/{id}/tags", "task.tag", m.tags),
 		h("POST", "/tasks/{id}/owner", "task.owner", m.owner),
 		h("POST", "/tasks/{id}/parent", "task.plan", m.parent),
 	}
@@ -65,10 +66,23 @@ func (m *Module) list(w http.ResponseWriter, r *http.Request) {
 		}
 		f.Mine = mine
 	}
-	out, err := m.d.Views.List(r.Context(), httpx.Credential(r), f)
+	if raw := q.Get("limit"); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil {
+			httpx.Fail(w, fault.Input(fault.CodeInvalid, "limit"))
+			return
+		}
+		f.Limit = n
+	}
+	f.Cursor = q.Get("cursor")
+	out, next, err := m.d.Views.List(r.Context(), httpx.Credential(r), f)
 	if err != nil {
 		httpx.Fail(w, err)
 		return
+	}
+	// The body stays a plain array; the next page's cursor travels in a header.
+	if next != "" {
+		w.Header().Set("X-Next-Cursor", next)
 	}
 	httpx.Write(w, out)
 }
@@ -141,6 +155,17 @@ func (m *Module) project(w http.ResponseWriter, r *http.Request) {
 	in.TaskID = r.PathValue("id")
 	token := httpx.Credential(r)
 	err := m.d.Tasks.SetProject(r.Context(), token, key(r), in)
+	httpx.View(r.Context(), w, m.d.Views, token, in.TaskID, err)
+}
+
+func (m *Module) tags(w http.ResponseWriter, r *http.Request) {
+	var in api.TagChange
+	if !httpx.Decode(w, r, &in) {
+		return
+	}
+	in.TaskID = r.PathValue("id")
+	token := httpx.Credential(r)
+	err := m.d.Tasks.SetTags(r.Context(), token, key(r), in)
 	httpx.View(r.Context(), w, m.d.Views, token, in.TaskID, err)
 }
 

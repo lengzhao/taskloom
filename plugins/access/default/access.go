@@ -110,7 +110,7 @@ func (s *Service) Check(ctx context.Context, p identity.Principal, op, resource 
 			return nil
 		}
 		return az.ErrForbidden
-	case "task.project", "task.owner", "task.read", "task.edit", "commit.append", "file.upload", "participant.set", "execution.open", "execution.assign", "result.submit", "result.review", "task.cancel", "task.restart", "task.plan", "task.split":
+	case "task.project", "task.owner", "task.tag", "task.read", "task.edit", "commit.append", "file.upload", "participant.set", "execution.open", "execution.assign", "result.submit", "result.review", "task.cancel", "task.restart", "task.plan", "task.split":
 		t, e := s.d.Tasks.GetTask(ctx, p.Tenant, resource)
 		if errors.Is(e, fault.ErrNotFound) {
 			return az.ErrForbidden
@@ -130,24 +130,21 @@ func (s *Service) Check(ctx context.Context, p identity.Principal, op, resource 
 		if p.Kind == "human" && (m.Role == "admin" || t.Owner == p.ID) {
 			return nil
 		}
-		if op == "execution.assign" && p.Kind == "human" {
-			assigned, err := s.d.Store.IsAssigned(ctx, p.Tenant, t.ID, p.ID)
+		if op == "execution.assign" {
+			// Besides owner and administrators, a handover may come from the
+			// current handler (person or Agent, still participating), from whoever
+			// made the current assignment, or from the owner of the task's project.
+			ok, err := s.mayReassign(ctx, p, t)
 			if err != nil {
 				return err
 			}
-			if assigned {
-				participating, err := s.d.Store.HasParticipant(ctx, az.Participant{Tenant: p.Tenant, TaskID: t.ID, Subject: p.ID})
-				if err != nil {
-					return err
-				}
-				if participating {
-					return nil
-				}
+			if ok {
+				return nil
 			}
 		}
 		// Filing a task decides who else may read it, and a handover decides who
 		// answers for it: both stay with the owner and administrators.
-		if op == "task.edit" || op == "participant.set" || op == "execution.assign" || op == "task.cancel" || op == "task.restart" || op == "task.plan" || op == "task.project" || op == "task.owner" {
+		if op == "task.edit" || op == "participant.set" || op == "execution.assign" || op == "task.cancel" || op == "task.restart" || op == "task.plan" || op == "task.project" || op == "task.owner" || op == "task.tag" {
 			return az.ErrForbidden
 		}
 		// Execution commands recheck explicit assignment and instance/generation in
@@ -174,4 +171,36 @@ func (s *Service) Check(ctx context.Context, p identity.Principal, op, resource 
 	default:
 		return az.ErrForbidden
 	}
+}
+
+// mayReassign: the handler and the assigner must still take part in the task
+// (a write never outruns read access); the project owner reads it through the
+// project.
+func (s *Service) mayReassign(ctx context.Context, p identity.Principal, t task.Task) (bool, error) {
+	assigned, err := s.d.Store.IsAssigned(ctx, p.Tenant, t.ID, p.ID)
+	if err != nil {
+		return false, err
+	}
+	by := ""
+	if !assigned {
+		if by, err = s.d.Store.AssignedBy(ctx, p.Tenant, t.ID); err != nil {
+			return false, err
+		}
+	}
+	if assigned || (by != "" && by == p.ID) {
+		participating, err := s.d.Store.HasParticipant(ctx, az.Participant{Tenant: p.Tenant, TaskID: t.ID, Subject: p.ID})
+		if err != nil || participating {
+			return participating, err
+		}
+	}
+	if t.ProjectID != "" && p.Kind == "human" {
+		project, err := s.d.Projects.GetProject(ctx, p.Tenant, t.ProjectID)
+		if err != nil && !errors.Is(err, fault.ErrNotFound) {
+			return false, err
+		}
+		if err == nil && project.Owner == p.ID {
+			return true, nil
+		}
+	}
+	return false, nil
 }

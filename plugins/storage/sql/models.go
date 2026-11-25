@@ -32,6 +32,29 @@ type receiptRow struct {
 	Digest string `gorm:"size:64"`
 	Result []byte
 }
+
+// receiptRecord is the current receipt model; receiptRow stays frozen as the
+// command/001 definition. CreatedAt (added by command/002) bounds retention.
+type receiptRecord struct {
+	Key       string `gorm:"primaryKey;size:64;column:row_key"`
+	Digest    string `gorm:"size:64"`
+	Result    []byte
+	CreatedAt time.Time `gorm:"index:idx_receipt_created"`
+}
+
+func (receiptRecord) TableName() string { return "receipt_rows" }
+
+// An index-only view of an existing table: AutoMigrate adds the named index
+// and, with column types matching the frozen row, alters nothing else. The
+// audit index is created by DDL instead (see auditTimeIndexDDL): its tenant
+// column is TEXT on MySQL, which needs a prefix length.
+type commitSequenceIndex struct {
+	TaskKey  string `gorm:"size:64;index:idx_commit_task_sequence,priority:1"`
+	Sequence int64  `gorm:"index:idx_commit_task_sequence,priority:2"`
+}
+
+func (commitSequenceIndex) TableName() string { return "commit_rows" }
+
 type auditRow struct {
 	OwnerID, CredentialID                                 string
 	ID                                                    string `gorm:"primaryKey;size:128"`

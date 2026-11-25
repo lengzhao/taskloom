@@ -24,6 +24,16 @@ type Create struct {
 	Required                                   bool            `json:",omitempty"`
 	Acceptance                                 flow.Acceptance `json:",omitempty"`
 	Assignee                                   string          `json:",omitempty"`
+	// Tags are active tag IDs from the tenant's vocabulary, at most
+	// catalog.MaxTaskTags; any creator, person or Agent, may choose them.
+	Tags []string `json:",omitempty"`
+}
+
+// TagChange adds and removes tags on a task. It merges into the current set
+// and pins no version, so concurrent changes do not overwrite each other.
+type TagChange struct {
+	TaskID      string
+	Add, Remove []string
 }
 
 // Handover makes Owner, an active person, responsible for the task. It pins
@@ -83,6 +93,8 @@ type Commands interface {
 	Create(ctx context.Context, credential, idempotencyKey string, value Create) (Ref, error)
 	Edit(ctx context.Context, credential, idempotencyKey string, value Edit) (Ref, error)
 	Comment(ctx context.Context, credential, idempotencyKey string, value Comment) (Ref, error)
+	// SetTags is for the task's owner or an administrator.
+	SetTags(ctx context.Context, credential, idempotencyKey string, value TagChange) error
 }
 type Viewer struct {
 	Tenant, Subject, Kind string

@@ -131,21 +131,39 @@ type assignmentRow struct {
 	Subject string
 }
 
+// assignmentRecord is the current assignment model; assignmentRow stays frozen
+// as the workflow/001 definition. Assigner is added by workflow/002.
+type assignmentRecord struct {
+	Key      string `gorm:"primaryKey;size:64;column:row_key"`
+	Subject  string
+	Assigner string `gorm:"size:128"`
+}
+
+func (assignmentRecord) TableName() string { return "assignment_rows" }
+
 func (s *Store) Assignee(ctx context.Context, tenant, taskID string) (string, error) {
-	var r assignmentRow
+	var r assignmentRecord
 	e := s.use(ctx, false, func(db *gorm.DB) error { return db.First(&r, "row_key = ?", key(tenant, taskID)).Error })
 	return r.Subject, e
 }
-func (s *Store) AssignSubject(ctx context.Context, tenant, taskID, subject string) error {
+func (s *Store) AssignSubject(ctx context.Context, tenant, taskID, subject, assigner string) error {
 	return s.use(ctx, true, func(db *gorm.DB) error {
-		return db.Clauses(clause.OnConflict{UpdateAll: true}).Create(&assignmentRow{Key: key(tenant, taskID), Subject: subject}).Error
+		return db.Clauses(clause.OnConflict{UpdateAll: true}).Create(&assignmentRecord{Key: key(tenant, taskID), Subject: subject, Assigner: assigner}).Error
 	})
+}
+
+func (s *Store) AssignedBy(ctx context.Context, tenant, taskID string) (string, error) {
+	var r assignmentRecord
+	e := s.use(ctx, false, func(db *gorm.DB) error {
+		return db.Where("row_key = ?", key(tenant, taskID)).Limit(1).Find(&r).Error
+	})
+	return r.Assigner, e
 }
 
 func (s *Store) IsAssigned(ctx context.Context, tenant, taskID, subject string) (bool, error) {
 	var count int64
 	e := s.use(ctx, false, func(db *gorm.DB) error {
-		return db.Model(&assignmentRow{}).Where("row_key = ? AND subject = ?", key(tenant, taskID), subject).Count(&count).Error
+		return db.Model(&assignmentRecord{}).Where("row_key = ? AND subject = ?", key(tenant, taskID), subject).Count(&count).Error
 	})
 	return count == 1, e
 }

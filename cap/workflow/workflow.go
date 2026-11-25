@@ -187,10 +187,20 @@ type Summary struct {
 // (at most task.MaxPick), so a client can refresh only what changed. Mine
 // keeps the caller's work: tasks waiting on the caller first, then tasks the
 // caller owns or handles that wait on their required subtasks.
+//
+// Limit, when set (1..MaxListLimit), returns one page of at most Limit rows
+// and a next cursor; Cursor continues after the previous page. Pages are in
+// task-ID order (Mine orders within the page). Without Limit the whole list is
+// returned, as before. IDs and Limit do not combine.
 type ListFilter struct {
-	IDs  []string
-	Mine bool
+	IDs    []string
+	Mine   bool
+	Limit  int
+	Cursor string
 }
+
+// MaxListLimit bounds one list page.
+const MaxListLimit = 200
 
 // View is everything one task page shows: the task, the caller's snapshot and
 // one page of the timeline, the newest unless an earlier one was asked for.
@@ -210,5 +220,7 @@ type Queries interface {
 	// Read returns the task the caller may read with one timeline page: the
 	// newest commits, or those just before the given sequence.
 	Read(ctx context.Context, token, taskID string, before int64) (View, error)
-	List(ctx context.Context, token string, filter ListFilter) ([]Summary, error)
+	// List returns the rows and, for a paged request with more to read, the
+	// cursor of the next page ("" when the list is complete).
+	List(ctx context.Context, token string, filter ListFilter) ([]Summary, string, error)
 }

@@ -16,6 +16,7 @@ var messages = map[string]string{
 	CodeTaskNotActive:          "任务已结束或已取消",
 	"body_too_large":           "请求体超过上限",
 	"too_long":                 "内容超过长度上限",
+	"resync_required":          "变化记录已过期，请重新读取任务列表并从新游标补拉",
 
 	// Work on a task (cap/workflow reasons and command conflicts).
 	"business_credential_required": "需要 Agent 接入凭据",
@@ -53,6 +54,13 @@ var messages = map[string]string{
 	"project_archived":       "项目已归档，不能新增或移入任务",
 	"owner_ambiguous":        "无法确定负责人，请指定 Owner",
 	"invalid_name_or_detail": "名称为空，或名称、描述过长",
+
+	// Tags.
+	"tag_name_taken":     "已有同名标签（不区分大小写）",
+	"too_many_tags":      "空间的标签数量已达上限",
+	"tag_unknown":        "标签不存在",
+	"tag_archived":       "标签已归档，不能再加到任务上",
+	"too_many_task_tags": "一个任务的标签数量超过上限",
 }
 
 // Message is the human text of a stable code, or "" when it has none.

@@ -22,7 +22,7 @@ server 以 resources 管 SQL、以 components 管 http，http 管各 API 模块�
 
 ## SQL 连接配置
 
-`storage/sql` 内部使用 GORM；连接字段为 `driver` 和 `dsn`。本地默认 `driver: sqlite`、`dsn: taskloom.db`（相对工作目录），生产通过同一 config.yaml 覆盖。切换到 MySQL/PostgreSQL 时同时选择对应 driver 和原生 DSN；同类型数据库只需改 DSN。业务 Deps、接口及状态配置不变，不新增配置层或通用 DSN 猜测规则。携带凭据的 DSN 不进入日志，当前通过受限部署 config 文件提供，不隐式插值环境变量。
+`storage/sql` 内部使用 GORM；连接字段为 `driver` 和 `dsn`。本地默认 `driver: sqlite`、`dsn: taskloom.db`（相对工作目录），生产通过同一 config.yaml 覆盖。切换到 MySQL/PostgreSQL 时同时选择对应 driver 和原生 DSN；同类型数据库只需改 DSN。业务 Deps、接口及状态配置不变，不新增配置层或通用 DSN 猜测规则。携带凭据的 DSN 不进入日志，当前通过受限部署 config 文件提供，不隐式插值环境变量。`eventRetention`（变化事件保留期）与 `receiptRetention`（幂等回执保留期，即同键重放仍返回原结果的窗口）默认都是 `720h`，最少 `24h`；由 sql 资源在 Open 后启动、Close 时停止的清理循环每小时执行一次。
 
 SQL resource 由 server 打开和关闭。支持范围以实际编入并验证的驱动为准；数据库切换与已有数据搬迁是两件事。存储一致性与迁移见[架构](architecture.md#存储与迁移)。
 

@@ -80,7 +80,7 @@ func (m *Module) Routes() []httpapi.Route {
 
 func (m *Module) search(w http.ResponseWriter, r *http.Request) {
 	v := r.URL.Query()
-	q := api.Query{Q: v.Get("q"), Match: v.Get("match")}
+	q := api.Query{Q: v.Get("q"), Match: v.Get("match"), Trust: v.Get("trust")}
 	var err error
 	if q.Page, err = optInt(v.Get("page")); err == nil {
 		q.Size, err = optInt(v.Get("size"))

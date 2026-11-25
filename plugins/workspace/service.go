@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"github.com/lengzhao/taskloom/cap/catalog"
 	capcommand "github.com/lengzhao/taskloom/cap/command"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -29,8 +30,9 @@ import (
 )
 
 type Deps struct {
-	Catalog       catalog.ProjectReader  `json:"catalog"`
-	Transactions  unitofwork.Manager     `json:"transactions"`
+	// Catalog says where a task may be filed and which tags it may carry.
+	Catalog       catalog.Reader         `json:"catalog"`
+	Transactions  unitofwork.Viewer      `json:"transactions"`
 	Tasks         task.Store             `json:"tasks"`
 	Commits       commit.Log             `json:"commits"`
 	Flow          flow.Controller        `json:"flow"`
@@ -184,7 +186,11 @@ func (s *Service) Create(ctx context.Context, token, key string, in api.Create) 
 		if e := s.projectOpen(tx, p, in.ProjectID); e != nil {
 			return nil, e
 		}
-		t := task.Task{ProjectID: in.ProjectID, Tenant: p.Tenant, ID: id(), Title: in.Title, Goal: in.Goal, Criteria: in.Criteria, Owner: owner, BasisVersion: 1}
+		tags, e := s.tags(tx, p.Tenant, nil, in.Tags, nil)
+		if e != nil {
+			return nil, e
+		}
+		t := task.Task{ProjectID: in.ProjectID, Tenant: p.Tenant, ID: id(), Title: in.Title, Goal: in.Goal, Criteria: in.Criteria, Owner: owner, BasisVersion: 1, Tags: tags}
 		if e := s.d.Tasks.CreateTask(tx, t); e != nil {
 			return nil, e
 		}
@@ -204,7 +210,7 @@ func (s *Service) Create(ctx context.Context, token, key string, in api.Create) 
 			if e := s.mayAssign(tx, p, t.ID, in.Assignee); e != nil {
 				return nil, e
 			}
-			if e := s.d.Assigner.AssignCreated(tx, p.Tenant, t.ID, in.Assignee); e != nil {
+			if e := s.d.Assigner.AssignCreated(tx, p.Tenant, t.ID, in.Assignee, p.ID); e != nil {
 				return nil, e
 			}
 		}
@@ -389,10 +395,22 @@ func (s *Service) Changes(ctx context.Context, token, raw string) (api.Page, err
 		}
 		after = n
 	}
-	e := s.d.Transactions.Do(ctx, func(tx context.Context) error {
+	e := s.d.Transactions.View(ctx, func(tx context.Context) error {
 		p, e := s.actor(tx, token)
 		if e != nil {
 			return e
+		}
+		floor, e := s.d.Events.EventFloor(tx)
+		if e != nil {
+			return e
+		}
+		if !start && after < floor {
+			return fault.Conflict(fault.CodeResyncRequired)
+		}
+		// A start position is never below the floor, even when no retained
+		// event is left to move it there; otherwise its next read would resync.
+		if start {
+			after = floor
 		}
 		for {
 			es, e := s.d.Events.ReadEvents(tx, p.Tenant, after, 100)
@@ -465,7 +483,7 @@ func (s *Service) People(ctx context.Context, token string, q az.MemberQuery) (a
 	}
 	size := q.Limit
 	q.Limit++ // one extra row tells whether another page follows
-	e := s.d.Transactions.Do(ctx, func(tx context.Context) error {
+	e := s.d.Transactions.View(ctx, func(tx context.Context) error {
 		p, e := s.actor(tx, token)
 		if e != nil {
 			return e
@@ -486,7 +504,7 @@ func (s *Service) People(ctx context.Context, token string, q az.MemberQuery) (a
 
 func (s *Service) Viewer(ctx context.Context, token string) (api.Viewer, error) {
 	var out api.Viewer
-	e := s.d.Transactions.Do(ctx, func(tx context.Context) error {
+	e := s.d.Transactions.View(ctx, func(tx context.Context) error {
 		p, e := s.d.Identity.Authenticate(tx, token)
 		if e != nil {
 			return e
@@ -502,7 +520,7 @@ func (s *Service) Viewer(ctx context.Context, token string) (api.Viewer, error) 
 }
 func (s *Service) Members(ctx context.Context, token string) ([]az.DirectoryMember, error) {
 	out := []az.DirectoryMember{}
-	e := s.d.Transactions.Do(ctx, func(tx context.Context) error {
+	e := s.d.Transactions.View(ctx, func(tx context.Context) error {
 		p, e := s.d.Identity.Authenticate(tx, token)
 		if e != nil {
 			return e
@@ -554,6 +572,73 @@ func (s *Service) SetProject(ctx context.Context, token, key string, in api.Proj
 		// only adds readers, and the task change reaches them once they can read.
 		if before.ProjectID != "" && before.ProjectID != t.ProjectID {
 			return nil, s.d.Events.AppendEvent(tx, record.Event{Tenant: t.Tenant, Resource: t.ID, Kind: record.EventAccessChanged})
+		}
+		return nil, s.event(tx, t)
+	})
+	return e
+}
+
+// tags merges add and remove into current. Added tags must exist and be
+// active; removing one the task does not carry is no change. The result keeps
+// current's order with new tags appended, and at most catalog.MaxTaskTags.
+func (s *Service) tags(ctx context.Context, tenant string, current, add, remove []string) ([]string, error) {
+	drop := map[string]bool{}
+	for _, id := range remove {
+		drop[id] = true
+	}
+	out := []string{}
+	seen := map[string]bool{}
+	for _, id := range current {
+		if !drop[id] && !seen[id] {
+			seen[id] = true
+			out = append(out, id)
+		}
+	}
+	for _, id := range add {
+		if seen[id] || drop[id] {
+			continue
+		}
+		t, e := s.d.Catalog.GetTag(ctx, tenant, id)
+		if errors.Is(e, fault.ErrNotFound) || id == "" {
+			return nil, fault.Input("tag_unknown", "Tags")
+		}
+		if e != nil {
+			return nil, e
+		}
+		if t.Archived {
+			return nil, fault.Input("tag_archived", "Tags")
+		}
+		seen[id] = true
+		out = append(out, id)
+	}
+	if len(out) > catalog.MaxTaskTags {
+		return nil, fault.Input("too_many_task_tags", "Tags")
+	}
+	if len(out) == 0 {
+		return nil, nil
+	}
+	return out, nil
+}
+
+// SetTags adds and removes tags for the task's owner or an administrator.
+// Tags only classify: no basis, flow or timeline change, so no execution is
+// fenced; the change is audited by the command and announced as task.changed.
+func (s *Service) SetTags(ctx context.Context, token, key string, in api.TagChange) error {
+	_, e := command.Run(ctx, s.d.Commands, capcommand.Request{Token: token, Key: key, Operation: "task.tag", Resource: in.TaskID}, in, func(tx context.Context, p identity.Principal) ([]byte, error) {
+		before, e := s.d.Tasks.GetTask(tx, p.Tenant, in.TaskID)
+		if e != nil {
+			return nil, e
+		}
+		tags, e := s.tags(tx, p.Tenant, before.Tags, in.Add, in.Remove)
+		if e != nil {
+			return nil, e
+		}
+		if slices.Equal(tags, before.Tags) {
+			return nil, nil
+		}
+		t, e := s.d.Tasks.SetTags(tx, p.Tenant, in.TaskID, tags)
+		if e != nil {
+			return nil, e
 		}
 		return nil, s.event(tx, t)
 	})

@@ -182,7 +182,7 @@ func TestAgentWorksATaskThroughMCP(t *testing.T) {
 	if init["protocolVersion"] != "2025-06-18" || !strings.Contains(init["instructions"].(string), "submit_result") || f.session == "" {
 		t.Fatal("initialize", init, f.session)
 	}
-	if n := len(f.rpc("tools/list", nil)["tools"].([]any)); n != 12 {
+	if n := len(f.rpc("tools/list", nil)["tools"].([]any)); n != 14 {
 		t.Fatal("tools", n)
 	}
 
@@ -430,4 +430,46 @@ func TestAgentSplitsATaskThroughMCP(t *testing.T) {
 		t.Fatal("self-assigned subtask", out)
 	}
 	f.ok("start_work", map[string]string{"task_id": mine, "basis": f.ok("read_task", map[string]string{"task_id": mine})["basis"].(string)})
+}
+
+// An Agent reads the tag vocabulary and tags the subtasks it splits by name.
+func TestAgentTagsSubtasksThroughMCP(t *testing.T) {
+	f := setup(t)
+	if text, isErr := f.tool("list_tags", nil); isErr || !strings.Contains(text, "还没有标签") {
+		t.Fatal("empty vocabulary", text)
+	}
+	var tag struct{ ID, Name, Description string }
+	f.ownerCall("POST", "/tags", map[string]string{"Name": "Security", "Description": "安全风险"}, &tag)
+	var old struct {
+		ID, Name string
+		Version  int64
+	}
+	f.ownerCall("POST", "/tags", map[string]string{"Name": "旧分类"}, &old)
+	f.ownerCall("PATCH", "/tags/"+old.ID, map[string]any{"Name": old.Name, "Archived": true, "ExpectedVersion": old.Version}, nil)
+	if text, isErr := f.tool("list_tags", nil); isErr || !strings.Contains(text, "Security") || strings.Contains(text, "旧分类") {
+		t.Fatal("list_tags lists active tags only", text)
+	}
+	var created struct{ Task struct{ ID string } }
+	f.ownerCall("POST", "/tasks", map[string]string{"Title": "上线", "Goal": "上线新版"}, &created)
+	id := created.Task.ID
+	f.ownerCall("POST", "/tasks/"+id+"/assign", map[string]any{"Subject": "agent"}, nil)
+	f.ok("start_work", map[string]string{"task_id": id, "basis": f.ok("read_task", map[string]string{"task_id": id})["basis"].(string)})
+	if text, isErr := f.tool("create_subtask", map[string]any{"task_id": id, "title": "x", "tags": "Security"}); !isErr || !strings.Contains(text, "tags") {
+		t.Fatal("tags must be an array", text)
+	}
+	if text, isErr := f.tool("create_subtask", map[string]any{"task_id": id, "title": "x", "tags": []string{"nope"}}); !isErr || !strings.Contains(text, "list_tags") {
+		t.Fatal("unknown tag name accepted", text)
+	}
+	if text, isErr := f.tool("create_subtask", map[string]any{"task_id": id, "title": "x", "tags": []string{"旧分类"}}); !isErr || !strings.Contains(text, "归档") {
+		t.Fatal("archived tag accepted", text)
+	}
+	out := f.ok("create_subtask", map[string]any{"task_id": id, "title": "安全评估", "goal": "g", "tags": []string{"security"}})
+	sub, _ := out["subtask_id"].(string)
+	read := f.ok("read_task", map[string]string{"task_id": sub})
+	if fmt.Sprint(read["tags"]) != "[Security]" {
+		t.Fatal("read_task names the subtask's tags", read["tags"])
+	}
+	if fmt.Sprint(f.ok("read_task", map[string]string{"task_id": id})["tags"]) != "[]" {
+		t.Fatal("subtask tags leaked to the parent")
+	}
 }

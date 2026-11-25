@@ -12,6 +12,7 @@ import (
 	"errors"
 	"hash"
 	"io"
+	"log/slog"
 	"mime"
 	"time"
 
@@ -53,7 +54,7 @@ func (c *Config) Validate() error {
 // service locator, and splitting reads out would duplicate the same check.
 type Deps struct {
 	Commands      capcommand.Handler     `json:"commands"`
-	Transactions  unitofwork.Manager     `json:"transactions"`
+	Transactions  unitofwork.Viewer      `json:"transactions"`
 	Identity      identity.Authenticator `json:"identity"`
 	Authorization az.Authorizer          `json:"authorization"`
 	Files         api.Store              `json:"files"`
@@ -102,7 +103,7 @@ func (m *Module) Upload(ctx context.Context, token, key string, in api.Upload, b
 	in.Name, in.MediaType = name, mediaType
 	// Check access before accepting bytes; the command checks it again.
 	var caller identity.Principal
-	err = m.d.Transactions.Do(ctx, func(tx context.Context) error {
+	err = m.d.Transactions.View(ctx, func(tx context.Context) error {
 		var e error
 		caller, e = m.principal(tx, token, "file.upload", in.TaskID)
 		return e
@@ -129,7 +130,9 @@ func (m *Module) Upload(ctx context.Context, token, key string, in api.Upload, b
 		// Compensate: these bytes are unregistered (failure) or a duplicate of
 		// the original upload (replay). A failed delete leaves unreachable bytes.
 		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-		_ = m.d.Blobs.Delete(cleanup, id)
+		if e := m.d.Blobs.Delete(cleanup, id); e != nil {
+			slog.Default().WarnContext(ctx, "compensating blob delete failed; bytes left unreachable", slog.String("key", id), slog.String("error", e.Error()))
+		}
 		cancel()
 	}
 	if err != nil {
@@ -146,7 +149,7 @@ func (m *Module) Upload(ctx context.Context, token, key string, in api.Upload, b
 
 func (m *Module) List(ctx context.Context, token, taskID string) ([]api.File, error) {
 	var out []api.File
-	err := m.d.Transactions.Do(ctx, func(tx context.Context) error {
+	err := m.d.Transactions.View(ctx, func(tx context.Context) error {
 		p, e := m.principal(tx, token, "task.read", taskID)
 		if e != nil {
 			return e
@@ -158,7 +161,7 @@ func (m *Module) List(ctx context.Context, token, taskID string) ([]api.File, er
 }
 
 func (m *Module) Limits(ctx context.Context, token string) (api.Limits, error) {
-	err := m.d.Transactions.Do(ctx, func(tx context.Context) error {
+	err := m.d.Transactions.View(ctx, func(tx context.Context) error {
 		_, e := m.d.Identity.Authenticate(tx, token)
 		return e
 	})
@@ -171,7 +174,7 @@ func (m *Module) Limits(ctx context.Context, token string) (api.Limits, error) {
 // Open checks read access, then opens the bytes outside the SQL transaction.
 func (m *Module) Open(ctx context.Context, token, taskID, fileID string) (api.File, io.ReadCloser, error) {
 	var f api.File
-	err := m.d.Transactions.Do(ctx, func(tx context.Context) error {
+	err := m.d.Transactions.View(ctx, func(tx context.Context) error {
 		p, e := m.principal(tx, token, "task.read", taskID)
 		if e != nil {
 			return e

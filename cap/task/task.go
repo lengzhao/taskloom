@@ -18,6 +18,8 @@ type Task struct {
 	// title, goal, criteria or the set of required subtasks. Executions,
 	// results, reviews and edits are pinned to it.
 	BasisVersion int64
+	// Tags are IDs from the tenant's tag vocabulary; they only classify.
+	Tags []string `json:",omitempty"`
 	// Sequence is the task's creation order, taken from the global counter
 	// that also orders commits and events when the task is stored. A child is
 	// always newer than its parent, which keeps the work breakdown acyclic.
@@ -38,6 +40,9 @@ type Reader interface {
 type Lister interface {
 	Reader
 	ListTasks(ctx context.Context, tenant string) ([]Task, error)
+	// ListTasksAfter reads at most limit tasks with IDs after the given one,
+	// in ID order, so a long list can be read in bounded batches.
+	ListTasksAfter(ctx context.Context, tenant, after string, limit int) ([]Task, error)
 }
 
 // MaxPick bounds how many tasks one list request may name.
@@ -93,6 +98,8 @@ type OwnerSetter interface {
 // Store is the task use-case consumer's cohesive read/write capability.
 type Store interface {
 	SetProject(ctx context.Context, tenant, taskID, projectID string) (Task, error)
+	// SetTags replaces the task's tags; it alters no basis.
+	SetTags(ctx context.Context, tenant, taskID string, tags []string) (Task, error)
 	Lister
 	CreateTask(ctx context.Context, value Task) error
 	UpdateBasis(ctx context.Context, change BasisChange) (Task, error)

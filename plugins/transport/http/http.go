@@ -7,6 +7,8 @@ import (
 	"context"
 	"errors"
 	"github.com/lengzhao/taskloom/runtime/httpx"
+	"io"
+	"log/slog"
 	"net"
 	stdhttp "net/http"
 	"strconv"
@@ -110,6 +112,63 @@ func New(c Config, d Deps) (*Server, error) {
 // guard applies the request envelope every route shares: no caching or
 // sniffing, only the configured browser origin, and a custom header on
 // cookie-authenticated writes so another site cannot forge them.
+// statusWriter records the response status for the access log. Unwrap keeps
+// http.ResponseController (flush, deadlines) working through it.
+type statusWriter struct {
+	stdhttp.ResponseWriter
+	status int
+}
+
+func (w *statusWriter) WriteHeader(code int) {
+	if w.status == 0 {
+		w.status = code
+	}
+	w.ResponseWriter.WriteHeader(code)
+}
+func (w *statusWriter) Write(b []byte) (int, error) {
+	if w.status == 0 {
+		w.status = stdhttp.StatusOK
+	}
+	return w.ResponseWriter.Write(b)
+}
+func (w *statusWriter) Unwrap() stdhttp.ResponseWriter { return w.ResponseWriter }
+
+// ReadFrom keeps the underlying writer's fast path (sendfile) for downloads.
+func (w *statusWriter) ReadFrom(r io.Reader) (int64, error) {
+	if w.status == 0 {
+		w.status = stdhttp.StatusOK
+	}
+	if rf, ok := w.ResponseWriter.(io.ReaderFrom); ok {
+		return rf.ReadFrom(r)
+	}
+	return io.Copy(struct{ io.Writer }{w.ResponseWriter}, r)
+}
+
+// logged writes one access line per request: operation, status and duration,
+// never credentials, bodies or query strings.
+func logged(operation string, next stdhttp.Handler) stdhttp.Handler {
+	return stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+		start := time.Now()
+		sw := &statusWriter{ResponseWriter: w}
+		next.ServeHTTP(sw, r)
+		if sw.status == 0 {
+			sw.status = stdhttp.StatusOK
+		}
+		// Successful reads (including the 4-second change polling) are debug
+		// noise; writes and failures are what an operator looks for.
+		level := slog.LevelInfo
+		switch {
+		case sw.status >= 500:
+			level = slog.LevelError
+		case r.Method == stdhttp.MethodGet && sw.status < 400:
+			level = slog.LevelDebug
+		}
+		slog.Default().LogAttrs(r.Context(), level, "http request",
+			slog.String("operation", operation), slog.String("method", r.Method), slog.String("path", r.URL.Path),
+			slog.Int("status", sw.status), slog.Duration("duration", time.Since(start)))
+	})
+}
+
 func guard(origin string, next stdhttp.Handler) stdhttp.Handler {
 	return stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		w.Header().Set("Cache-Control", "no-store")
@@ -150,7 +209,7 @@ func mount(mux *stdhttp.ServeMux, prefix, origin string, modules []httpapi.Modul
 				return errors.New("invalid route method")
 			}
 			operations[route.Operation] = true
-			mux.Handle(route.Method+" "+prefix+route.Path, guard(origin, route.Handler))
+			mux.Handle(route.Method+" "+prefix+route.Path, logged(route.Operation, guard(origin, route.Handler)))
 		}
 	}
 	return nil
@@ -190,7 +249,10 @@ func (s *Server) Run(parent context.Context) (result error) {
 	read, _ := time.ParseDuration(s.cfg.ReadTimeout)
 	write, _ := time.ParseDuration(s.cfg.WriteTimeout)
 	srv := &stdhttp.Server{Handler: s.mux, ReadTimeout: read, WriteTimeout: write, ReadHeaderTimeout: read,
-		BaseContext: func(net.Listener) context.Context { return ctx },
+		// Requests keep the Run context's values but not its cancellation: on
+		// shutdown, in-flight requests finish (bounded by Stop's deadline) instead
+		// of having their transactions cancelled mid-way.
+		BaseContext: func(net.Listener) context.Context { return context.WithoutCancel(ctx) },
 	}
 	s.mu.Lock()
 	if s.stopped || ctx.Err() != nil {
@@ -229,17 +291,19 @@ func (s *Server) Stop(ctx context.Context) error {
 		srv := s.server
 		cancel := s.cancel
 		s.mu.Unlock()
-		if cancel != nil {
-			cancel()
-		}
 		go func() {
 			defer close(s.stopDone)
+			// Drain first, then release Run: Shutdown stops accepting and waits for
+			// in-flight requests; Close at the deadline cancels the rest.
 			if srv != nil {
 				err := srv.Shutdown(ctx)
 				if err != nil {
 					_ = srv.Close()
 				}
 				s.stopErr = err
+			}
+			if cancel != nil {
+				cancel()
 			}
 		}()
 	})

@@ -3,6 +3,7 @@ package http_test
 import (
 	"context"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -137,5 +138,77 @@ func TestEveryRouteRejectsForeignOriginAndHeaderlessCookieWrites(t *testing.T) {
 		if w.Header().Get("Cache-Control") != "no-store" {
 			t.Error("envelope headers missing")
 		}
+	}
+}
+
+type slowModule struct{ entered, release chan struct{} }
+
+func (m slowModule) Routes() []httpapi.Route {
+	return []httpapi.Route{{Method: "GET", Path: "/slow", Operation: "test.slow", Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(m.entered)
+		select {
+		case <-m.release:
+		case <-r.Context().Done():
+			http.Error(w, "cancelled", 500)
+			return
+		}
+		_, _ = w.Write([]byte("finished"))
+	})}}
+}
+
+// Stop drains: a request already running finishes with its context intact
+// instead of being cancelled when shutdown begins.
+func TestStopLetsInFlightRequestsFinish(t *testing.T) {
+	m := slowModule{entered: make(chan struct{}), release: make(chan struct{})}
+	h, err := transport.New(transport.Config{Listen: "127.0.0.1:0", APIPrefix: "/v1"}, transport.Deps{Modules: []httpapi.Module{m}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- h.Run(ctx) }()
+	<-h.Ready()
+	body := make(chan string, 1)
+	go func() {
+		resp, err := (&http.Client{Timeout: 5 * time.Second}).Get("http://" + h.Address() + "/v1/slow")
+		if err != nil {
+			body <- err.Error()
+			return
+		}
+		raw, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		body <- string(raw)
+	}()
+	<-m.entered
+	stopped := make(chan error, 1)
+	go func() {
+		stopCtx, stop := context.WithTimeout(context.Background(), 5*time.Second)
+		defer stop()
+		stopped <- h.Stop(stopCtx)
+	}()
+	// Shutdown has begun once the listener refuses new connections; only then
+	// let the in-flight request finish.
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		c, err := net.DialTimeout("tcp", h.Address(), 100*time.Millisecond)
+		if err != nil {
+			break
+		}
+		c.Close()
+		if time.Now().After(deadline) {
+			t.Fatal("listener still accepting during shutdown")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	close(m.release)
+	if got := <-body; got != "finished" {
+		t.Fatalf("in-flight request: %q", got)
+	}
+	if err := <-stopped; err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
 	}
 }

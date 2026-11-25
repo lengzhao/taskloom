@@ -46,7 +46,9 @@ func (noExecutor) Follow(context.Context, execution.Execution) error { return fa
 // noAssigner stands in for the execution module; these tests assign nothing.
 type noAssigner struct{}
 
-func (noAssigner) AssignCreated(context.Context, string, string, string) error { return fault.ErrInput }
+func (noAssigner) AssignCreated(context.Context, string, string, string, string) error {
+	return fault.ErrInput
+}
 
 // noPlacer stands in for the plan module; these tests create no subtasks.
 type noPlacer struct{}
@@ -67,7 +69,8 @@ func (r readBack) Get(ctx context.Context, token, id string, after int64) (wf.Vi
 	return r.q.Read(ctx, token, id, after)
 }
 func (r readBack) List(ctx context.Context, token string, ids []string) ([]wf.Summary, error) {
-	return r.q.List(ctx, token, wf.ListFilter{IDs: ids})
+	rows, _, e := r.q.List(ctx, token, wf.ListFilter{IDs: ids})
+	return rows, e
 }
 
 func (r readBack) Create(ctx context.Context, token, key string, in api.Create) (wf.View, error) {
@@ -541,5 +544,43 @@ func TestReplayReturnsSameRefAndReceiptStoresNoFacts(t *testing.T) {
 				t.Fatal("receipt stores derivable facts", op, k)
 			}
 		}
+	}
+}
+
+// flooredEvents pretends events up to floor were pruned.
+type flooredEvents struct {
+	record.EventLog
+	floor int64
+}
+
+func (f flooredEvents) EventFloor(context.Context) (int64, error) { return f.floor, nil }
+
+// A cursor older than the retained events must resync; a fresh cursor
+// (taken from an empty one) is never below the floor.
+func TestChangesBelowFloorRequireResync(t *testing.T) {
+	ctx := context.Background()
+	_, sec, token, s := fixtureWithStore(t)
+	_ = sec
+	id, _ := local.New(local.Deps{Store: s})
+	az, _ := access.New(access.Deps{Store: s, Tasks: s, Projects: s, Skills: s})
+	r, _ := command.New(command.Deps{Transactions: s, Identity: id, Authorization: az, Requests: s, Audit: s})
+	f, _ := flow.New(flow.Config{}, flow.Deps{Positions: s, Results: s, Reviews: s, Questions: s, Commits: s, Plan: s})
+	svc, e := workspace.New(workspace.Deps{Catalog: s, Transactions: s, Tasks: s, Commits: s, Flow: f, Identity: id, Authorization: az, Commands: r, Events: flooredEvents{s, 1}, Members: s, Participants: s, Executor: noExecutor{}, Placer: noPlacer{}, Assigner: noAssigner{}})
+	if e != nil {
+		t.Fatal(e)
+	}
+	if _, e = svc.Changes(ctx, token, "0"); !errors.Is(e, fault.ErrConflict) {
+		t.Fatal("stale cursor accepted", e)
+	}
+	var coded *fault.Error
+	if !errors.As(e, &coded) || coded.Code != fault.CodeResyncRequired {
+		t.Fatal("resync code", e)
+	}
+	start, e := svc.Changes(ctx, token, "")
+	if e != nil {
+		t.Fatal(e)
+	}
+	if _, e = svc.Changes(ctx, token, start.Cursor); e != nil {
+		t.Fatal("fresh cursor rejected", start.Cursor, e)
 	}
 }

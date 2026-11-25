@@ -180,7 +180,9 @@ ul.attachments.chosen li { margin: 2px 0 }
       <label>所属项目<select name="ProjectID" id="create-project"></select></label>
       <label>目标（分配前必填）<textarea name="Goal" placeholder="要达成什么"></textarea></label>
       <label>验收标准（可选）<textarea name="Criteria" placeholder="怎样算完成；不填则由负责人验收时判断"></textarea></label>
-      <p class="muted small">可以先只写标题记下来，分配处理人前再补全目标。</p>
+      <label>验收方式<select name="Acceptance" id="create-acceptance"></select></label>
+      <label>处理人（可选）<select name="Assignee" id="create-assignee"></select></label>
+      <p class="muted small">可以先只写标题记下来，分配处理人前再补全目标；创建时就选处理人则目标必填。</p>
       <div class="actions"><button class="primary">创建</button></div>
      </form>
     </details>
@@ -224,6 +226,9 @@ const STATES = [['unassigned', '待分配'], ['handling', '处理中'], ['accept
 const ACTOR_LABEL = { owner: '负责人', assignee: '处理人', reviewer: '验收人', addressee: '被提问人' };
 const execLabel = (ex, pos) => pos && pos.Status !== 'active' ? '任务已结束' : ex.Writable ? '进行中' : '已停止（被取消或转交）';
 const OUTCOME_LABEL = { pending: '待验收', approved: '已通过', rejected: '未通过' };
+// Acceptance is fixed when a task is created: manual waits for the owner's
+// verdict, none completes on a submitted result.
+const ACCEPTANCE_LABEL = { manual: '需负责人验收', none: '免验收：提交结果即完成' };
 const KIND_LABEL = { 'task.owner': '移交负责人', comment: '留言', result: '结果', question: '提问', answer: '回答', 'review.approved': '验收通过', 'review.rejected': '验收退回', 'task.created': '创建任务', 'task.basis': '修改要求', 'plan.changed': '调整子任务', 'question.closed': '关闭问题' };
 
 // ---------- State ----------
@@ -515,7 +520,8 @@ function renderTasks(){
   const b=button('',async()=>{selected=d.Task.ID;render();await show()},'task');
   const project=projects.find(p=>p.ID===d.Task.ProjectID);
   const state=stateOf(d.Position,o.Assignee);
-  const facts=[project?.Name||'未归属项目','处理人 '+(o.Assignee||'—'),o.UpdatedAt?'最近动态 '+ago(o.UpdatedAt):null].filter(Boolean).join(' · ');
+  // Only the exception is named in the list; the detail names either mode.
+  const facts=[project?.Name||'未归属项目','处理人 '+(o.Assignee||'—'),d.Position.Acceptance==='none'?'免验收':null,o.UpdatedAt?'最近动态 '+ago(o.UpdatedAt):null].filter(Boolean).join(' · ');
   b.append(el('strong',d.Task.Title),h('span','meta',pill(state),d.Position.WaitingOnSubtasks?el('span','阻塞：等待子任务','pill blocked'):null,inboxIDs.has(d.Task.ID)?el('span','等你：'+ACTOR_LABEL[inboxMap.get(d.Task.ID)],'pill mine'):null,freshIDs.has(d.Task.ID)?el('span','新','pill mine'):null),
    el('p',facts,'muted small'));
   if(titles.has(o.ParentID))b.append(el('p','属于「'+titles.get(o.ParentID)+'」','muted small'));
@@ -607,7 +613,8 @@ function makeContext(d, w, path) {
 function renderHead(ctx) {
   const { d } = ctx;
   const p = projects.find(p => p.ID === d.Task.ProjectID);
-  const meta = h('div', 'meta muted small', el('span', '负责人 ' + d.Task.Owner), el('span', '项目 ' + (p?.Name || '未归属')));
+  const mode = ACCEPTANCE_LABEL[ctx.w.Position.Acceptance];
+  const meta = h('div', 'meta muted small', el('span', '负责人 ' + d.Task.Owner), el('span', '项目 ' + (p?.Name || '未归属')), mode ? el('span', mode) : null);
   const panel = h('div', 'panel', h('div', 'head', h('div', null, el('h2', d.Task.Title), meta)));
   if (d.CanEdit) {
     const select = el('select'); projectOptions(select, false, d.Task.ProjectID); select.value = d.Task.ProjectID || '';
@@ -621,7 +628,7 @@ function renderNext(ctx) {
   const panel = h('div', 'panel next' + (inboxIDs.has(d.Task.ID) ? ' mine' : ''));
   const s = stateOf(w.Position, w.Assignee);
   let title;
-  if (w.Position.Status === 'completed') title = '已完成：结果与验收已满足，需要返工请新建任务';
+  if (w.Position.Status === 'completed') title = w.Position.Acceptance === 'none' ? '已完成：结果已提交（免验收），需要返工请新建任务' : '已完成：结果与验收已满足，需要返工请新建任务';
   else if (w.Position.WaitingOnSubtasks && !w.NextActor) {
     // Blocked is a wait cause, not a step: the work is still this task's, only delivery waits.
     const kids = (w.Children || []).filter(c => c.Required);
@@ -736,6 +743,24 @@ function assignForm(ctx, text) {
 
 // The member directory pages by subject; selectors here take the first page of 200.
 async function directory() { return people ||= (await api('/people?limit=200')).Items }
+
+// Creation choices shared by the task and subtask forms. Empty acceptance
+// keeps the deployment default; an empty assignee leaves the task to assign later.
+function acceptanceOptions(select) {
+  select.replaceChildren();
+  for (const [value, text] of [['', '按部署默认'], ['manual', '完成前需要负责人验收'], ['none', '免验收：提交结果即完成']]) { const o = el('option', text); o.value = value; select.append(o) }
+}
+function assigneeOptions(select, members) {
+  const prev = select.value;
+  select.replaceChildren();
+  const none = el('option', '暂不分配'); none.value = ''; select.append(none);
+  for (const m of members) { const o = el('option', m.Subject + (m.Kind === 'agent' ? ' · Agent' : ' · 用户')); o.value = m.Subject; select.append(o) }
+  select.value = members.some(m => m.Subject === prev) ? prev : '';
+}
+// The server rejects assigning work without a goal; say so before sending.
+function checkCreate(v, goal) {
+  if (v.Assignee && !(v.Goal || '').trim()) { goal?.focus(); throw Error('创建时就分配处理人，需要先填写目标') }
+}
 
 function confirmThen(message, fn) { if (confirm(message)) return fn() }
 
@@ -959,7 +984,8 @@ function renderPlan(ctx) {
   if (w.Parent) panel.append(h('p', null, el('span', w.Parent.Required ? '必需子任务，属于 ' : '子任务，属于 ', 'muted'), button(w.Parent.Title, open(w.Parent.TaskID), 'link'), ' ', status(w.Parent)));
   const ul = el('ul', undefined, 'timeline');
   for (const c of w.Children || []) {
-    const li = h('li', null, h('div', null, button(c.Title, open(c.TaskID), 'link'), ' ', status(c), ' ', el('span', c.Required ? '必需' : '非必需', 'muted small')));
+    const mode = ACCEPTANCE_LABEL[overview.get(c.TaskID)?.Position.Acceptance];
+    const li = h('li', null, h('div', null, button(c.Title, open(c.TaskID), 'link'), ' ', status(c), ' ', el('span', (c.Required ? '必需' : '非必需') + (mode ? ' · ' + mode : ''), 'muted small')));
     if (manage) {
       const seen = { SeenParentID: d.Task.ID, SeenRequired: c.Required };
       li.append(h('div', 'actions',
@@ -974,13 +1000,19 @@ function renderPlan(ctx) {
     const title = el('input'); title.name = 'Title'; title.required = true;
     const required = el('input'); required.type = 'checkbox'; required.style.width = 'auto'; required.checked = true;
     const requiredLabel = el('label', ' 必需：完成后本任务才能提交结果'); requiredLabel.prepend(required);
-    f.append(field('标题', title), field('目标（分配前必填）', textarea('Goal', false)), field('验收标准（可选）', textarea('Criteria', false)), requiredLabel,
+    const acceptance = el('select'); acceptance.name = 'Acceptance'; acceptanceOptions(acceptance);
+    const assignee = el('select'); assignee.name = 'Assignee'; assigneeOptions(assignee, ctx.candidates);
+    const goal = textarea('Goal', false);
+    f.append(field('标题', title), field('目标（分配前必填）', goal), field('验收标准（可选）', textarea('Criteria', false)), requiredLabel,
+      field('验收方式', acceptance), field('处理人（可选）', assignee),
       el('p', '已完成的任务不能重开；需要返工时在这里新建子任务。', 'muted small'),
       h('div', 'actions', el('button', '创建子任务', 'primary')));
-    // One command creates the subtask and places it under this task atomically.
+    // One command creates the subtask, places it under this task and, when
+    // chosen, assigns it, atomically.
     f.onsubmit = handle(async () => {
       const v = formdata(f);
-      const created = await api('/tasks', 'POST', { Title: v.Title, Goal: v.Goal, Criteria: v.Criteria, ProjectID: d.Task.ProjectID || '', ParentID: d.Task.ID, Required: required.checked });
+      checkCreate(v, goal);
+      const created = await api('/tasks', 'POST', { Title: v.Title, Goal: v.Goal, Criteria: v.Criteria, ProjectID: d.Task.ProjectID || '', ParentID: d.Task.ID, Required: required.checked, Acceptance: v.Acceptance, Assignee: v.Assignee });
       // A subtask without a goal is opened at once so it gets filled in.
       if (!created.Task.Goal.trim()) await settle(created, created.Task.ID);
       else { await refresh([created.Task.ID, d.Task.ID]); await show() }
@@ -1191,8 +1223,12 @@ $('password-login').onsubmit=handle(async()=>{
 });
 
 // ---------- Wiring ----------
+acceptanceOptions($('create-acceptance'));
+$('create-box').addEventListener('toggle', () => { if ($('create-box').open) directory().then(m => assigneeOptions($('create-assignee'), m)).catch(x => notice(x.message)) });
 $('create').onsubmit = handle(async () => {
-  const d = await api('/tasks', 'POST', formdata($('create')));
+  const v = formdata($('create'));
+  checkCreate(v, $('create').elements.Goal);
+  const d = await api('/tasks', 'POST', v);
   $('create').reset();
   $('create-box').open = false;
   if(view!=='project') view = 'all';

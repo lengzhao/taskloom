@@ -396,19 +396,19 @@ func TestAgentSplitsATaskThroughMCP(t *testing.T) {
 	var created struct{ Task struct{ ID string } }
 	f.ownerCall("POST", "/tasks", map[string]string{"Title": "报告", "Goal": "写报告", "Criteria": "完整"}, &created)
 	id := created.Task.ID
-	if text, isErr := f.tool("create_subtask", map[string]string{"task_id": id, "title": "资料"}); !isErr || !strings.Contains(text, "无权") {
+	if text, isErr := f.tool("create_task", map[string]string{"parent_task_id": id, "title": "资料"}); !isErr || !strings.Contains(text, "无权") {
 		t.Fatal("split before taking part", text)
 	}
 	f.ownerCall("POST", "/tasks/"+id+"/assign", map[string]any{"Subject": "agent"}, nil)
 	basis := f.ok("read_task", map[string]string{"task_id": id})["basis"].(string)
 	basis = f.ok("start_work", map[string]string{"task_id": id, "basis": basis})["basis"].(string)
-	if text, isErr := f.tool("create_subtask", map[string]string{"task_id": id, "title": "资料", "required": "yes"}); !isErr || !strings.Contains(text, "required") {
+	if text, isErr := f.tool("create_task", map[string]string{"parent_task_id": id, "title": "资料", "required": "yes"}); !isErr || !strings.Contains(text, "required") {
 		t.Fatal("bad required accepted", text)
 	}
-	out := f.ok("create_subtask", map[string]any{"task_id": id, "title": "资料", "goal": "收集资料", "required": true})
-	sub, _ := out["subtask_id"].(string)
+	out := f.ok("create_task", map[string]any{"parent_task_id": id, "title": "资料", "goal": "收集资料", "required": true})
+	sub, _ := out["task_id"].(string)
 	if sub == "" || !strings.Contains(out["message"].(string), "必需") {
-		t.Fatal("create_subtask", out)
+		t.Fatal("create_task", out)
 	}
 	task := f.ok("read_task", map[string]string{"task_id": id})
 	if !strings.Contains(fmt.Sprint(task["subtasks"]), sub) {
@@ -421,11 +421,11 @@ func TestAgentSplitsATaskThroughMCP(t *testing.T) {
 		t.Fatal("execution fenced by the Agent's own split")
 	}
 	f.ok("read_task", map[string]string{"task_id": sub})
-	if text, isErr := f.tool("create_subtask", map[string]string{"task_id": id, "title": "x", "acceptance": "later"}); !isErr || !strings.Contains(text, "acceptance") {
+	if text, isErr := f.tool("create_task", map[string]string{"parent_task_id": id, "title": "x", "acceptance": "later"}); !isErr || !strings.Contains(text, "acceptance") {
 		t.Fatal("bad acceptance accepted", text)
 	}
-	out = f.ok("create_subtask", map[string]string{"task_id": id, "title": "自己做", "goal": "g", "criteria": "c", "assignee": "agent"})
-	mine, _ := out["subtask_id"].(string)
+	out = f.ok("create_task", map[string]string{"parent_task_id": id, "title": "自己做", "goal": "g", "criteria": "c", "assignee": "agent"})
+	mine, _ := out["task_id"].(string)
 	if mine == "" || !strings.Contains(out["message"].(string), "start_work") {
 		t.Fatal("self-assigned subtask", out)
 	}
@@ -454,17 +454,17 @@ func TestAgentTagsSubtasksThroughMCP(t *testing.T) {
 	id := created.Task.ID
 	f.ownerCall("POST", "/tasks/"+id+"/assign", map[string]any{"Subject": "agent"}, nil)
 	f.ok("start_work", map[string]string{"task_id": id, "basis": f.ok("read_task", map[string]string{"task_id": id})["basis"].(string)})
-	if text, isErr := f.tool("create_subtask", map[string]any{"task_id": id, "title": "x", "tags": "Security"}); !isErr || !strings.Contains(text, "tags") {
+	if text, isErr := f.tool("create_task", map[string]any{"parent_task_id": id, "title": "x", "tags": "Security"}); !isErr || !strings.Contains(text, "tags") {
 		t.Fatal("tags must be an array", text)
 	}
-	if text, isErr := f.tool("create_subtask", map[string]any{"task_id": id, "title": "x", "tags": []string{"nope"}}); !isErr || !strings.Contains(text, "list_tags") {
+	if text, isErr := f.tool("create_task", map[string]any{"parent_task_id": id, "title": "x", "tags": []string{"nope"}}); !isErr || !strings.Contains(text, "list_tags") {
 		t.Fatal("unknown tag name accepted", text)
 	}
-	if text, isErr := f.tool("create_subtask", map[string]any{"task_id": id, "title": "x", "tags": []string{"旧分类"}}); !isErr || !strings.Contains(text, "归档") {
+	if text, isErr := f.tool("create_task", map[string]any{"parent_task_id": id, "title": "x", "tags": []string{"旧分类"}}); !isErr || !strings.Contains(text, "归档") {
 		t.Fatal("archived tag accepted", text)
 	}
-	out := f.ok("create_subtask", map[string]any{"task_id": id, "title": "安全评估", "goal": "g", "tags": []string{"security"}})
-	sub, _ := out["subtask_id"].(string)
+	out := f.ok("create_task", map[string]any{"parent_task_id": id, "title": "安全评估", "goal": "g", "tags": []string{"security"}})
+	sub, _ := out["task_id"].(string)
 	read := f.ok("read_task", map[string]string{"task_id": sub})
 	if fmt.Sprint(read["tags"]) != "[Security]" {
 		t.Fatal("read_task names the subtask's tags", read["tags"])
@@ -472,4 +472,23 @@ func TestAgentTagsSubtasksThroughMCP(t *testing.T) {
 	if fmt.Sprint(f.ok("read_task", map[string]string{"task_id": id})["tags"]) != "[]" {
 		t.Fatal("subtask tags leaked to the parent")
 	}
+}
+
+// Without parent_task_id, create_task makes a top-level task owned by the
+// Agent's owner, which the Agent can then claim.
+func TestAgentCreatesTopLevelTaskThroughMCP(t *testing.T) {
+	f := setup(t)
+	if text, isErr := f.tool("create_task", map[string]any{"title": "x", "required": true}); !isErr || !strings.Contains(text, "ParentID") {
+		t.Fatal("required without a parent accepted", text)
+	}
+	out := f.ok("create_task", map[string]string{"title": "整理周报", "goal": "汇总本周进展", "assignee": "agent"})
+	id, _ := out["task_id"].(string)
+	if id == "" || !strings.Contains(out["message"].(string), "已创建任务") {
+		t.Fatal("create_task", out)
+	}
+	task := f.ok("read_task", map[string]string{"task_id": id})
+	if task["owner"] != "owner" {
+		t.Fatal("top-level task owned by the Agent's owner", task["owner"])
+	}
+	f.ok("start_work", map[string]string{"task_id": id, "basis": task["basis"].(string)})
 }

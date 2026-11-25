@@ -170,15 +170,15 @@ func toolList() []tool {
 	return []tool{
 		{"inbox", "列出当前等你处理的任务（下一步在等你），含当前步骤和等待原因（如验收未通过等待重新提交）。任务较多时分页：返回 next_cursor 时，把它作为 cursor 取下一页。", schema(nil, map[string]any{"cursor": str("可选：上一页返回的 next_cursor")})},
 		{"read_task", "读取任务：目标、验收标准、状态、下一步等谁、你能做哪些操作及不能做的原因、待回答问题、当前结果和最近时间线，并返回写操作所需的 basis。时间线只含最近 " + strconv.Itoa(timelineLimit) + " 条；返回 earlier_before 时，把它作为 before 读更早的记录。", schema([]string{"task_id"}, map[string]any{"task_id": task, "before": str("可选：上次返回的 earlier_before，读取更早的时间线")})},
-		{"list_people", "查找空间内的有效成员（用户与 Agent），用于 ask 的 to 或 create_subtask 的 owner/assignee。按 ID 片段搜索，按 subject 排序分页：返回 next 时，把它作为 after 取下一页。", schema(nil, map[string]any{"query": str("可选：ID 中包含的文字"), "kind": map[string]any{"type": "string", "enum": []string{"human", "agent"}, "description": "可选：只列用户或只列 Agent"}, "after": str("可选：上一页返回的 next")})},
+		{"list_people", "查找空间内的有效成员（用户与 Agent），用于 ask 的 to 或 create_task 的 owner/assignee。按 ID 片段搜索，按 subject 排序分页：返回 next 时，把它作为 after 取下一页。", schema(nil, map[string]any{"query": str("可选：ID 中包含的文字"), "kind": map[string]any{"type": "string", "enum": []string{"human", "agent"}, "description": "可选：只列用户或只列 Agent"}, "after": str("可选：上一页返回的 next")})},
 		{"start_work", "认领并开始执行任务。", schema([]string{"task_id", "basis"}, map[string]any{"task_id": task, "basis": basis})},
 		{"post_message", "在任务时间线留言：汇报进度、回复人的引导，可附文件和链接。留言会更新你的最近进展时间，但不算交付结果。text、files、links 至少一项。", schema([]string{"task_id"}, map[string]any{"task_id": task, "text": str("留言内容"), "files": filesProp, "links": linksProp})},
 		{"ask", "提问或请求协助（说明问题、为何卡住、可选方案和建议）。默认问任务负责人；需要别人协助时用 to 指定空间内任一有效成员（用 list_people 查找）；对方不在任务中时会自动加为参与者。问题未回答前任务不能完成；回答会出现在 read_task 的时间线中。", schema([]string{"task_id", "basis", "question"}, map[string]any{"task_id": task, "basis": basis, "question": str("问题内容"), "to": str("可选：被提问人的 ID（list_people 返回的 subject）；留空为负责人")})},
 		{"answer_question", "回答别人向你提的问题（read_task 的 open_questions 中 for_you 为 true 的那条）。", schema([]string{"task_id", "question_id", "text"}, map[string]any{"task_id": task, "question_id": str("问题 ID（open_questions 中的 id）"), "text": str("回答内容")})},
 		{"close_question", "撤回你提的、已不再需要回答的问题（open_questions 中 asked_by 为你的那条），须写明理由；撤回后它不再阻止任务完成。", schema([]string{"task_id", "question_id", "reason"}, map[string]any{"task_id": task, "question_id": str("问题 ID（open_questions 中的 id）"), "reason": str("为什么不再需要回答")})},
 		{"submit_result", "明确提交本轮的正式结果（交付物），可带文件和链接。需要已认领执行；再次提交会替换当前结果。result、files、links 至少一项。", schema([]string{"task_id", "basis"}, map[string]any{"task_id": task, "basis": basis, "result": str("结果正文"), "files": filesProp, "links": linksProp})},
-		{"create_subtask", "把你正在执行的任务拆出一个子任务，交给别人并行处理。需要你持有该任务当前有效的执行（已 start_work）。required 为 true 时，本任务要等该子任务完成才能提交结果；你的执行仍然有效，可以继续做你自己的部分。子任务负责人默认是本任务负责人，也可以用 owner 指定空间内任一有效用户（list_people 且 kind 为 human）。子任务默认不需要负责人验收（提交有效结果即完成），需要时 acceptance 填 manual。可用 assignee 同时指定处理人（可以是你自己），能指定谁由部署配置决定；指定 Agent 后它仍须 start_work 认领，指定人则对方立即开始；不指定则由子任务负责人安排。指定处理人时 goal 必填。可用 tags 从空间标签中选择分类（list_tags）。你会成为子任务的参与者，可用 read_task 查看进度。", schema([]string{"task_id", "title"}, map[string]any{"task_id": str("你正在执行的任务 ID（子任务的父任务）"), "title": str("子任务标题"), "goal": str("子任务目标"), "criteria": str("可选：子任务验收标准"), "required": prop("boolean", "可选：true 表示本任务必须等它完成才能提交；默认 false"), "owner": str("可选：子任务负责人的 ID（用户，不能是 Agent）；留空为本任务负责人"), "acceptance": map[string]any{"type": "string", "enum": []string{"manual", "none"}, "description": "可选：manual 表示子任务结果须负责人验收；默认 none"}, "assignee": str("可选：子任务处理人的 ID（用户或 Agent，可以是你自己）"), "tags": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "可选：标签名称列表（list_tags 列出的 name），最多 10 个；只能在创建时选择"}})},
-		{"list_tags", "列出空间的标签（名称和说明），用于 create_subtask 的 tags。标签由管理员维护，只用于分类和筛选，不影响流程。", schema(nil, map[string]any{})},
+		{"create_task", "新建任务。不带 parent_task_id 时是顶层任务：负责人默认是你的所属人，也可以用 owner 指定空间内任一有效用户（list_people 且 kind 为 human）。带 parent_task_id 时，把你正在执行的那个任务拆出子任务交给别人并行处理：需要你持有它当前有效的执行（已 start_work），负责人默认是该任务的负责人；required 为 true 时，父任务要等这个子任务完成才能提交结果，你的执行仍然有效，可以继续做自己的部分。新任务默认不需要负责人验收（提交有效结果即完成），需要验收时 acceptance 填 manual。可以用 assignee 同时指定处理人（可以是你自己），能指定谁由部署配置决定：指定 Agent 后它仍须 start_work 认领，指定人则对方立即开始；不指定就由负责人安排。指定处理人时 goal 必填。可以用 tags 从空间标签中选分类（见 list_tags）。你不是负责人时会成为参与者，可以用 read_task 查看进度。", schema([]string{"title"}, map[string]any{"title": str("任务标题"), "parent_task_id": str("可选：你正在执行的任务 ID，填了就建为它的子任务；留空则建顶层任务"), "goal": str("任务目标"), "criteria": str("可选：验收标准"), "required": prop("boolean", "可选，仅子任务：true 表示父任务必须等它完成才能提交；默认 false"), "owner": str("可选：负责人 ID（必须是用户，不能是 Agent）；留空时顶层任务为你的所属人，子任务为父任务负责人"), "acceptance": map[string]any{"type": "string", "enum": []string{"manual", "none"}, "description": "可选：manual 表示结果须负责人验收；默认 none"}, "assignee": str("可选：处理人 ID（用户或 Agent，可以是你自己）"), "tags": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "可选：标签名称列表（list_tags 列出的 name），最多 10 个；只能在创建时选"}})},
+		{"list_tags", "列出空间的标签（名称和说明），用于 create_task 的 tags。标签由管理员维护，只用于分类和筛选，不影响流程。", schema(nil, map[string]any{})},
 		{"reassign", "把任务改派给别人（用户或 Agent），例如任务不适合你或需要别人接手。你是当前处理人，或当前这次分配是你做的时可用；改派后原执行立即失效，接手的 Agent 须 start_work 认领，接手的人立即开始。", schema([]string{"task_id", "to"}, map[string]any{"task_id": task, "to": str("新处理人的 ID（list_people 返回的 subject）")})},
 		{"upload_file", "把一个文件上传到任务，返回 file_id，供 submit_result 或 post_message 的 files 引用；只上传不会出现在时间线中。text 与 content_base64 二选一。经本工具上传的内容上限约 700KB，更大的文件用 HTTP POST /v1/tasks/{id}/files 上传（同一凭据）。", schema([]string{"task_id", "name"}, map[string]any{"task_id": task, "name": str("文件名，如 report.md"), "text": str("文本文件的内容（UTF-8）"), "content_base64": str("二进制文件内容的 base64"), "media_type": str("可选：如 text/markdown、image/png；留空按文件名推断")})},
 		{"read_file", "读取任务中的一个文件（read_task 的 files 中列出）。UTF-8 文本直接返回内容，其他文件返回 base64；超过 512KB 时只返回元数据和 HTTP 下载路径。", schema([]string{"task_id", "file_id"}, map[string]any{"task_id": task, "file_id": str("文件 ID")})},
@@ -319,8 +319,8 @@ func (m *Module) call(ctx context.Context, c call, name string, rawArgs json.Raw
 			return "", err
 		}
 		return "已撤回问题。", nil
-	case "create_subtask":
-		if err := required(args, "task_id", "title"); err != nil {
+	case "create_task":
+		if err := required(args, "title"); err != nil {
 			return "", err
 		}
 		req, _ := args["required"].(bool)
@@ -333,20 +333,23 @@ func (m *Module) call(ctx context.Context, c call, name string, rawArgs json.Raw
 		if err != nil {
 			return "", err
 		}
-		ref, err := m.d.Comments.Create(ctx, c.token, c.key(name, args), workspace.Create{Title: args.str("title"), Goal: args.str("goal"), Criteria: args.str("criteria"), ParentID: args.str("task_id"), Owner: args.str("owner"), Required: req, Acceptance: mode, Assignee: assignee, Tags: tagIDs})
+		ref, err := m.d.Comments.Create(ctx, c.token, c.key(name, args), workspace.Create{Title: args.str("title"), Goal: args.str("goal"), Criteria: args.str("criteria"), ParentID: strings.TrimSpace(args.str("parent_task_id")), Owner: args.str("owner"), Required: req, Acceptance: mode, Assignee: assignee, Tags: tagIDs})
 		if err != nil {
 			return "", err
 		}
-		msg := "已创建子任务；"
-		if req {
-			msg = "已创建必需子任务，它完成前本任务不能提交结果，你的执行仍然有效，可继续做你的部分；"
+		msg := "已创建任务；"
+		if args.str("parent_task_id") != "" {
+			msg = "已创建子任务；"
+			if req {
+				msg = "已创建必需子任务，它完成前父任务不能提交结果，你的执行仍然有效，可继续做你的部分；"
+			}
 		}
 		if assignee == "" {
-			msg += "由子任务负责人安排处理人。"
+			msg += "由负责人安排处理人。"
 		} else {
 			msg += "已分配给 " + assignee + "；Agent（包括你自己）须用 start_work 认领后开始。"
 		}
-		return pretty(map[string]any{"message": msg, "subtask_id": ref.TaskID}), nil
+		return pretty(map[string]any{"message": msg, "task_id": ref.TaskID}), nil
 	case "list_tags":
 		tags, err := m.d.Tags.Tags(ctx, c.token)
 		if err != nil {

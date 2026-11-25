@@ -10,7 +10,7 @@
 
 ## 业务配置边界
 
-未来配置表达连接、凭据引用、限额、保留和服务启用；模块以接口和 Deps 配置组合，涵盖命令、事实能力及路由；内部辅助函数不变成无意义节点。不强制顶层实例，按实际复用选择具名或内联。`flow.config.acceptance`（manual/none，默认 manual）只决定人新建任务且未指定验收方式时的默认值，创建时写入任务位置（Agent 建子任务的默认见[交付与验收](core-contracts.md#交付与验收)）；修改部署配置不能暗改旧任务的验收方式或依据。`workspace.config.agentAssign` 限定 Agent 新建子任务时可分配的处理人：`any`（默认，空间内任一有效成员，人或 Agent）、`self`（只能是自己）、`none`（不能分配）；它是部署级的单项策略，不是逐动作授权配置，只约束之后的创建。
+未来配置表达连接、凭据引用、限额、保留和服务启用；模块以接口和 Deps 配置组合，涵盖命令、事实能力及路由；内部辅助函数不变成无意义节点。不强制顶层实例，按实际复用选择具名或内联。`flow.config.acceptance`（manual/none，默认 manual）只决定人新建任务且未指定验收方式时的默认值，创建时写入任务位置（Agent 建任务的默认见[交付与验收](core-contracts.md#交付与验收)）；修改部署配置不能暗改旧任务的验收方式或依据。`workspace.config.agentAssign` 限定 Agent 新建任务时可分配的处理人：`any`（默认，空间内任一有效成员，人或 Agent）、`self`（只能是自己）、`none`（不能分配）；它是部署级的单项策略，不是逐动作授权配置，只约束之后的创建。`catalog.config.recommendedTags` 是推荐标签列表（每项 `name`，可选 `description`；名称 1–40 字、不区分大小写不重复，最多 200 个）：`base.yaml` 给出一套通用推荐，`config.yaml` 可整体替换，写成空列表即不推荐。它只是管理员"导入推荐标签"的来源，不会自动写入空间；导入后的标签是普通标签，修改配置不会改动已导入的标签或任务上的标签，见[层级与标签](core-contracts.md#层级与标签)。
 
 [examples/flows/automatic.config.yaml](../examples/flows/automatic.config.yaml) 把新任务的验收方式改为 none，可真实构建。
 

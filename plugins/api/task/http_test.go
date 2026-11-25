@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/lengzhao/pluginkit/build"
@@ -203,5 +204,23 @@ func TestTagRoutes(t *testing.T) {
 	view.Task.Tags = nil
 	if status != 200 || json.Unmarshal(body, &view) != nil || len(view.Task.Tags) != 0 {
 		t.Fatal("remove tag", status, string(body))
+	}
+}
+
+// Recommended tags: a preview of the missing ones, then one import.
+func TestRecommendedTagRoutes(t *testing.T) {
+	call := serve(t)
+	status, body := call("GET", "/tags/recommended", "", nil)
+	var missing []struct{ Name string }
+	if status != 200 || json.Unmarshal(body, &missing) != nil || len(missing) == 0 || !strings.Contains(string(body), `"Name"`) {
+		t.Fatal("preview", status, string(body))
+	}
+	status, body = call("POST", "/tags/recommended", "import", nil)
+	var tags []struct{ Name string }
+	if status != 200 || json.Unmarshal(body, &tags) != nil || len(tags) != len(missing) {
+		t.Fatal("import answers the vocabulary", status, string(body))
+	}
+	if status, body = call("GET", "/tags/recommended", "", nil); status != 200 || string(body) != "[]\n" && string(body) != "[]" {
+		t.Fatal("nothing left", status, string(body))
 	}
 }

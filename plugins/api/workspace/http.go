@@ -59,6 +59,7 @@ func (m *Module) Routes() []httpapi.Route {
 		{"GET", "/space", "space.read"}, {"PATCH", "/space", "space.edit"},
 		{"GET", "/projects", "projects.list"}, {"POST", "/projects", "project.create"}, {"PATCH", "/projects/{id}", "project.edit"},
 		{"GET", "/tags", "tags.list"}, {"POST", "/tags", "tag.create"}, {"PATCH", "/tags/{id}", "tag.edit"},
+		{"GET", "/tags/recommended", "tags.recommended"}, {"POST", "/tags/recommended", "tag.import"},
 		{"GET", "/people", "people.list"}, {"GET", "/changes", "changes.read"},
 		{"GET", "/admin/members", "members.list"}, {"POST", "/admin/members", "members.set"},
 		{"POST", "/admin/identities", "identity.create"}, {"POST", "/admin/users/{id}/password", "identity.password"},
@@ -122,6 +123,12 @@ func (m *Module) serve(w http.ResponseWriter, r *http.Request) {
 			if id, err = m.d.Catalog.SaveProject(ctx, token, key, in); err == nil {
 				result, err = m.d.Catalog.Project(ctx, token, id)
 			}
+		}
+	case strings.HasSuffix(path, "/tags/recommended"):
+		if r.Method == "GET" {
+			result, err = m.d.Catalog.RecommendedTags(ctx, token)
+		} else if _, err = m.d.Catalog.ImportRecommendedTags(ctx, token, key); err == nil {
+			result, err = m.d.Catalog.Tags(ctx, token)
 		}
 	case strings.Contains(path, "/tags"):
 		if r.Method == "GET" {

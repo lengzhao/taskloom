@@ -362,7 +362,7 @@ func (m *Module) call(ctx context.Context, c call, name string, rawArgs json.Raw
 			}
 		}
 		if len(out) == 0 {
-			return "空间还没有标签。", nil
+			return "空间还没有标签：可以用 ask 请管理员在空间设置中导入推荐标签。", nil
 		}
 		return pretty(out), nil
 	case "reassign":

@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"github.com/lengzhao/pluginkit"
 	az "github.com/lengzhao/taskloom/cap/authorization"
 	api "github.com/lengzhao/taskloom/cap/catalog"
@@ -32,15 +33,49 @@ type Deps struct {
 	// Events announces space and project changes; viewers refresh access from it.
 	Events record.EventWriter `json:"events"`
 }
-type Service struct{ d Deps }
+
+// Config holds the deployment's recommended tags: only a source for an
+// administrator's explicit import, never written on its own.
+type Config struct {
+	RecommendedTags []api.TagSpec `json:"recommendedTags"`
+}
+
+func (c *Config) Validate() error {
+	if len(c.RecommendedTags) > api.MaxTags {
+		return errors.New("recommendedTags: too many tags")
+	}
+	seen := map[string]bool{}
+	for i, t := range c.RecommendedTags {
+		name := strings.TrimSpace(t.Name)
+		if name == "" || utf8.RuneCountInString(name) > api.MaxTagName || utf8.RuneCountInString(t.Description) > api.MaxTagDetails {
+			return fmt.Errorf("recommendedTags[%d]: name must be 1-%d characters", i, api.MaxTagName)
+		}
+		if seen[strings.ToLower(name)] {
+			return fmt.Errorf("recommendedTags: duplicate name %q", name)
+		}
+		seen[strings.ToLower(name)] = true
+		c.RecommendedTags[i].Name = name
+	}
+	return nil
+}
+
+type Service struct {
+	c Config
+	d Deps
+}
 
 func init() {
-	pluginkit.Register("catalog/projects", func(_ struct{}, d Deps) (*Service, error) {
-		if d.Transactions == nil || d.Identity == nil || d.Members == nil || d.Store == nil || d.Commands == nil || d.Events == nil {
-			return nil, errors.New("catalog capabilities required")
-		}
-		return &Service{d}, nil
-	})
+	pluginkit.Register("catalog/projects", New)
+}
+
+func New(c Config, d Deps) (*Service, error) {
+	if d.Transactions == nil || d.Identity == nil || d.Members == nil || d.Store == nil || d.Commands == nil || d.Events == nil {
+		return nil, errors.New("catalog capabilities required")
+	}
+	if e := c.Validate(); e != nil {
+		return nil, e
+	}
+	return &Service{c: c, d: d}, nil
 }
 func (s *Service) actor(ctx context.Context, token string) (identity.Principal, error) {
 	p, e := s.d.Identity.Authenticate(ctx, token)
@@ -328,4 +363,89 @@ func (s *Service) SaveTag(ctx context.Context, token, key string, in api.TagEdit
 		e = json.Unmarshal(b, &id)
 	}
 	return id, e
+}
+
+// missing is the recommended tags the vocabulary does not name yet,
+// ignoring case; archived tags count as present. A renamed tag counts by its
+// current name, so its original name is offered again for the administrator
+// to decide on in the preview.
+func (s *Service) missing(tags []api.Tag) []api.TagSpec {
+	have := map[string]bool{}
+	for _, t := range tags {
+		have[strings.ToLower(t.Name)] = true
+	}
+	out := []api.TagSpec{}
+	for _, r := range s.c.RecommendedTags {
+		if !have[strings.ToLower(r.Name)] {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+func (s *Service) RecommendedTags(ctx context.Context, token string) ([]api.TagSpec, error) {
+	out := []api.TagSpec{}
+	e := s.d.Transactions.View(ctx, func(tx context.Context) error {
+		p, e := s.actor(tx, token)
+		if e != nil {
+			return e
+		}
+		tags, e := s.d.Store.ListTags(tx, p.Tenant)
+		if e != nil {
+			return e
+		}
+		out = s.missing(tags)
+		return nil
+	})
+	return out, e
+}
+
+// ImportRecommendedTags adds the missing recommended tags in one command.
+// Nothing missing writes nothing; exceeding the space's limit refuses all.
+func (s *Service) ImportRecommendedTags(ctx context.Context, token, key string) ([]string, error) {
+	p, e := s.actor(ctx, token)
+	if e != nil {
+		return nil, e
+	}
+	req := cmd.Request{Token: token, Key: key, Operation: "tag.import", Resource: p.Tenant, Authorize: func(tx context.Context, p identity.Principal) error {
+		m, e := s.d.Members.GetMember(tx, p.Tenant, p.ID)
+		if e != nil || !m.Active || m.Role != "admin" || p.Kind != "human" {
+			return az.ErrForbidden
+		}
+		return nil
+	}}
+	b, e := command.Run(ctx, s.d.Commands, req, struct{}{}, func(tx context.Context, p identity.Principal) ([]byte, error) {
+		tags, e := s.d.Store.ListTags(tx, p.Tenant)
+		if e != nil {
+			return nil, e
+		}
+		add := s.missing(tags)
+		ids := []string{}
+		if len(add) == 0 {
+			return json.Marshal(ids)
+		}
+		if len(tags)+len(add) > api.MaxTags {
+			return nil, fault.Conflict("too_many_tags")
+		}
+		for _, r := range add {
+			var raw [16]byte
+			if _, e = rand.Read(raw[:]); e != nil {
+				return nil, e
+			}
+			id := hex.EncodeToString(raw[:])
+			if e = s.d.Store.SaveTag(tx, api.Tag{Tenant: p.Tenant, ID: id, Name: r.Name, Description: r.Description, Version: 1}); e != nil {
+				return nil, e
+			}
+			ids = append(ids, id)
+		}
+		if e = s.d.Events.AppendEvent(tx, record.Event{Tenant: p.Tenant, Resource: p.Tenant, Kind: record.EventAccessChanged}); e != nil {
+			return nil, e
+		}
+		return json.Marshal(ids)
+	})
+	var ids []string
+	if e == nil {
+		e = json.Unmarshal(b, &ids)
+	}
+	return ids, e
 }

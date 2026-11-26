@@ -232,7 +232,7 @@ ul.attachments.chosen li { margin: 2px 0 }
   <label id="current-password-field">当前密码<input id="current-password" type="password" autocomplete="current-password" maxlength="128"></label>
   <label>新密码<input id="new-password" type="password" autocomplete="new-password" required minlength="8" maxlength="128" placeholder="8–128 位"></label>
   <label>确认新密码<input id="confirm-password" type="password" autocomplete="new-password" required minlength="8" maxlength="128"></label>
-  <p class="muted small">保存后，该用户的旧会话和旧凭据会失效，需要用新密码重新登录。</p>
+  <p class="muted small">只更换密码：已签发的凭据继续有效，已登录的会话在一小时内自然过期。怀疑凭据泄露请撤销对应凭据。</p>
   <div class="actions"><button class="primary">保存密码</button></div>
  </form>
 </dialog>
@@ -1319,7 +1319,7 @@ async function openMembers(preselect = '') {
   for (const m of members) {
     const actions = h('div', 'actions');
     if(m.Kind==='human') actions.append(button('设置 / 重置密码',()=>openPassword(m.Subject)));
-    if (m.Active && m.Kind==='agent') actions.append(button('签发凭据', () => { subject.value = m.Subject; credentialForm.scrollIntoView({block:'center'}); }));
+    if (m.Active) actions.append(button('签发凭据', () => { subject.value = m.Subject; credentialForm.scrollIntoView({block:'center'}); }));
     if (m.Subject !== viewer.Subject) actions.append(button(m.Active ? '停用' : '启用', () => confirmThen(
       m.Active ? '停用后，该成员将不能访问和处理任务。继续？' : '启用后将恢复仍保留的任务关系。继续？',
       async () => { await api('/admin/members', 'POST', {Subject:m.Subject,Role:m.Role,Active:!m.Active}); await openMembers(); }), m.Active ? 'danger' : ''));
@@ -1337,7 +1337,7 @@ async function openMembers(preselect = '') {
   function chooseKind(){ownerField.hidden=kind.value!=='agent';owner.required=kind.value==='agent';passwordField.hidden=kind.value!=='human';initialPassword.required=kind.value==='human';if(kind.value==='agent')initialPassword.value=''}
   kind.onchange=chooseKind;chooseKind();
   const create=h('form',null,el('h3','添加用户或 Agent'),field('成员类型',kind),field('用户名 / Agent 标识',id),passwordField,ownerField,
-    el('p','用户创建后即可用用户名和密码登录；Agent 添加后再签发接入凭据。','muted small'),h('div','actions',el('button','添加成员','primary')));
+    el('p','用户创建后即可用用户名和密码登录，也可签发凭据供脚本或工具调用 API；Agent 添加后签发接入凭据。','muted small'),h('div','actions',el('button','添加成员','primary')));
   create.onsubmit=handle(async()=>{
     const subjectID=id.value.trim();
     await api('/admin/identities','POST',{Subject:subjectID,Kind:kind.value,OwnerID:kind.value==='agent'?owner.value:'',Password:kind.value==='human'?initialPassword.value:''});
@@ -1346,15 +1346,15 @@ async function openMembers(preselect = '') {
     notice(human?'用户已创建，可用用户名和密码登录。':'Agent 已添加，请签发接入凭据。');
   });
   root.append(h('section',null,create));
-  const active=members.filter(m=>m.Active && m.Kind==='agent');
+  const active=members.filter(m=>m.Active);
   const subject=memberSelect(active,'请选择签发对象');
   if (active.some(m=>m.Subject===preselect)) subject.value=preselect;
   const days=el('select');
   for (const n of [1,7,30,90]) {const o=el('option',n+' 天');o.value=n;days.append(o)}
   days.value='7';
-  const agentFields=h('details',null,el('summary','凭据怎么用'),el('p','一张凭据对应一个运行中的 Agent：用同一张凭据重启后可以接着处理；换新凭据开始处理时，旧凭据上进行中的处理会停止。','muted small'));
+  const agentFields=h('details',null,el('summary','凭据怎么用'),el('p','用户和 Agent 都用 Authorization: Bearer 调用同一套 API。对 Agent，一张凭据对应一个运行实例：用同一张凭据重启后可以接着处理；换新凭据开始处理时，旧凭据上进行中的处理会停止。用户的凭据只用于认证，与处理无关。改密码不影响已签发的凭据。','muted small'));
   const result=h('div',null);result.id='issued-credential';
-  const credentialForm=h('form',null,el('h3','签发 Agent 接入凭据'),field('签发对象',subject),field('有效期',days),agentFields,
+  const credentialForm=h('form',null,el('h3','签发接入凭据'),field('签发对象',subject),field('有效期',days),agentFields,
     h('div','actions',el('button','生成凭据','primary')),result);
   let pendingIssue=null;
   credentialForm.onsubmit=handle(async()=>{
@@ -1417,7 +1417,7 @@ $('change-password').onsubmit=handle(async()=>{
   await api(target?'/admin/users/'+encodeURIComponent(target)+'/password':'/account/password','POST',body);
   $('change-password').reset();$('password-dialog').close();
   if(!target || target===subject){await api('/session','DELETE');showLogin();$('username').value=subject;notice('密码已设置，请用用户名和新密码登录。')}
-  else notice('用户密码已更新，旧会话已失效。');
+  else notice('用户密码已更新，已签发的凭据不受影响。');
 });
 $('password-login').onsubmit=handle(async()=>{
   try{await api('/session','POST',{Username:$('username').value.trim(),Password:$('password').value});await start()}

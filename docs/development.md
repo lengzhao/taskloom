@@ -41,7 +41,7 @@ go run ./cmd/taskloom-admin -mode enroll-agent -tenant example \
 go run ./cmd/taskloom
 ```
 
-打开 `http://127.0.0.1:8080/v1/app`，用 `admin` 和 stdin 给出的密码登录（8–128 字节，不经命令行参数）。人只用密码登录，初始化和恢复不签发凭据、不写任何文件。遗失密码时用 `-mode recover -password-stdin`：撤销该人全部旧凭据与会话并换成新密码。只有 `enroll-agent` 写 `-credential-file`：文件必须不存在、权限 0600，秘密不打印；数据库与文件不共享事务，写文件失败时换新路径重新登记。`-operator` 是审计声明，可信边界是部署机与数据库运维权限。
+打开 `http://127.0.0.1:8080/v1/app`，用 `admin` 和 stdin 给出的密码登录（8–128 字节，不经命令行参数）。浏览器只用密码登录；人需要脚本或工具调用 API 时，由管理员在“用户与 Agent”中签发凭据。初始化和恢复不签发凭据、不写任何文件。遗失密码时用 `-mode recover -password-stdin`：撤销该人全部旧凭据与会话并换成新密码。只有 `enroll-agent` 写 `-credential-file`：文件必须不存在、权限 0600，秘密不打印；数据库与文件不共享事务，写文件失败时换新路径重新登记。`-operator` 是审计声明，可信边界是部署机与数据库运维权限。
 
 ## 文件存储
 

@@ -137,10 +137,7 @@ func (s *Service) Issue(ctx context.Context, token, key string, in capsecurity.I
 		if err != nil {
 			return nil, err
 		}
-		// Only Agents hold issued credentials; people sign in with a password.
-		if subject.Kind != "agent" {
-			return nil, fault.Input("not_an_agent", "Subject")
-		}
+		// Every member may hold issued credentials; people can also sign in with a password.
 		member, err := s.d.Members.GetMember(tx, in.Tenant, in.Subject)
 		if err != nil || !member.Active {
 			return nil, authorization.ErrForbidden

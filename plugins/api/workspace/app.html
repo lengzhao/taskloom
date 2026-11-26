@@ -232,7 +232,7 @@ ul.attachments.chosen li { margin: 2px 0 }
   <label id="current-password-field">当前密码<input id="current-password" type="password" autocomplete="current-password" maxlength="128"></label>
   <label>新密码<input id="new-password" type="password" autocomplete="new-password" required minlength="8" maxlength="128" placeholder="8–128 位"></label>
   <label>确认新密码<input id="confirm-password" type="password" autocomplete="new-password" required minlength="8" maxlength="128"></label>
-  <p class="muted small">只更换密码：已签发的凭据继续有效，已登录的会话在一小时内自然过期。怀疑凭据泄露请撤销对应凭据。</p>
+  <p class="muted small">保存后，该用户已登录的会话全部失效，需要用新密码重新登录；已签发的凭据继续有效，怀疑泄露请撤销对应凭据。</p>
   <div class="actions"><button class="primary">保存密码</button></div>
  </form>
 </dialog>
@@ -1417,7 +1417,7 @@ $('change-password').onsubmit=handle(async()=>{
   await api(target?'/admin/users/'+encodeURIComponent(target)+'/password':'/account/password','POST',body);
   $('change-password').reset();$('password-dialog').close();
   if(!target || target===subject){await api('/session','DELETE');showLogin();$('username').value=subject;notice('密码已设置，请用用户名和新密码登录。')}
-  else notice('用户密码已更新，已签发的凭据不受影响。');
+  else notice('用户密码已更新，旧会话已失效，已签发的凭据不受影响。');
 });
 $('password-login').onsubmit=handle(async()=>{
   try{await api('/session','POST',{Username:$('username').value.trim(),Password:$('password').value});await start()}

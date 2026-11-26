@@ -24,6 +24,9 @@ type Credential struct {
 	Digest    string
 	ExpiresAt time.Time
 	Revoked   bool
+	// Session marks a credential created by password login. Changing a
+	// password revokes sessions only; issued credentials stay valid.
+	Session bool
 }
 type Authenticator interface {
 	Authenticate(ctx context.Context, secret string) (Principal, error)
@@ -46,6 +49,7 @@ type Credentials interface {
 	SaveCredential(ctx context.Context, value Credential) error
 	RevokeCredential(ctx context.Context, tenant, credentialID string) error
 	RevokeSubjectCredentials(ctx context.Context, tenant, subject string) error
+	RevokeSubjectSessions(ctx context.Context, tenant, subject string) error
 }
 
 // BootstrapClaim belongs exclusively to the offline administration entry point.

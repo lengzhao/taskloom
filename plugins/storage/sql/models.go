@@ -27,6 +27,21 @@ type credentialRow struct {
 	ExpiresAt    time.Time
 	Revoked      bool
 }
+
+// credentialRecord is the current credential model; credentialRow stays frozen
+// for identity/001. Credentials stored before identity/002 count as issued, not
+// sessions: any session among them expires within an hour.
+type credentialRecord struct {
+	ID           string `gorm:"primaryKey;size:128"`
+	PrincipalKey string `gorm:"size:64;not null;index"`
+	Digest       string `gorm:"size:64;uniqueIndex;not null"`
+	ExpiresAt    time.Time
+	Revoked      bool
+	Session      bool `gorm:"not null;default:false"`
+}
+
+func (credentialRecord) TableName() string { return "credential_rows" }
+
 type receiptRow struct {
 	Key    string `gorm:"primaryKey;size:64;column:row_key"`
 	Digest string `gorm:"size:64"`

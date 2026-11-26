@@ -402,17 +402,18 @@ func TestPasswordLoginCreationAndReset(t *testing.T) {
 	var aliceToken capsecurity.Issued
 	json.Unmarshal(issuedResp.Body.Bytes(), &aliceToken)
 	must(request("POST", "/session", "", map[string]string{"Username": "alice", "Password": "AlicePassword123!"}, aliceToken.Secret, nil), 400)
-	// Changing a password changes only the password: sessions and issued credentials stay valid.
+	// Changing a password ends password-login sessions; issued credentials stay valid.
 	must(request("POST", "/account/password", "change", map[string]string{"CurrentPassword": "AlicePassword123!", "Password": "NewPassword123!"}, "", userCookie), 200)
-	must(request("GET", "/me", "", nil, "", userCookie), 200)
+	must(request("GET", "/me", "", nil, "", userCookie), 401)
 	must(request("GET", "/me", "", nil, aliceToken.Secret, nil), 200)
 	must(login("alice", "AlicePassword123!"), 401)
 	changed := login("alice", "NewPassword123!")
 	must(changed, 200)
 	newCookie := changed.Result().Cookies()[0]
 	must(request("POST", "/admin/users/alice/password", "reset", map[string]string{"Password": "ResetPassword123!"}, "", adminCookie), 200)
-	must(request("GET", "/me", "", nil, "", newCookie), 200)
+	must(request("GET", "/me", "", nil, "", newCookie), 401)
 	must(request("GET", "/me", "", nil, aliceToken.Secret, nil), 200)
+	must(request("GET", "/me", "", nil, "", adminCookie), 200)
 	must(login("alice", "NewPassword123!"), 401)
 	reset := login("alice", "ResetPassword123!")
 	must(reset, 200)

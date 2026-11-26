@@ -91,11 +91,15 @@ func (s *Service) SetPassword(ctx context.Context, token, key string, in api.Pas
 	})
 	return e
 }
+
+// savePassword replaces the password and ends every password-login session;
+// issued credentials stay valid. Offline recovery is the single entry point
+// that revokes every credential of a person.
 func (s *Service) savePassword(ctx context.Context, tenant, subject, hash string) error {
 	if e := s.d.Passwords.SetPasswordHash(ctx, tenant, subject, hash); e != nil {
 		return e
 	}
-	return s.d.Credentials.RevokeSubjectCredentials(ctx, tenant, subject)
+	return s.d.Credentials.RevokeSubjectSessions(ctx, tenant, subject)
 }
 func (s *Service) ChangePassword(ctx context.Context, token, key string, in api.ChangePasswordInput) error {
 	old, e := s.d.Passwords.PasswordHash(ctx, in.Tenant, in.Subject)
@@ -175,6 +179,7 @@ func (s *Service) Login(ctx context.Context, in api.LoginInput) (api.Issued, err
 		if e != nil {
 			return e
 		}
+		c.Session = true
 		if e = s.d.Credentials.SaveCredential(tx, c); e != nil {
 			return e
 		}

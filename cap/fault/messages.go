@@ -44,12 +44,11 @@ var messages = map[string]string{
 	// Members, identities and projects.
 	"member_inactive":        "该成员不存在或已停用",
 	"owner_not_person":       "负责人须是有效用户（不能是 Agent）",
-	"not_an_agent":           "凭据只能签发给 Agent；用户用密码登录",
 	"not_a_person":           "只有用户有密码",
 	"weak_password":          "密码须为 8–128 字节",
 	"wrong_password":         "当前密码不正确",
 	"invalid_subject":        "标识为空、过长或包含不允许的字符",
-	"invalid_expiry":         "有效期须在现在之后、90 天以内",
+	"invalid_expiry":         "有效期须在现在之后、360 天以内",
 	"too_many_members":       "成员数量超过上限",
 	"project_archived":       "项目已归档，不能新增或移入任务",
 	"owner_ambiguous":        "无法确定负责人，请指定 Owner",

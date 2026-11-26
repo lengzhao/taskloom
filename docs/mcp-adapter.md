@@ -4,7 +4,7 @@
 
 ## 接入
 
-Agent 的业务凭据由 `taskloom-admin -mode enroll-agent` 签发。以 Claude Code 为例：
+Agent 的业务凭据由 `taskloom-admin -mode enroll-agent` 或管理员在工作台签发；人也可以用管理员签发给自己的凭据接入，以本人身份工作（人工执行不绑定凭据）。以 Claude Code 为例：
 
 ```sh
 claude mcp add --transport http taskloom http://localhost:8899/v1/mcp \

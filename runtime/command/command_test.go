@@ -173,7 +173,7 @@ func TestBootstrapOnceAndCredentialRevocation(t *testing.T) {
 
 var _ record.EventWriter = (*store.Store)(nil)
 
-// agent creates the Agent "bot" owned by admin: only Agents hold issued credentials.
+// agent creates the Agent "bot" owned by admin.
 func agent(t *testing.T, svc *security.Service, token string) string {
 	t.Helper()
 	if err := svc.Create(context.Background(), token, "create-bot", identity.Principal{Tenant: "t", ID: "bot", Kind: "agent", OwnerID: "admin"}); err != nil {
@@ -182,20 +182,50 @@ func agent(t *testing.T, svc *security.Service, token string) string {
 	return "bot"
 }
 
-// People sign in with a password; issuing them a credential is rejected.
-func TestIssueRejectsPeople(t *testing.T) {
-	_, _, svc, token := fixture(t)
-	if _, err := svc.Issue(context.Background(), token, "human", capsecurity.IssueInput{Tenant: "t", Subject: "admin", ExpiresAt: time.Now().Add(time.Hour)}); !errors.Is(err, fault.ErrInput) {
-		t.Fatal("credential issued to a person", err)
+// People hold issued credentials like Agents; they are still created only with a password.
+func TestIssueToPeople(t *testing.T) {
+	_, r, svc, token := fixture(t)
+	ctx := context.Background()
+	issued, err := svc.Issue(ctx, token, "human", capsecurity.IssueInput{Tenant: "t", Subject: "admin", ExpiresAt: time.Now().Add(time.Hour)})
+	if err != nil || issued.Secret == "" {
+		t.Fatal("credential not issued to a person", err)
 	}
-	if err := svc.Create(context.Background(), token, "person", identity.Principal{Tenant: "t", ID: "p", Kind: "human"}); !errors.Is(err, fault.ErrInput) {
+	req := capcommand.Request{Token: issued.Secret, Operation: "identity.issue", Key: "as-person", Resource: "t"}
+	if _, err = command.Run(ctx, r, req, 1, func(_ context.Context, p identity.Principal) ([]byte, error) {
+		if p.ID != "admin" || p.Kind != "human" || p.CredentialID != issued.ID {
+			t.Fatal("issued credential authenticated as", p)
+		}
+		return nil, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Create(ctx, token, "person", identity.Principal{Tenant: "t", ID: "p", Kind: "human"}); !errors.Is(err, fault.ErrInput) {
 		t.Fatal("person created without a password", err)
 	}
 }
 
+// Issued credentials may live up to 360 days and no longer.
+func TestIssueLifetimeBound(t *testing.T) {
+	_, _, svc, token := fixture(t)
+	ctx := context.Background()
+	day := 24 * time.Hour
+	if _, err := svc.Issue(ctx, token, "max", capsecurity.IssueInput{Tenant: "t", Subject: "admin", ExpiresAt: time.Now().Add(360*day - time.Minute)}); err != nil {
+		t.Fatal("360-day credential rejected", err)
+	}
+	if _, err := svc.Issue(ctx, token, "over", capsecurity.IssueInput{Tenant: "t", Subject: "admin", ExpiresAt: time.Now().Add(361 * day)}); !errors.Is(err, fault.ErrInput) {
+		t.Fatal("credential beyond 360 days issued", err)
+	}
+}
+
+// Recovery is the one entry point that revokes every credential of a person,
+// sessions and issued credentials alike.
 func TestRecoveryRevokesOldCredentials(t *testing.T) {
 	_, r, svc, token := fixture(t)
 	ctx := context.Background()
+	personal, err := svc.Issue(ctx, token, "personal", capsecurity.IssueInput{Tenant: "t", Subject: "admin", ExpiresAt: time.Now().Add(time.Hour)})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := svc.Recover(ctx, security.AdminInput{Tenant: "t", Subject: "admin", Operator: "local-operator", Reason: "lost credential", Password: "AdminPassword123!"}); err != nil {
 		t.Fatal(err)
 	}
@@ -203,12 +233,14 @@ func TestRecoveryRevokesOldCredentials(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := capcommand.Request{Token: token, Operation: "identity.issue", Key: "old", Resource: "t"}
-	if _, err = command.Run(ctx, r, req, 1, func(context.Context, identity.Principal) ([]byte, error) {
-		t.Fatal("old token usable")
-		return nil, nil
-	}); !errors.Is(err, identity.ErrUnauthenticated) {
-		t.Fatal(err)
+	for i, old := range []string{token, personal.Secret} {
+		req := capcommand.Request{Token: old, Operation: "identity.issue", Key: "old", Resource: "t"}
+		if _, err = command.Run(ctx, r, req, 1, func(context.Context, identity.Principal) ([]byte, error) {
+			t.Fatal("old credential usable", i)
+			return nil, nil
+		}); !errors.Is(err, identity.ErrUnauthenticated) {
+			t.Fatal(i, err)
+		}
 	}
 	if _, err = svc.Issue(ctx, recovered.Secret, "new", capsecurity.IssueInput{Tenant: "t", Subject: agent(t, svc, recovered.Secret), ExpiresAt: time.Now().Add(time.Hour)}); err != nil {
 		t.Fatal(err)

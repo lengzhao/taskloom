@@ -40,7 +40,7 @@ func (s *Store) Resolve(ctx context.Context, tenant, id string) (identity.Princi
 }
 func (s *Store) SaveCredential(ctx context.Context, c identity.Credential) error {
 	return s.use(ctx, true, func(db *gorm.DB) error {
-		return db.Create(&credentialRow{ID: c.ID, PrincipalKey: key(c.Principal.Tenant, c.Principal.ID), Digest: c.Digest, ExpiresAt: c.ExpiresAt, Revoked: c.Revoked}).Error
+		return db.Create(&credentialRecord{ID: c.ID, PrincipalKey: key(c.Principal.Tenant, c.Principal.ID), Digest: c.Digest, ExpiresAt: c.ExpiresAt, Revoked: c.Revoked, Session: c.Session}).Error
 	})
 }
 func (s *Store) FindCredential(ctx context.Context, digest string) (identity.Credential, error) {
@@ -134,5 +134,12 @@ func (s *Store) ReadEvents(ctx context.Context, tenant string, after int64, limi
 func (s *Store) RevokeSubjectCredentials(ctx context.Context, tenant, subject string) error {
 	return s.use(ctx, true, func(db *gorm.DB) error {
 		return db.Model(&credentialRow{}).Where("principal_key = ?", key(tenant, subject)).Update("revoked", true).Error
+	})
+}
+
+// RevokeSubjectSessions revokes only password-login sessions of a subject.
+func (s *Store) RevokeSubjectSessions(ctx context.Context, tenant, subject string) error {
+	return s.use(ctx, true, func(db *gorm.DB) error {
+		return db.Model(&credentialRecord{}).Where("principal_key = ? AND session = ?", key(tenant, subject), true).Update("revoked", true).Error
 	})
 }

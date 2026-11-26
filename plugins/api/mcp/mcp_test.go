@@ -29,6 +29,7 @@ type fixture struct {
 	t            *testing.T
 	srv          *httptest.Server
 	owner, agent string
+	security     *security.Service
 	session      string
 	seq          int
 }
@@ -68,7 +69,7 @@ func setup(t *testing.T) *fixture {
 	if e != nil {
 		t.Fatal(e)
 	}
-	f := &fixture{t: t, srv: srv, owner: issued.Secret}
+	f := &fixture{t: t, srv: srv, owner: issued.Secret, security: sec}
 	if e = sec.Create(ctx, f.owner, "agent", identity.Principal{Tenant: "t", ID: "agent", Kind: "agent", OwnerID: "owner"}); e != nil {
 		t.Fatal(e)
 	}
@@ -491,4 +492,35 @@ func TestAgentCreatesTopLevelTaskThroughMCP(t *testing.T) {
 		t.Fatal("top-level task owned by the Agent's owner", task["owner"])
 	}
 	f.ok("start_work", map[string]string{"task_id": id, "basis": task["basis"].(string)})
+}
+
+// A person uses an issued credential exactly as an Agent does; the work still
+// belongs to the person, not to the credential.
+func TestPersonWorksATaskThroughMCP(t *testing.T) {
+	f := setup(t)
+	ctx := context.Background()
+	sec := f.security
+	if e := sec.CreateUser(ctx, f.owner, "alice", capsecurity.UserInput{Tenant: "t", Username: "alice", Password: "AlicePassword123!"}); e != nil {
+		t.Fatal(e)
+	}
+	issued, e := sec.Issue(ctx, f.owner, "alice-token", capsecurity.IssueInput{Tenant: "t", Subject: "alice", ExpiresAt: time.Now().Add(time.Hour)})
+	if e != nil {
+		t.Fatal(e)
+	}
+	f.agent = issued.Secret
+	f.rpc("initialize", map[string]any{"protocolVersion": "2025-06-18", "capabilities": map[string]any{}, "clientInfo": map[string]any{"name": "test"}})
+
+	var created struct{ Task struct{ ID string } }
+	f.ownerCall("POST", "/tasks", map[string]string{"Title": "整理周报", "Goal": "汇总本周进展", "Criteria": "覆盖全部项目"}, &created)
+	id := created.Task.ID
+	f.ownerCall("POST", "/tasks/"+id+"/assign", map[string]any{"Subject": "alice"}, nil)
+
+	task := f.ok("read_task", map[string]string{"task_id": id})
+	if task["you"] != "alice" || task["execution"].(map[string]any)["writable"] != true {
+		t.Fatal("assigned person has no running work", task["you"], task["execution"])
+	}
+	submitted := f.ok("submit_result", map[string]string{"task_id": id, "basis": task["basis"].(string), "result": "周报已整理"})
+	if submitted["next_actor"] != "reviewer" {
+		t.Fatal("result not waiting on reviewer", submitted)
+	}
 }

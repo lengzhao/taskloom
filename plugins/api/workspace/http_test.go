@@ -227,7 +227,16 @@ func TestHTTPMemberAdministration(t *testing.T) {
 	must(request(admin.Secret, "POST", "/admin/identities", "create-agent", map[string]any{"Subject": "agent", "Kind": "agent", "OwnerID": "user"}), 200)
 	expires := time.Now().Add(time.Hour)
 	input := map[string]any{"Subject": "user", "ExpiresAt": expires}
-	must(request(admin.Secret, "POST", "/admin/credentials", "issue-user", input), 400)
+	// People hold issued credentials too; they act exactly as the person.
+	personalResp := request(admin.Secret, "POST", "/admin/credentials", "issue-user", input)
+	must(personalResp, 200)
+	var personal capsecurity.Issued
+	json.Unmarshal(personalResp.Body.Bytes(), &personal)
+	personalMe := request(personal.Secret, "GET", "/me", "", nil)
+	must(personalMe, 200)
+	if !bytes.Contains(personalMe.Body.Bytes(), []byte(`"Subject":"user"`)) {
+		t.Fatal("personal credential identity", personalMe.Body.String())
+	}
 	user, e := sec.Login(ctx, capsecurity.LoginInput{Tenant: "t", Username: "user", Password: "userPassword123!"})
 	if e != nil {
 		t.Fatal(e)
@@ -281,7 +290,8 @@ func TestHTTPMemberAdministration(t *testing.T) {
 	must(request(agent.Secret, "GET", "/me", "", nil), 401)
 	must(request(admin.Secret, "POST", "/admin/members", "disable-user", map[string]any{"Subject": "user", "Role": "member", "Active": false}), 200)
 	must(request(user.Secret, "GET", "/me", "", nil), 403)
-	must(request(admin.Secret, "POST", "/admin/credentials", "inactive-issue", input), 400)
+	must(request(personal.Secret, "GET", "/me", "", nil), 403)
+	must(request(admin.Secret, "POST", "/admin/credentials", "inactive-issue", input), 403)
 	must(request(admin.Secret, "POST", "/admin/identities", "inactive-owner", map[string]any{"Subject": "other-agent", "Kind": "agent", "OwnerID": "user"}), 403)
 	list = request(admin.Secret, "GET", "/admin/members", "", nil)
 	must(list, 200)
@@ -387,14 +397,23 @@ func TestPasswordLoginCreationAndReset(t *testing.T) {
 	must(request("GET", "/admin/members", "", nil, "", userCookie), 403)
 	must(request("POST", "/admin/users/admin/password", "escalate", map[string]string{"Password": "OtherPassword123!"}, "", userCookie), 403)
 	must(request("POST", "/account/password", "wrong-current", map[string]string{"CurrentPassword": "wrong", "Password": "NewPassword123!"}, "", userCookie), 403)
+	issuedResp := request("POST", "/admin/credentials", "alice-token", map[string]any{"Subject": "alice", "ExpiresAt": time.Now().Add(time.Hour)}, "", adminCookie)
+	must(issuedResp, 200)
+	var aliceToken capsecurity.Issued
+	json.Unmarshal(issuedResp.Body.Bytes(), &aliceToken)
+	must(request("POST", "/session", "", map[string]string{"Username": "alice", "Password": "AlicePassword123!"}, aliceToken.Secret, nil), 400)
+	// Changing a password ends password-login sessions; issued credentials stay valid.
 	must(request("POST", "/account/password", "change", map[string]string{"CurrentPassword": "AlicePassword123!", "Password": "NewPassword123!"}, "", userCookie), 200)
 	must(request("GET", "/me", "", nil, "", userCookie), 401)
+	must(request("GET", "/me", "", nil, aliceToken.Secret, nil), 200)
 	must(login("alice", "AlicePassword123!"), 401)
 	changed := login("alice", "NewPassword123!")
 	must(changed, 200)
 	newCookie := changed.Result().Cookies()[0]
 	must(request("POST", "/admin/users/alice/password", "reset", map[string]string{"Password": "ResetPassword123!"}, "", adminCookie), 200)
 	must(request("GET", "/me", "", nil, "", newCookie), 401)
+	must(request("GET", "/me", "", nil, aliceToken.Secret, nil), 200)
+	must(request("GET", "/me", "", nil, "", adminCookie), 200)
 	must(login("alice", "NewPassword123!"), 401)
 	reset := login("alice", "ResetPassword123!")
 	must(reset, 200)

@@ -204,6 +204,19 @@ func TestIssueToPeople(t *testing.T) {
 	}
 }
 
+// Issued credentials may live up to 360 days and no longer.
+func TestIssueLifetimeBound(t *testing.T) {
+	_, _, svc, token := fixture(t)
+	ctx := context.Background()
+	day := 24 * time.Hour
+	if _, err := svc.Issue(ctx, token, "max", capsecurity.IssueInput{Tenant: "t", Subject: "admin", ExpiresAt: time.Now().Add(360*day - time.Minute)}); err != nil {
+		t.Fatal("360-day credential rejected", err)
+	}
+	if _, err := svc.Issue(ctx, token, "over", capsecurity.IssueInput{Tenant: "t", Subject: "admin", ExpiresAt: time.Now().Add(361 * day)}); !errors.Is(err, fault.ErrInput) {
+		t.Fatal("credential beyond 360 days issued", err)
+	}
+}
+
 // Recovery is the one entry point that revokes every credential of a person,
 // sessions and issued credentials alike.
 func TestRecoveryRevokesOldCredentials(t *testing.T) {

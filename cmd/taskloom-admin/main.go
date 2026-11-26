@@ -39,7 +39,7 @@ func run(ctx context.Context, args []string, stdin io.Reader, out, errout io.Wri
 	passwordStdin := f.Bool("password-stdin", false, "bootstrap and recover: read the administrator password from the first stdin line")
 	path := f.String("credential-file", "", "enroll-agent: new private credential output file")
 	owner := f.String("owner", "", "enroll-agent: human owner ID")
-	ttl := f.Duration("ttl", 24*time.Hour, "enroll-agent: credential lifetime (maximum 90 days)")
+	ttl := f.Duration("ttl", 24*time.Hour, "enroll-agent: credential lifetime (maximum 360 days)")
 	if err := f.Parse(args); err != nil {
 		if err == flag.ErrHelp {
 			return 0
@@ -53,8 +53,8 @@ func run(ctx context.Context, args []string, stdin io.Reader, out, errout io.Wri
 	}
 	// People sign in with a password and get no credential file; only an Agent
 	// instance receives one.
-	if agent && (*passwordStdin || *path == "" || *ttl <= 0 || *ttl > 90*24*time.Hour) {
-		fmt.Fprintln(errout, "enroll-agent requires credential-file and a ttl within 90 days, and takes no password")
+	if agent && (*passwordStdin || *path == "" || *ttl <= 0 || *ttl > domain.MaxCredentialLifetime) {
+		fmt.Fprintln(errout, "enroll-agent requires credential-file and a ttl within 360 days, and takes no password")
 		return 2
 	}
 	if !agent && (!*passwordStdin || *path != "") {

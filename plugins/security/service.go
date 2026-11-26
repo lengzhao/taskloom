@@ -12,6 +12,7 @@ import (
 	"github.com/lengzhao/pluginkit"
 	capcommand "github.com/lengzhao/taskloom/cap/command"
 	capsecurity "github.com/lengzhao/taskloom/cap/security"
+	domain "github.com/lengzhao/taskloom/domain/security"
 	"strings"
 	"time"
 
@@ -56,7 +57,7 @@ func valid(s string) bool {
 	return len(s) > 0 && len(s) <= 128 && strings.TrimSpace(s) == s && !strings.ContainsAny(s, "\x00\n\r*")
 }
 func credential(p identity.Principal, expires time.Time) (identity.Credential, capsecurity.Issued, error) {
-	if !expires.After(time.Now()) || expires.After(time.Now().Add(90*24*time.Hour)) {
+	if !expires.After(time.Now()) || expires.After(time.Now().Add(domain.MaxCredentialLifetime)) {
 		return identity.Credential{}, capsecurity.Issued{}, fault.Input("invalid_expiry", "ExpiresAt")
 	}
 	var b [32]byte

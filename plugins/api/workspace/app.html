@@ -1350,7 +1350,7 @@ async function openMembers(preselect = '') {
   const subject=memberSelect(active,'请选择签发对象');
   if (active.some(m=>m.Subject===preselect)) subject.value=preselect;
   const days=el('select');
-  for (const n of [1,7,30,90]) {const o=el('option',n+' 天');o.value=n;days.append(o)}
+  for (const n of [1,7,30,90,180,360]) {const o=el('option',n+' 天');o.value=n;days.append(o)}
   days.value='7';
   const agentFields=h('details',null,el('summary','凭据怎么用'),el('p','用户和 Agent 都用 Authorization: Bearer 调用同一套 API。对 Agent，一张凭据对应一个运行实例：用同一张凭据重启后可以接着处理；换新凭据开始处理时，旧凭据上进行中的处理会停止。用户的凭据只用于认证，与处理无关。改密码不影响已签发的凭据。','muted small'));
   const result=h('div',null);result.id='issued-credential';

@@ -42,7 +42,7 @@
 | POST /admin/members | 管理员：设置成员角色与启停（Subject、Role admin/member、Active）；租户取自认证；Agent 不能成为管理员，管理员不能撤销自己 |
 | POST /admin/identities | 管理员：创建用户（需 Password，人只能用密码登录）或 Agent（需 OwnerID，为同租户有效用户） |
 | POST /admin/users/{id}/password | 管理员重置同租户用户密码；两类改密都撤销目标的全部登录会话，已签发凭据保持有效（见[身份、凭据与审计](architecture.md#身份凭据与审计)） |
-| POST /admin/credentials | 管理员：为有效成员（人或 Agent）签发凭据（Subject、ExpiresAt，最长 90 天）；明文只在首次响应中返回，重放只返回编号 |
+| POST /admin/credentials | 管理员：为有效成员（人或 Agent）签发凭据（Subject、ExpiresAt，最长 360 天）；明文只在首次响应中返回，重放只返回编号 |
 | POST /admin/credentials/revoke | 管理员：按 CredentialID 撤销 |
 | GET /admin/audit?limit=N | 管理员：本租户最近审计记录（默认 100，最多 500） |
 

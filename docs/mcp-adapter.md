@@ -48,7 +48,7 @@ claude mcp add --transport http taskloom http://localhost:8899/v1/mcp \
 
 ## 示例：AgentKit 常驻执行 Agent
 
-常驻执行 Agent 由 AgentKit 提供（v0.4.47 起）：平台插件 `platform/taskloom`（AgentKit 仓库 `runtime/platform/taskloom`）与 preset `presets/taskloom.yaml`，用 AgentKit 自带的 `cmd/agent` 运行，本仓库不再包含 Agent 代码。该 preset 只开放 Taskloom MCP 工具与 todo/finish，没有 shell、文件或网络工具，所有写入仍由 Taskloom 鉴权；提示词与模型在 preset 中，可用自己的 overlay 覆盖。
+常驻执行 Agent 由 AgentKit 提供（v0.4.48 起）：平台插件 `platform/taskloom`（AgentKit 仓库 `runtime/platform/taskloom`）与 preset `presets/taskloom.yaml`，用 AgentKit 自带的 `cmd/agent` 运行，本仓库不再包含 Agent 代码。该 preset 只开放 Taskloom MCP 工具与 todo/finish，没有 shell、文件或网络工具，所有写入仍由 Taskloom 鉴权；提示词与模型在 preset 中，可用自己的 overlay 覆盖。
 
 `platform/taskloom` 是 Agent 层的适配，不是 Taskloom 服务端插件，也不新增 Taskloom 接口：它用该 Agent 自己的业务凭据只读 `GET /v1/me`、`/v1/changes`、`/v1/tasks?mine=true` 与 `/v1/tasks/{id}`，决定何时唤醒或 steer 会话；唤醒、退避与重启行为以 AgentKit 文档为准。这几个接口的字段与语义、以及 MCP 工具名（preset 提示词引用 `read_task`、`finish` 等）是跨仓库契约，变更时须同步 AgentKit。适配插件不主动停止 turn：取消或改派后旧执行的写入被拒，由 Agent 读任务后结束；给 Agent 开放外部工具时须重新评估。
 
@@ -58,7 +58,7 @@ claude mcp add --transport http taskloom http://localhost:8899/v1/mcp \
 #    Taskloom 不在本机 8899 端口时先设 TASKLOOM_API_URL=http://<host>:<port>/v1
 sh deploy/agent/issue-credential.sh
 # 2. 把 mcp.json 中的 taskloom 条目放进 ~/.agentkit/mcp.json（已有该文件时合并 mcpServers，不要覆盖）
-# 3. 在 AgentKit 仓库（v0.4.47 起）运行；模型 Key 按 preset 说明设置（默认 DEEPSEEK_API_KEY）
+# 3. 在 AgentKit 仓库（v0.4.48 起）运行；模型 Key 按 preset 说明设置（默认 DEEPSEEK_API_KEY）
 set -a; . /path/to/taskloom/deploy/agent/taskloom.env; set +a
 go run ./cmd/agent -config presets/taskloom.yaml
 ```

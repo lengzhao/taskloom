@@ -168,9 +168,9 @@ func toolList() []tool {
 	str := func(desc string) map[string]any { return prop("string", desc) }
 	task, basis := str(descTask), str(descBasis)
 	return []tool{
-		{"read_result", "按结果编号完整读取正式结果。read_task 的 current_result 只提供预览；引用时使用 result_id。返回 next_cursor 时原样传入 cursor 续读，直到不再返回。", schema([]string{"task_id", "result_id"}, map[string]any{"task_id": task, "result_id": str("正式结果编号"), "cursor": str("可选：上页返回的 next_cursor")})},
 		{"inbox", "列出当前等你处理的任务（下一步在等你），含当前步骤和等待原因（如验收未通过等待重新提交）。任务较多时分页：返回 next_cursor 时，把它作为 cursor 取下一页。", schema(nil, map[string]any{"cursor": str("可选：上一页返回的 next_cursor")})},
 		{"read_task", "读取任务：目标、验收标准、状态、下一步等谁、你能做哪些操作及不能做的原因、待回答问题、当前结果和最近时间线，并返回写操作所需的 basis。时间线只含最近 " + strconv.Itoa(timelineLimit) + " 条；返回 earlier_before 时，把它作为 before 读更早的记录。", schema([]string{"task_id"}, map[string]any{"task_id": task, "before": str("可选：上次返回的 earlier_before，读取更早的时间线")})},
+		{"read_result", "按结果编号完整读取正式结果。read_task 的 current_result 只提供预览；引用时使用 result_id。返回 next_cursor 时原样传入 cursor 续读，直到不再返回。", schema([]string{"task_id", "result_id"}, map[string]any{"task_id": task, "result_id": str("正式结果编号"), "cursor": str("可选：上页返回的 next_cursor")})},
 		{"list_people", "查找空间内的有效成员（用户与 Agent），用于 ask 的 to 或 create_task 的 owner/assignee。按 ID 片段搜索，按 subject 排序分页：返回 next 时，把它作为 after 取下一页。", schema(nil, map[string]any{"query": str("可选：ID 中包含的文字"), "kind": map[string]any{"type": "string", "enum": []string{"human", "agent"}, "description": "可选：只列用户或只列 Agent"}, "after": str("可选：上一页返回的 next")})},
 		{"start_work", "认领并开始执行任务。", schema([]string{"task_id", "basis"}, map[string]any{"task_id": task, "basis": basis})},
 		{"post_message", "在任务时间线留言：汇报进度、回复人的引导，可附文件和链接。留言会更新你的最近进展时间，但不算交付结果。text、files、links 至少一项。", schema([]string{"task_id"}, map[string]any{"task_id": task, "text": str("留言内容"), "files": filesProp, "links": linksProp})},
@@ -282,11 +282,26 @@ func (m *Module) call(ctx context.Context, c call, name string, rawArgs json.Raw
 		if err := required(args, "task_id", "result_id"); err != nil {
 			return "", err
 		}
-		page, err := m.d.Workflow.ReadResult(ctx, c.token, args.str("task_id"), args.str("result_id"), args.str("cursor"))
+		taskID := args.str("task_id")
+		page, err := m.d.Workflow.ReadResult(ctx, c.token, taskID, args.str("result_id"), args.str("cursor"))
 		if err != nil {
 			return "", err
 		}
-		return pretty(page), nil
+		out := map[string]any{"task_id": page.TaskID, "result_id": page.ResultID, "text": page.Text}
+		if page.NextCursor != "" {
+			out["next_cursor"] = page.NextCursor
+		}
+		if len(page.Files) > 0 {
+			listed, err := m.d.Files.List(ctx, c.token, taskID)
+			if err != nil {
+				return "", err
+			}
+			addAttachments(out, commit.Commit{Files: page.Files}, fileIndex(listed))
+		}
+		if len(page.Links) > 0 {
+			out["links"] = page.Links
+		}
+		return pretty(out), nil
 	case "read_task":
 		if err := required(args, "task_id"); err != nil {
 			return "", err
@@ -453,7 +468,10 @@ func (m *Module) call(ctx context.Context, c call, name string, rawArgs json.Raw
 			message = "结果已提交，等待负责人验收。"
 		}
 		out := map[string]any{"message": message, "status": s.Position.Status, "step": s.Position.State, "waiting": s.Position.Waiting, "waiting_on_subtasks": s.Position.WaitingOnSubtasks, "next_actor": s.NextActor, "basis": b.next(r).token()}
-		out["result_id"] = r.ResultID
+		// Receipts written before results were named replay without one.
+		if r.ResultID != "" {
+			out["result_id"] = r.ResultID
+		}
 		return pretty(out), nil
 	}
 }
@@ -487,10 +505,7 @@ func (m *Module) readTask(ctx context.Context, c call, taskID string, before int
 	if err != nil {
 		return "", err
 	}
-	fileByID := map[string]capfile.File{}
-	for _, f := range listed {
-		fileByID[f.ID] = f
-	}
+	fileByID := fileIndex(listed)
 	byID := map[string]commit.Commit{}
 	for _, cm := range commits {
 		byID[cm.ID] = cm
@@ -514,7 +529,7 @@ func (m *Module) readTask(ctx context.Context, c call, taskID string, before int
 	timeline := []map[string]any{}
 	for _, cm := range commits {
 		entry := map[string]any{"id": cm.ID, "kind": cm.Kind, "author": cm.Author, "at": cm.CreatedAt.Format(time.RFC3339)}
-		if cm.Kind == "result" {
+		if cm.Kind == work.KindResult {
 			entry["result_id"] = cm.ID
 		} else {
 			entry["text"] = cm.Body
@@ -572,8 +587,8 @@ func (m *Module) readTask(ctx context.Context, c call, taskID string, before int
 	}
 	if w.ResultCommit != nil {
 		body := []rune(w.ResultCommit.Body)
-		r := map[string]any{"result_id": w.ResultCommit.ID, "text": string(body[:min(work.ResultPageCharacters, len(body))]), "truncated": len(body) > work.ResultPageCharacters}
-		if len(body) > work.ResultPageCharacters {
+		r := map[string]any{"result_id": w.ResultCommit.ID, "text": string(body[:min(resultPreview, len(body))]), "truncated": len(body) > resultPreview}
+		if len(body) > resultPreview {
 			r["read_more"] = "read_result"
 		}
 		addAttachments(r, *w.ResultCommit, fileByID)
@@ -615,6 +630,17 @@ func attachments(args arguments) ([]string, []commit.Link, error) {
 		return nil, nil, err
 	}
 	return ids, links, nil
+}
+
+// resultPreview bounds the current result text in read_task; read_result reads it all.
+const resultPreview = 512
+
+func fileIndex(listed []capfile.File) map[string]capfile.File {
+	byID := map[string]capfile.File{}
+	for _, f := range listed {
+		byID[f.ID] = f
+	}
+	return byID
 }
 
 func addAttachments(entry map[string]any, c commit.Commit, byID map[string]capfile.File) {

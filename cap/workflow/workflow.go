@@ -143,6 +143,10 @@ type CloseQuestion struct {
 // KindQuestionClosed is the commit kind of a question closed without an answer.
 const KindQuestionClosed = "question.closed"
 
+// KindResult is the commit kind of a submitted result; its commit ID is the
+// stable result reference.
+const KindResult = "result"
+
 // Ref is what a command fixed: the task, the round it left the task in and,
 // when it opened one, the execution, or the result it submitted. Its receipt stores only this, so a replay
 // returns the same Ref; callers read current facts through Queries.
@@ -217,8 +221,10 @@ type View struct {
 // TimelinePage is how many commits one View carries.
 const TimelinePage = 100
 
-// ResultPageCharacters bounds result text returned by each read.
-const ResultPageCharacters = 512
+// ResultPageCharacters bounds result text returned by each read. A page of
+// multi-byte text stays well under the 8 KiB a tool output is commonly shown
+// in full, so one page is one call.
+const ResultPageCharacters = 2000
 
 // ResultPage reads immutable result text in Unicode character pages. A cursor
 // is an offset within the explicitly named result; it never grants access.

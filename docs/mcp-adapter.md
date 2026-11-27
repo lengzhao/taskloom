@@ -18,7 +18,7 @@ claude mcp add --transport http taskloom http://localhost:8899/v1/mcp \
 | 工具 | 对应命令 | 说明 |
 | --- | --- | --- |
 | inbox | workflow.List（mine，每页 50） | 等我处理的任务，每行带 step 与 waiting（如“验收未通过，等待重新提交”）；还有下一页时返回 `{tasks, next_cursor}`，用 cursor 续读；不含阻塞任务（Agent 只看到现在能做的事，阻塞任务用 read_task 查看，其中 `waiting_on_subtasks` 为 true） |
-| read_result | workflow.ReadResult | 传 task_id、result_id，按需完整读取正文；每页最多 512 个 Unicode 字符，返回 next_cursor 时原样作为 cursor 续读。旧结果同样可读，每页重新校验任务读权限；返回文件版本 ID 与链接 |
+| read_result | workflow.ReadResult | 传 task_id、result_id，按需完整读取正文；每页最多 2000 个 Unicode 字符（单页输出低于 8KB，宿主不必截断），返回 next_cursor 时原样作为 cursor 续读。旧结果同样可读，每页重新校验任务读权限；文件与 read_task 一样带文件名，另含链接 |
 | read_task | workflow.Read（最新一页）+ file.Queries.List | 你是谁（you）、目标、标准、标签名称（tags）、状态、等谁、can/blocked 原因、待答问题（for_you 标出问你的）、已在任务中的其他参与者（participants）、当前结果的稳定 `result_id`、最多 512 字符正文预览（`truncated` 标示未读完）、最近进展时间、可读的父任务与子任务、最近 20 条时间线（每条带 id、文件名与链接；result 只列 result_id，不重复正文）及 basis；更早的记录存在时返回 `earlier_before`，作为 `before` 传入向前翻页 |
 | start_work | ExecutionCommands.Open | 认领执行 |
 | post_message | workspace.Comment | 留言：进度、回复人的引导，可带 files（file_id 字符串数组）与 links（`{url, title}` 对象数组）；记录最近进展，不算交付 |
@@ -26,7 +26,7 @@ claude mcp add --transport http taskloom http://localhost:8899/v1/mcp \
 | ask | QuestionCommands.Ask | 提问或请求协助：默认问负责人，`to` 可填任一有效成员（不在任务中时自动加为参与者）；未答前任务不能完成 |
 | answer_question | QuestionCommands.Answer | 回答别人向自己提的问题（open_questions 中 for_you 为 true） |
 | close_question | QuestionCommands.Close | 撤回自己提的、已不需要回答的问题（须写理由），撤回后不再阻止完成 |
-| submit_result | ResultCommands.Submit | 明确提交结果；result、files、links 至少一项。返回本次实际提交的 `result_id`（幂等重放固定）、当前 `status`、`step`、`waiting`、`waiting_on_subtasks`、`next_actor` 与 basis；免验收完成、待验收和仍有待处理事项分别说明 |
+| submit_result | ResultCommands.Submit | 明确提交结果；result、files、links 至少一项。返回本次实际提交的 `result_id`（幂等重放固定；本功能上线前写入的回执重放时不含此字段）、当前 `status`、`step`、`waiting`、`waiting_on_subtasks`、`next_actor` 与 basis；免验收完成、待验收和仍有待处理事项分别说明 |
 | create_task | workspace.Create | 新建任务：title 必填；不带 parent_task_id 为顶层任务（负责人默认为你的所属人），带上则把你正在执行的该任务拆出子任务（须已 start_work，负责人默认为该任务负责人，可带 required 布尔值）；可带 goal、criteria、owner（有效用户）、acceptance（manual/none，默认 none）、assignee（同事务分配的处理人，可分配范围由部署配置决定；分配给 Agent 后仍须认领）、tags（标签名称数组，不区分大小写解析为标签 ID；未知名称提示用 list_tags，已归档或超过上限由创建命令拒绝）；自己不是负责人时成为参与者，必需子任务不使自己的执行失效，见[任务拆分](core-contracts.md#任务拆分) |
 | list_tags | catalog.Tags | 空间中未归档的标签（name、description）；空时提示可用 ask 请管理员导入推荐标签；供 create_task 的 tags 选择；标签只能在创建时选，创建后由负责人或管理员修改，规则见[层级与标签](core-contracts.md#层级与标签) |
 | reassign | ExecutionCommands.Assign | 改派给他人（to）：调用者须是当前处理人或当前这次分配的派送人，规则见[分配、认领与转交](task-flow.md#分配认领与转交)；原执行立即失效 |
@@ -49,7 +49,7 @@ claude mcp add --transport http taskloom http://localhost:8899/v1/mcp \
 
 ## 示例：AgentKit 常驻执行 Agent
 
-常驻执行 Agent 由 AgentKit 提供（v0.4.48 起）：平台插件 `platform/taskloom`（AgentKit 仓库 `runtime/platform/taskloom`）与 preset `presets/taskloom.yaml`，用 AgentKit 自带的 `cmd/agent` 运行，本仓库不再包含 Agent 代码。该 preset 只开放 Taskloom MCP 工具与 todo/finish，没有 shell、文件或网络工具，所有写入仍由 Taskloom 鉴权；提示词与模型在 preset 中，可用自己的 overlay 覆盖。
+常驻执行 Agent 由 AgentKit 提供（v0.4.49 起，含截断输出续读工具 `read_tool_output`）：平台插件 `platform/taskloom`（AgentKit 仓库 `runtime/platform/taskloom`）与 preset `presets/taskloom.yaml`，用 AgentKit 自带的 `cmd/agent` 运行，本仓库不再包含 Agent 代码。该 preset 只开放 Taskloom MCP 工具与 todo/finish，没有 shell、文件或网络工具，所有写入仍由 Taskloom 鉴权；提示词与模型在 preset 中，可用自己的 overlay 覆盖。
 
 `platform/taskloom` 是 Agent 层的适配，不是 Taskloom 服务端插件，也不新增 Taskloom 接口：它用该 Agent 自己的业务凭据只读 `GET /v1/me`、`/v1/changes`、`/v1/tasks?mine=true` 与 `/v1/tasks/{id}`，决定何时唤醒或 steer 会话；唤醒、退避与重启行为以 AgentKit 文档为准。这几个接口的字段与语义、以及 MCP 工具名（preset 提示词引用 `read_task`、`finish` 等）是跨仓库契约，变更时须同步 AgentKit。适配插件不主动停止 turn：取消或改派后旧执行的写入被拒，由 Agent 读任务后结束；给 Agent 开放外部工具时须重新评估。
 
@@ -59,7 +59,7 @@ claude mcp add --transport http taskloom http://localhost:8899/v1/mcp \
 #    Taskloom 不在本机 8899 端口时先设 TASKLOOM_API_URL=http://<host>:<port>/v1
 sh deploy/agent/issue-credential.sh
 # 2. 把 mcp.json 中的 taskloom 条目放进 ~/.agentkit/mcp.json（已有该文件时合并 mcpServers，不要覆盖）
-# 3. 在 AgentKit 仓库（v0.4.48 起）运行；模型 Key 按 preset 说明设置（默认 DEEPSEEK_API_KEY）
+# 3. 在 AgentKit 仓库（v0.4.49 起）运行；模型 Key 按 preset 说明设置（默认 DEEPSEEK_API_KEY）
 set -a; . /path/to/taskloom/deploy/agent/taskloom.env; set +a
 go run ./cmd/agent -config presets/taskloom.yaml
 ```

@@ -362,7 +362,11 @@ func TestAgentDeliversFilesThroughMCP(t *testing.T) {
 	if text, isErr := f.tool("submit_result", map[string]any{"task_id": id, "basis": basis, "files": []string{"0123456789abcdef0123456789abcdef"}}); !isErr || !strings.Contains(text, "不存在") {
 		t.Fatal("unknown file accepted", text)
 	}
-	f.ok("submit_result", map[string]any{"task_id": id, "basis": basis, "files": []string{fileID, bin["file_id"].(string)}, "links": []map[string]string{{"url": "https://example.com/doc", "title": "设计文档"}}})
+	submitted := f.ok("submit_result", map[string]any{"task_id": id, "basis": basis, "files": []string{fileID, bin["file_id"].(string)}, "links": []map[string]string{{"url": "https://example.com/doc", "title": "设计文档"}}})
+	page := f.ok("read_result", map[string]string{"task_id": id, "result_id": submitted["result_id"].(string)})
+	if pf, _ := page["files"].([]any); len(pf) != 2 || pf[0].(map[string]any)["name"] != "report.md" || page["links"] == nil {
+		t.Fatal("read_result attachments", page)
+	}
 
 	task := f.ok("read_task", map[string]string{"task_id": id})
 	result := task["current_result"].(map[string]any)
@@ -552,17 +556,22 @@ func TestResultReferenceAndPagedRead(t *testing.T) {
 		t.Fatal("overview duplicates long result", len(raw))
 	}
 	var got strings.Builder
-	cursor := ""
+	cursor, pages := "", 0
 	for {
-		page := f.ok("read_result", map[string]string{"task_id": id, "result_id": resultID, "cursor": cursor})
+		args := map[string]string{"task_id": id, "result_id": resultID, "cursor": cursor}
+		if text, _ := f.tool("read_result", args); len(text) > 8192 {
+			t.Fatal("result page exceeds tool output view", len(text))
+		}
+		page := f.ok("read_result", args)
 		got.WriteString(page["text"].(string))
+		pages++
 		cursor, _ = page["next_cursor"].(string)
 		if cursor == "" {
 			break
 		}
 	}
-	if got.String() != body {
-		t.Fatal("paged body changed")
+	if got.String() != body || pages != 3 {
+		t.Fatal("paged body changed", pages)
 	}
 	var httpPage map[string]any
 	f.ownerCall("GET", "/tasks/"+id+"/results/"+resultID, nil, &httpPage)
@@ -576,7 +585,7 @@ func TestResultReferenceAndPagedRead(t *testing.T) {
 	if err := f.security.SetMember(context.Background(), f.owner, "revoke-agent", az.Member{Tenant: "t", Subject: "agent", Role: "member", Active: false}); err != nil {
 		t.Fatal(err)
 	}
-	req, _ := http.NewRequest("GET", f.srv.URL+"/v1/tasks/"+id+"/results/"+resultID+"?cursor=512", nil)
+	req, _ := http.NewRequest("GET", f.srv.URL+"/v1/tasks/"+id+"/results/"+resultID+"?cursor=2000", nil)
 	req.Header.Set("Authorization", "Bearer "+f.agent)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {

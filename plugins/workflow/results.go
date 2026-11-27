@@ -80,7 +80,7 @@ func (m *ResultModule) Submit(ctx context.Context, token, key string, in api.Sub
 				return api.Ref{}, e
 			}
 			if old.BasisVersion == t.BasisVersion && attachment.Same(old, in.Body, in.Files, in.Links) {
-				return api.Ref{TaskID: t.ID, RoundID: pos.RoundID}, nil
+				return api.Ref{TaskID: t.ID, RoundID: pos.RoundID, ResultID: current.CommitID}, nil
 			}
 		} else if currentErr != nil && !errors.Is(currentErr, fault.ErrNotFound) {
 			return api.Ref{}, currentErr
@@ -92,7 +92,9 @@ func (m *ResultModule) Submit(ctx context.Context, token, key string, in api.Sub
 		if e = m.d.Results.RegisterResult(tx, delivery.Result{Tenant: t.Tenant, TaskID: t.ID, RoundID: v.RoundID, ExecutionID: v.ID, CommitID: c.ID}); e != nil {
 			return api.Ref{}, e
 		}
-		return finish(tx, m.d.Flow, m.d.Events, t)
+		ref, err := finish(tx, m.d.Flow, m.d.Events, t)
+		ref.ResultID = c.ID
+		return ref, err
 	})
 }
 

@@ -399,6 +399,9 @@ func TestReplayReturnsSameRefAndCurrentFacts(t *testing.T) {
 		t.Fatal("ref does not name the task and round", first)
 	}
 	submitted := f.read(t, d.Task.ID).Result
+	if first.ResultID != submitted.CommitID {
+		t.Fatal("ref does not name submitted result", first, submitted)
+	}
 	if _, e = f.results.Review(f.ctx, f.owner, "approve", api.Review{TaskID: d.Task.ID, Verdict: acceptance.Verdict{CommitID: submitted.CommitID, Outcome: "approved"}}); e != nil {
 		t.Fatal(e)
 	}
@@ -419,7 +422,7 @@ func TestReplayReturnsSameRefAndCurrentFacts(t *testing.T) {
 		t.Fatal(e)
 	}
 	for k := range fields {
-		if k != "TaskID" && k != "RoundID" && k != "ExecutionID" {
+		if k != "TaskID" && k != "RoundID" && k != "ExecutionID" && k != "ResultID" {
 			t.Fatal("receipt stores derivable facts", k)
 		}
 	}

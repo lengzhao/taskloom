@@ -144,10 +144,11 @@ type CloseQuestion struct {
 const KindQuestionClosed = "question.closed"
 
 // Ref is what a command fixed: the task, the round it left the task in and,
-// when it opened one, the execution. Its receipt stores only this, so a replay
+// when it opened one, the execution, or the result it submitted. Its receipt stores only this, so a replay
 // returns the same Ref; callers read current facts through Queries.
 type Ref struct {
 	TaskID, RoundID string
+	ResultID        string `json:",omitempty"`
 	ExecutionID     string `json:",omitempty"`
 }
 
@@ -216,7 +217,22 @@ type View struct {
 // TimelinePage is how many commits one View carries.
 const TimelinePage = 100
 
+// ResultPageCharacters bounds result text returned by each read.
+const ResultPageCharacters = 512
+
+// ResultPage reads immutable result text in Unicode character pages. A cursor
+// is an offset within the explicitly named result; it never grants access.
+type ResultPage struct {
+	TaskID     string        `json:"task_id"`
+	ResultID   string        `json:"result_id"`
+	Text       string        `json:"text"`
+	NextCursor string        `json:"next_cursor,omitempty"`
+	Files      []string      `json:"files,omitempty"`
+	Links      []commit.Link `json:"links,omitempty"`
+}
+
 type Queries interface {
+	ReadResult(ctx context.Context, token, taskID, resultID, cursor string) (ResultPage, error)
 	// Read returns the task the caller may read with one timeline page: the
 	// newest commits, or those just before the given sequence.
 	Read(ctx context.Context, token, taskID string, before int64) (View, error)

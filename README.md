@@ -26,5 +26,6 @@
 | 接口 | [API 与权限](docs/api.md)、[MCP 接入](docs/mcp-adapter.md) |
 | 工程 | [两层配置](docs/configuration.md)、[开发说明](docs/development.md) |
 | 方向 | [路线图：方向与立项门槛](docs/roadmap.md) |
+| 协作方法 | [通用协作 Skill](skills/taskloom-collaborate/SKILL.md)：复用现有任务能力进行分工、接力与汇总，由 Agent 宿主装载 |
 
 分期：第一阶段真实 Agent 文本闭环，第二阶段文件与任务树协作（均已完成）；原第三阶段的历史恢复、治理与迁移经重审不做。

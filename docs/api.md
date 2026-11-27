@@ -78,6 +78,7 @@
 | --- | --- |
 | POST /assign | Subject；分配给人即开始人工执行 |
 | POST /start | BasisVersion；Agent 认领，或人在要求变更后重新开始 |
+| GET /results/{result_id} | 按稳定结果 commit ID 读取正文分页；可用 `cursor` 续读，见下文 |
 | POST /results | ExecutionID、Body、可选 Files、Links（三者至少一项，见[文件](#文件)） |
 | POST /review | CommitID（当前结果 commit）、Outcome（approved/rejected）、Reason（退回必填） |
 | POST /cancel | 无字段 |
@@ -86,7 +87,9 @@
 | POST /questions/{qid}/answer | Body；仅被提问人回答当前轮问题 |
 | POST /questions/{qid}/close | Reason（必填）；提问人撤回或负责人关闭当前轮未答问题，写 `question.closed` commit 并视同已结，不再阻止完成；被提问人用回答，不能关闭 |
 
-以上写命令的响应同样是任务视图（见上）；命令本身只回执 `Ref`（TaskID、命令后的 RoundID、新开的 ExecutionID）。
+以上写命令的响应同样是任务视图（见上）；命令本身只回执 `Ref`（TaskID、命令后的 RoundID、新开的 ExecutionID、实际提交的 ResultID）。
+
+结果正文按需读取：`GET /v1/tasks/{id}/results/{result_id}?cursor=...` 返回 `{task_id, result_id, text, next_cursor?, files?, links?}`。每页最多 512 个 Unicode 字符，原样传回 `next_cursor` 直到不再返回；空 cursor 从头开始，非法或越界 cursor 返回 400。结果编号是不可变的 result commit ID，替换当前结果后旧结果仍可读取；非结果 commit 与跨任务引用返回 404。每页重新认证与校验 `task.read`，cursor 不授予权限。正文仍只保存于原 commit；分页不新增存储或游标会话。已有任务视图保持完整正文，供现有工作台兼容使用。
 
 任务视图中的快照字段包含流程位置（Status、RoundID、Acceptance、推导的 State 与 Waiting；活跃任务尚无处理人且无结果时 Waiting 为"等待负责人分配处理人"）、处理人、当前执行、当前交付及正文、当前结论（CommitID、Reviewer、Outcome、Reason、BasisVersion；待验收时合成 pending）、未答问题（带提问人 `Asker`、正文 `Body`、时间 `AskedAt`，不必在时间线里找问题 commit），以及：
 

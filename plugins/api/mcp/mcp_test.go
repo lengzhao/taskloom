@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/lengzhao/pluginkit/build"
+	az "github.com/lengzhao/taskloom/cap/authorization"
 	"github.com/lengzhao/taskloom/cap/identity"
 	"github.com/lengzhao/taskloom/cap/lifecycle"
 	capsecurity "github.com/lengzhao/taskloom/cap/security"
@@ -183,7 +184,7 @@ func TestAgentWorksATaskThroughMCP(t *testing.T) {
 	if init["protocolVersion"] != "2025-06-18" || !strings.Contains(init["instructions"].(string), "submit_result") || f.session == "" {
 		t.Fatal("initialize", init, f.session)
 	}
-	if n := len(f.rpc("tools/list", nil)["tools"].([]any)); n != 14 {
+	if n := len(f.rpc("tools/list", nil)["tools"].([]any)); n != 15 {
 		t.Fatal("tools", n)
 	}
 
@@ -522,5 +523,136 @@ func TestPersonWorksATaskThroughMCP(t *testing.T) {
 	submitted := f.ok("submit_result", map[string]string{"task_id": id, "basis": task["basis"].(string), "result": "周报已整理"})
 	if submitted["next_actor"] != "reviewer" {
 		t.Fatal("result not waiting on reviewer", submitted)
+	}
+}
+
+// A result remains a stable reference and can be consumed without timeline archaeology.
+func TestResultReferenceAndPagedRead(t *testing.T) {
+	f := setup(t)
+	created := f.ok("create_task", map[string]any{"title": "长报告", "goal": "完整审阅", "assignee": "agent", "acceptance": "none"})
+	id := created["task_id"].(string)
+	task := f.ok("read_task", map[string]string{"task_id": id})
+	started := f.ok("start_work", map[string]string{"task_id": id, "basis": task["basis"].(string)})
+	body := strings.Repeat("中文😀证据\n", 700)
+	submitted := f.ok("submit_result", map[string]string{"task_id": id, "basis": started["basis"].(string), "result": body})
+	if submitted["status"] != "completed" {
+		t.Fatal("false waiting receipt", submitted)
+	}
+	resultID, _ := submitted["result_id"].(string)
+	if resultID == "" {
+		t.Fatal("missing stable result", submitted)
+	}
+	task = f.ok("read_task", map[string]string{"task_id": id})
+	current := task["current_result"].(map[string]any)
+	if current["result_id"] != resultID || current["truncated"] != true {
+		t.Fatal(current)
+	}
+	raw, _ := json.Marshal(task)
+	if len(raw) > 8192 || strings.Contains(string(raw), body) {
+		t.Fatal("overview duplicates long result", len(raw))
+	}
+	var got strings.Builder
+	cursor := ""
+	for {
+		page := f.ok("read_result", map[string]string{"task_id": id, "result_id": resultID, "cursor": cursor})
+		got.WriteString(page["text"].(string))
+		cursor, _ = page["next_cursor"].(string)
+		if cursor == "" {
+			break
+		}
+	}
+	if got.String() != body {
+		t.Fatal("paged body changed")
+	}
+	var httpPage map[string]any
+	f.ownerCall("GET", "/tasks/"+id+"/results/"+resultID, nil, &httpPage)
+	if httpPage["result_id"] != resultID || httpPage["text"] == "" {
+		t.Fatal(httpPage)
+	}
+	if text, bad := f.tool("read_result", map[string]string{"task_id": id, "result_id": resultID, "cursor": "-1"}); !bad {
+		t.Fatal("invalid cursor accepted", text)
+	}
+	// A previously readable cursor grants no access after membership revocation.
+	if err := f.security.SetMember(context.Background(), f.owner, "revoke-agent", az.Member{Tenant: "t", Subject: "agent", Role: "member", Active: false}); err != nil {
+		t.Fatal(err)
+	}
+	req, _ := http.NewRequest("GET", f.srv.URL+"/v1/tasks/"+id+"/results/"+resultID+"?cursor=512", nil)
+	req.Header.Set("Authorization", "Bearer "+f.agent)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 403 {
+		t.Fatal("stale cursor bypassed revocation", resp.StatusCode)
+	}
+}
+
+func TestResultHistoryAndReadBoundaries(t *testing.T) {
+	f := setup(t)
+	created := f.ok("create_task", map[string]any{"title": "验收报告", "goal": "报告", "assignee": "agent", "acceptance": "manual"})
+	id := created["task_id"].(string)
+	basis := f.ok("read_task", map[string]string{"task_id": id})["basis"].(string)
+	basis = f.ok("start_work", map[string]string{"task_id": id, "basis": basis})["basis"].(string)
+	first := f.ok("submit_result", map[string]string{"task_id": id, "basis": basis, "result": "第一版"})
+	firstRequestID := f.seq
+	if first["step"] != "accepting" || !strings.Contains(first["message"].(string), "验收") {
+		t.Fatal(first)
+	}
+	second := f.ok("submit_result", map[string]string{"task_id": id, "basis": first["basis"].(string), "result": "修订版"})
+	oldID := first["result_id"].(string)
+	replay := f.rpcID(firstRequestID, "tools/call", map[string]any{"name": "submit_result", "arguments": map[string]string{"task_id": id, "basis": basis, "result": "第一版"}})
+	var receipt map[string]any
+	_ = json.Unmarshal([]byte(replay["content"].([]any)[0].(map[string]any)["text"].(string)), &receipt)
+	if receipt["result_id"] != oldID {
+		t.Fatal("replay drifted to replacement", receipt)
+	}
+
+	if second["result_id"] == oldID {
+		t.Fatal("replacement lost history", second)
+	}
+	if page := f.ok("read_result", map[string]string{"task_id": id, "result_id": oldID}); page["text"] != "第一版" {
+		t.Fatal(page)
+	}
+	asked := f.ok("ask", map[string]string{"task_id": id, "basis": second["basis"].(string), "question": "需要负责人确认范围"})
+	blocked := f.ok("submit_result", map[string]string{"task_id": id, "basis": asked["basis"].(string), "result": "待范围确认的最终报告"})
+	if blocked["status"] != "active" || blocked["next_actor"] != "addressee" || !strings.Contains(blocked["message"].(string), "待处理") {
+		t.Fatal("false review-only receipt", blocked)
+	}
+	other := f.ok("create_task", map[string]any{"title": "另一任务", "goal": "报告", "assignee": "agent"})["task_id"].(string)
+	if text, bad := f.tool("read_result", map[string]string{"task_id": other, "result_id": oldID}); !bad {
+		t.Fatal("cross task result", text)
+	}
+	for _, cursor := range []string{"abc", "99999999999999999999999", "9999"} {
+		if text, bad := f.tool("read_result", map[string]string{"task_id": id, "result_id": oldID, "cursor": cursor}); !bad {
+			t.Fatal("cursor accepted", cursor, text)
+		}
+	}
+	task := f.ok("read_task", map[string]string{"task_id": id})
+	for _, entry := range task["timeline"].([]any) {
+		cm := entry.(map[string]any)
+		if cm["kind"] != "result" {
+			if text, bad := f.tool("read_result", map[string]string{"task_id": id, "result_id": cm["id"].(string)}); !bad {
+				t.Fatal("non-result accepted", text)
+			}
+			break
+		}
+	}
+	if err := f.security.Create(context.Background(), f.owner, "outsider", identity.Principal{Tenant: "t", ID: "outsider", Kind: "agent", OwnerID: "owner"}); err != nil {
+		t.Fatal(err)
+	}
+	issued, err := f.security.Issue(context.Background(), f.owner, "outsider-token", capsecurity.IssueInput{Tenant: "t", Subject: "outsider", ExpiresAt: time.Now().Add(time.Hour)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, _ := http.NewRequest("GET", f.srv.URL+"/v1/tasks/"+id+"/results/"+oldID+"?cursor=1", nil)
+	req.Header.Set("Authorization", "Bearer "+issued.Secret)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 403 {
+		t.Fatal("result page bypassed authorization", resp.StatusCode)
 	}
 }

@@ -43,6 +43,7 @@ func (m *Module) Routes() []httpapi.Route {
 		h("GET", "/tasks", "tasks.list", m.list),
 		h("POST", "/tasks", "tasks.create", m.create),
 		h("GET", "/tasks/{id}", "tasks.get", m.get),
+		h("GET", "/tasks/{id}/results/{result}", "results.get", m.result),
 		h("PATCH", "/tasks/{id}", "tasks.edit", m.edit),
 		h("POST", "/tasks/{id}/commits", "commits.append", m.comment),
 		h("POST", "/tasks/{id}/participants", "participants.set", m.participants),
@@ -189,4 +190,13 @@ func (m *Module) parent(w http.ResponseWriter, r *http.Request) {
 	token := httpx.Credential(r)
 	err := m.d.Plan.Place(r.Context(), token, key(r), in)
 	httpx.View(r.Context(), w, m.d.Views, token, in.ChildID, err)
+}
+
+func (m *Module) result(w http.ResponseWriter, r *http.Request) {
+	out, err := m.d.Views.ReadResult(r.Context(), httpx.Credential(r), r.PathValue("id"), r.PathValue("result"), r.URL.Query().Get("cursor"))
+	if err != nil {
+		httpx.Fail(w, err)
+		return
+	}
+	httpx.Write(w, out)
 }

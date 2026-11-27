@@ -168,6 +168,7 @@ func toolList() []tool {
 	str := func(desc string) map[string]any { return prop("string", desc) }
 	task, basis := str(descTask), str(descBasis)
 	return []tool{
+		{"read_result", "按结果编号完整读取正式结果。read_task 的 current_result 只提供预览；引用时使用 result_id。返回 next_cursor 时原样传入 cursor 续读，直到不再返回。", schema([]string{"task_id", "result_id"}, map[string]any{"task_id": task, "result_id": str("正式结果编号"), "cursor": str("可选：上页返回的 next_cursor")})},
 		{"inbox", "列出当前等你处理的任务（下一步在等你），含当前步骤和等待原因（如验收未通过等待重新提交）。任务较多时分页：返回 next_cursor 时，把它作为 cursor 取下一页。", schema(nil, map[string]any{"cursor": str("可选：上一页返回的 next_cursor")})},
 		{"read_task", "读取任务：目标、验收标准、状态、下一步等谁、你能做哪些操作及不能做的原因、待回答问题、当前结果和最近时间线，并返回写操作所需的 basis。时间线只含最近 " + strconv.Itoa(timelineLimit) + " 条；返回 earlier_before 时，把它作为 before 读更早的记录。", schema([]string{"task_id"}, map[string]any{"task_id": task, "before": str("可选：上次返回的 earlier_before，读取更早的时间线")})},
 		{"list_people", "查找空间内的有效成员（用户与 Agent），用于 ask 的 to 或 create_task 的 owner/assignee。按 ID 片段搜索，按 subject 排序分页：返回 next 时，把它作为 after 取下一页。", schema(nil, map[string]any{"query": str("可选：ID 中包含的文字"), "kind": map[string]any{"type": "string", "enum": []string{"human", "agent"}, "description": "可选：只列用户或只列 Agent"}, "after": str("可选：上一页返回的 next")})},
@@ -277,6 +278,15 @@ func (m *Module) call(ctx context.Context, c call, name string, rawArgs json.Raw
 			out["next"] = page.Next
 		}
 		return pretty(out), nil
+	case "read_result":
+		if err := required(args, "task_id", "result_id"); err != nil {
+			return "", err
+		}
+		page, err := m.d.Workflow.ReadResult(ctx, c.token, args.str("task_id"), args.str("result_id"), args.str("cursor"))
+		if err != nil {
+			return "", err
+		}
+		return pretty(page), nil
 	case "read_task":
 		if err := required(args, "task_id"); err != nil {
 			return "", err
@@ -433,7 +443,18 @@ func (m *Module) call(ctx context.Context, c call, name string, rawArgs json.Raw
 		if err != nil {
 			return "", err
 		}
-		return pretty(map[string]any{"message": "结果已提交，等待负责人处理。", "next_actor": s.NextActor, "basis": b.next(r).token()}), nil
+		message := "结果已提交。"
+		switch {
+		case s.Position.Status == flow.PhaseCompleted:
+			message = "结果已提交，任务已完成。"
+		case len(s.Questions) > 0 || s.Position.WaitingOnSubtasks:
+			message = "结果已提交；任务仍有待处理事项。"
+		case s.Position.State == flow.StepAccepting:
+			message = "结果已提交，等待负责人验收。"
+		}
+		out := map[string]any{"message": message, "status": s.Position.Status, "step": s.Position.State, "waiting": s.Position.Waiting, "waiting_on_subtasks": s.Position.WaitingOnSubtasks, "next_actor": s.NextActor, "basis": b.next(r).token()}
+		out["result_id"] = r.ResultID
+		return pretty(out), nil
 	}
 }
 
@@ -492,7 +513,12 @@ func (m *Module) readTask(ctx context.Context, c call, taskID string, before int
 	}
 	timeline := []map[string]any{}
 	for _, cm := range commits {
-		entry := map[string]any{"id": cm.ID, "kind": cm.Kind, "author": cm.Author, "at": cm.CreatedAt.Format(time.RFC3339), "text": cm.Body}
+		entry := map[string]any{"id": cm.ID, "kind": cm.Kind, "author": cm.Author, "at": cm.CreatedAt.Format(time.RFC3339)}
+		if cm.Kind == "result" {
+			entry["result_id"] = cm.ID
+		} else {
+			entry["text"] = cm.Body
+		}
 		if q, ok := byID[cm.RefID]; ok && (cm.Kind == "answer" || cm.Kind == work.KindQuestionClosed) {
 			entry["answers"] = q.Body
 		}
@@ -545,7 +571,11 @@ func (m *Module) readTask(ctx context.Context, c call, taskID string, before int
 		}
 	}
 	if w.ResultCommit != nil {
-		r := map[string]any{"text": w.ResultCommit.Body}
+		body := []rune(w.ResultCommit.Body)
+		r := map[string]any{"result_id": w.ResultCommit.ID, "text": string(body[:min(work.ResultPageCharacters, len(body))]), "truncated": len(body) > work.ResultPageCharacters}
+		if len(body) > work.ResultPageCharacters {
+			r["read_more"] = "read_result"
+		}
 		addAttachments(r, *w.ResultCommit, fileByID)
 		if w.Review != nil {
 			r["review"] = w.Review.Outcome

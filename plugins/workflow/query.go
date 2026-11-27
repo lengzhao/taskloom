@@ -3,6 +3,8 @@ package workflow
 import (
 	"context"
 	"errors"
+	"strconv"
+
 	"github.com/lengzhao/pluginkit"
 	"github.com/lengzhao/taskloom/cap/acceptance"
 	az "github.com/lengzhao/taskloom/cap/authorization"
@@ -427,4 +429,46 @@ func nextActor(out api.Snapshot) api.Actor {
 		return api.ActorOwner
 	}
 	return api.ActorAssignee
+}
+
+// ReadResult uses the same task authorization and immutable commit storage as
+// Read. No cursor registry or second copy of the result body is maintained.
+func (s *Query) ReadResult(ctx context.Context, token, taskID, resultID, cursor string) (api.ResultPage, error) {
+	out := api.ResultPage{TaskID: taskID, ResultID: resultID}
+	offset := 0
+	if cursor != "" {
+		n, e := strconv.Atoi(cursor)
+		if e != nil || n < 0 {
+			return out, fault.Input(fault.CodeInvalid, "cursor")
+		}
+		offset = n
+	}
+	err := s.d.Transactions.View(ctx, func(tx context.Context) error {
+		p, e := s.d.Identity.Authenticate(tx, token)
+		if e != nil {
+			return e
+		}
+		if e = s.d.Authorization.Check(tx, p, "task.read", taskID); e != nil {
+			return e
+		}
+		c, e := s.d.Commits.Get(tx, p.Tenant, taskID, resultID)
+		if e != nil {
+			return e
+		}
+		if c.Kind != "result" {
+			return fault.ErrNotFound
+		}
+		text := []rune(c.Body)
+		if offset > len(text) {
+			return fault.Input(fault.CodeInvalid, "cursor")
+		}
+		end := min(offset+api.ResultPageCharacters, len(text))
+		out.Text = string(text[offset:end])
+		if end < len(text) {
+			out.NextCursor = strconv.Itoa(end)
+		}
+		out.Files, out.Links = c.Files, c.Links
+		return nil
+	})
+	return out, err
 }

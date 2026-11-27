@@ -85,7 +85,7 @@ func (m *ResultModule) Submit(ctx context.Context, token, key string, in api.Sub
 		} else if currentErr != nil && !errors.Is(currentErr, fault.ErrNotFound) {
 			return api.Ref{}, currentErr
 		}
-		c := commit.Commit{Tenant: t.Tenant, TaskID: t.ID, ID: id(), Kind: "result", Body: in.Body, Files: in.Files, Links: in.Links, Author: p.ID, OwnerID: p.OwnerID, BasisVersion: t.BasisVersion}
+		c := commit.Commit{Tenant: t.Tenant, TaskID: t.ID, ID: id(), Kind: api.KindResult, Body: in.Body, Files: in.Files, Links: in.Links, Author: p.ID, OwnerID: p.OwnerID, BasisVersion: t.BasisVersion}
 		if e = m.d.Commits.Append(tx, c); e != nil {
 			return api.Ref{}, e
 		}

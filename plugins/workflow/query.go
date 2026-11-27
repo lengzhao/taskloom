@@ -451,11 +451,15 @@ func (s *Query) ReadResult(ctx context.Context, token, taskID, resultID, cursor 
 		if e = s.d.Authorization.Check(tx, p, "task.read", taskID); e != nil {
 			return e
 		}
-		c, e := s.d.Commits.Get(tx, p.Tenant, taskID, resultID)
+		t, e := s.d.Tasks.GetTask(tx, p.Tenant, taskID)
 		if e != nil {
 			return e
 		}
-		if c.Kind != "result" {
+		c, e := s.d.Commits.Get(tx, t.Tenant, t.ID, resultID)
+		if e != nil {
+			return e
+		}
+		if c.Kind != api.KindResult {
 			return fault.ErrNotFound
 		}
 		text := []rune(c.Body)
